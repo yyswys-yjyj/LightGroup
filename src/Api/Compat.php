@@ -1721,10 +1721,9 @@ final class Compat {
 
     /** 能力探测：第三方客户端先问一下服务端会什么 */
     private static function cap(PDO $pdo, array $scope): void {
-        $lock = lg_lock();
         Json::ok([
             "name"     => (string) self::setting($pdo, "site.name", "LightGroup"),
-            "version"  => (string) ($lock["version"] ?? "0.1.0"),
+            "version"  => \LightGroup\Web\Version::current(),
             "scope"    => $scope["title"],
             "features" => ["reply", "recall", "styles", "profile", "upload", "wait", "doc", "translate", "apikey"],
             "limits"   => [

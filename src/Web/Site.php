@@ -56,7 +56,6 @@ final class Site
             }
         }
 
-        $lock = function_exists("lg_lock") ? lg_lock() : [];
         return [
             "name" => $name !== "" ? $name : self::DEFAULT_NAME,
             "intro" => $intro,
@@ -65,7 +64,7 @@ final class Site
             "accent" => $accent !== "" ? $accent : \LightGroup\Web\ThemePreset::ACCENT[\LightGroup\Web\ThemePreset::DEFAULT_ID],
             "icon" => $icon,
             "icon_dark" => $iconDark,
-            "version" => (string) ($lock["version"] ?? "0.1.0"),
+            "version" => Version::current(),
             "base" => self::baseUrl(),
             "stats" => $stats,
             "copyright" => $copyright,

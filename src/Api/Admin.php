@@ -1271,16 +1271,9 @@ final class Admin {
         ]);
     }
 
-    /** 当前站点版本：安装时写进 .lock 的 version，没有就按 0.1.0 算 */
+    /** 当前站点版本：读 api/manifest.json（与底栏同一来源），.lock 只作回退 */
     private static function currentVersion(): string {
-        $root = defined("APP_ROOT") ? (string) APP_ROOT : dirname(__DIR__, 2);
-        $file = $root . "/.lock";
-        if (is_file($file)) {
-            $lock = json_decode((string) @file_get_contents($file), true);
-            $v = is_array($lock) ? (string) ($lock["version"] ?? "") : "";
-            if ($v !== "") return $v;
-        }
-        return "0.1.0";
+        return \LightGroup\Web\Version::current();
     }
 
     /** 拉一小段文本（更新清单），超时/失败都返回 null，不抛 */

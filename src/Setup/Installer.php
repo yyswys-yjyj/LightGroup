@@ -200,7 +200,8 @@ final class Installer
 
             file_put_contents(APP_ROOT . '/config.php', "<?php\nreturn " . var_export($cfg, true) . ";\n");
             $lock = [
-                'version'       => '0.1.0',
+                // 安装时也按发布清单写，.lock 只作 api/manifest.json 丢失时的回退
+                'version'       => \LightGroup\Web\Version::current(),
                 'installed_at'  => $now,
                 'site'          => $siteName,
                 'admin_id'      => $adminId,

@@ -13,11 +13,10 @@ final class Footer
     public const LICENSE = 'Apache-2.0';
     public const REPO = 'https://github.com/yyswys-yjyj/LightGroup';
 
+    /** 版本号跟着发布走：见 Version::current()（读 api/manifest.json，.lock 只作回退） */
     public static function version(): string
     {
-        $lock = function_exists('lg_lock') ? lg_lock() : [];
-        $v = (string) ($lock['version'] ?? '');
-        return $v !== '' ? $v : '0.1.0';
+        return Version::current();
     }
 
     /** 本次请求耗时（毫秒），对齐 Gitea 底栏的「页面 Xms」 */
