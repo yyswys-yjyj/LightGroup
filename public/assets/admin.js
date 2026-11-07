@@ -1434,7 +1434,7 @@ function updateStateBadge(d) {
 
 async function renderUpdate(box) {
   box.append(pageHead('更新检查',
-    '清单来自站点自己的 api/manifest.json，发版时随代码一起改；当前版本取自安装时写入的 .lock',
+    '清单是仓库里的 api/manifest.json，从 GitHub 取；取不到会自动改用 jsDelivr。当前版本取自安装时写入的 .lock',
     [btn('检查更新', 'btn-primary', function () { go('update'); }, 'fa-rotate')]));
 
   const wrap = div('adm-update-page');
@@ -1484,7 +1484,7 @@ async function renderUpdate(box) {
   }
   wrap.append(card('清单地址', [
     el('p', { class: 'adm-update-url', text: d.manifest_url || '' }),
-    el('p', { class: 'field-hint', text: '想换成别的源，可以在 settings 里写 update.manifest_url（一般不用改）。' }),
+    el('p', { class: 'field-hint', text: d.source === 'jsdelivr' ? 'GitHub 没取到，这次用的是 jsDelivr 的镜像。' : '取自 GitHub 仓库（raw.githubusercontent.com）。' }),
     acts.length ? div('adm-update-acts', acts) : null,
   ], { icon: 'fa-link' }));
 
