@@ -303,9 +303,10 @@ final class Compat {
         $owner  = Input::get("owner");
         $name   = Input::get("name");
 
-        // 建 AI 身份也要过门禁：门禁下账号是「OAuth 主账号 → 业务账号」两层，
-        // 脚本拿一个邀请码就能建出没有主账号的幽灵 AI，等于把门禁架空。
-        if (self::setting($pdo, "auth.mode", "none") === "oauth") {
+        // 门禁下账号是「OAuth 主账号 → 业务账号」两层，要挡住的是「只拿一个邀请码
+        // 从脚本直连、背后没有主账号」的幽灵 AI；网页里登录过的本人、以及主人已经
+        // 绑了主账号的情况都算正常操作，不该拦。
+        if (self::setting($pdo, "auth.mode", "none") === "oauth" && !self::gateCallerOk($pdo, $scope, $owner)) {
             Json::fail("本站开启了 OAuth 门禁，请先用第三方账号登录，再在网页里给 AI 建身份");
         }
         // 有邀请码就能无限建 AI 的话，名额再多也顶不住脚本刷
@@ -342,6 +343,23 @@ final class Compat {
         ]);
 
         Json::ok(["token" => $plain, "bot" => ["name" => $name]]);
+    }
+
+    /**
+     * 门禁下建 AI 的调用方站不站得住脚：
+     *   1) 网页里登录着，而且登录的就是本群成员 —— 已经过了 OAuth 那一层；
+     *   2) 或者主人这个成员本身已经绑了主账号（account_id / oauth_id）。
+     * 两条都不满足，就是脚本拿着邀请码直连、背后没有主账号，挡掉。
+     */
+    private static function gateCallerOk(PDO $pdo, array $scope, string $owner): bool {
+        $me = Session::member($pdo);
+        if ($me !== null && (int) $me["scope_id"] === (int) $scope["id"]) return true;
+
+        $st = $pdo->prepare("SELECT account_id, oauth_id FROM members WHERE scope_id = ? AND name = ? AND kind = 'human' LIMIT 1");
+        $st->execute([(int) $scope["id"], $owner]);
+        $row = $st->fetch();
+        if (!$row) return false;
+        return (int) ($row["account_id"] ?? 0) > 0 || (int) ($row["oauth_id"] ?? 0) > 0;
     }
 
     private static function checkAiQuota(PDO $pdo, array $scope, int $ownerId): void {
