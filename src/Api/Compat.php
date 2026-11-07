@@ -458,6 +458,9 @@ final class Compat {
         foreach ($st2->fetchAll() as $r) $names[(int) $r["id"]] = (string) $r["name"];
         $out = [];
         foreach ($rows as $r) {
+            $imgUrl = self::absUrl(self::stripImg((string) ($r["img"] ?? "")));
+            $voiceUrl = (string) ($r["voice"] ?? "") !== "" ? self::absUrl((string) $r["voice"]) : "";
+            $hasCard = ($r["card_json"] !== null && $r["card_json"] !== "");
             $out[] = [
                 "id"   => (int) $r["id"],
                 "name" => $names[(int) $r["member_id"]] ?? "",
@@ -465,7 +468,11 @@ final class Compat {
                 "img"  => (string) ($r["img"] ?? ""),
                 "voice" => (string) ($r["voice"] ?? ""),
                 "dur"  => (int) ($r["dur"] ?? 0),
-                "card" => ($r["card_json"] !== null && $r["card_json"] !== ""),
+                "card" => $hasCard,
+                "type" => $imgUrl !== "" ? "image" : ($voiceUrl !== "" ? "voice" : ($hasCard ? "card" : "text")),
+                "md"   => self::renderMd((string) $r["text"], $imgUrl, $voiceUrl, (int) ($r["dur"] ?? 0), $hasCard),
+                "img_url" => $imgUrl,
+                "voice_url" => $voiceUrl,
                 "at"   => (int) $r["pinned_at"],
                 "ts"   => (int) $r["ts_ms"],
             ];
@@ -497,6 +504,9 @@ final class Compat {
             $done = (int) $cnt->fetch()["c"];
             $mine = $pdo->prepare("SELECT 1 FROM todo_done WHERE todo_id = ? AND member_id = ? LIMIT 1");
             $mine->execute([$todoId, $meId]);
+            $tImgUrl = self::absUrl(self::stripImg((string) ($r["img"] ?? "")));
+            $tVoiceUrl = (string) ($r["voice"] ?? "") !== "" ? self::absUrl((string) $r["voice"]) : "";
+            $tCard = ($r["card_json"] !== null && $r["card_json"] !== "");
             $out[] = [
                 "id"     => $todoId,
                 "msgId"  => (int) $r["msg_id"],
@@ -505,7 +515,11 @@ final class Compat {
                 "img"    => (string) ($r["img"] ?? ""),
                 "voice"  => (string) ($r["voice"] ?? ""),
                 "dur"    => (int) ($r["dur"] ?? 0),
-                "card"   => ($r["card_json"] !== null && $r["card_json"] !== ""),
+                "card"   => $tCard,
+                "type"   => $tImgUrl !== "" ? "image" : ($tVoiceUrl !== "" ? "voice" : ($tCard ? "card" : "text")),
+                "md"     => self::renderMd((string) $r["text"], $tImgUrl, $tVoiceUrl, (int) ($r["dur"] ?? 0), $tCard),
+                "img_url" => $tImgUrl,
+                "voice_url" => $tVoiceUrl,
                 "at"     => (int) $r["created_at"],
                 "done"   => $done,
                 "total"  => self::memberCount($pdo, $scope),
@@ -755,11 +769,38 @@ final class Compat {
                 $rVoice = (!empty($r["r_deleted"]) || $r["r_voice"] === null) ? "" : (string) $r["r_voice"];
                 $rDur   = !empty($r["r_deleted"]) ? 0 : (int) ($r["r_dur"] ?? 0);
                 $rCard  = !empty($r["r_deleted"]) ? false : ($r["r_card"] !== null && $r["r_card"] !== "");
+                $rImgUrl = $rImg !== "" ? self::absUrl(self::stripImg($rImg)) : "";
+                $rVoiceUrl = $rVoice !== "" ? self::absUrl($rVoice) : "";
+                // 引用目标对第三方客户端也要能显示：type + md + 可直接访问的地址
+                $rMd = self::renderMd($rText, $rImgUrl, $rVoiceUrl, $rDur, $rCard);
                 $msg["reply"] = [
                     "id" => (int) $r["reply_to"], "name" => $rName, "text" => $rText, "img" => $rImg,
                     "voice" => $rVoice, "dur" => $rDur, "card" => $rCard,
+                    "type" => $rImgUrl !== "" ? "image" : ($rVoiceUrl !== "" ? "voice" : ($rCard ? "card" : "text")),
+                    "md" => $rMd,
+                    "img_url" => $rImgUrl,
+                    "voice_url" => $rVoiceUrl,
                 ];
                 $msg["q"] = json_encode($msg["reply"], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $msg["reply_md"] = "↳ 引用 " . $rName . "：" . $rMd;
+            }
+
+            // ---- 给第三方客户端（iOS / Android / CLI / 别家插件）用的统一字段 ----
+            // type：text / image / voice / card / recalled / system
+            // md：已经拼好的显示文本，客户端直接输出这一行就行（图片、语音、撤回、引用都在里面）
+            // img_url / voice_url：绝对地址，不在浏览器里也能直接加载
+            $msg["type"] = !empty($r["sys"]) ? "system"
+                : ($recalled ? "recalled"
+                : (!empty($msg["img"]) ? "image"
+                : (!empty($msg["voice"]) ? "voice"
+                : (!empty($msg["card"]) ? "card" : "text"))));
+            if (!empty($msg["img"])) $msg["img_url"] = self::absUrl(self::stripImg((string) $msg["img"]));
+            if (!empty($msg["voice"])) $msg["voice_url"] = self::absUrl((string) $msg["voice"]);
+            $msg["md"] = $recalled
+                ? "（该消息已被撤回）"
+                : self::renderMd((string) ($msg["text"] ?? ""), (string) ($msg["img_url"] ?? ""), (string) ($msg["voice_url"] ?? ""), (int) $msg["dur"], !empty($msg["card"]));
+            if (!empty($msg["reply_md"])) {
+                $msg["md"] = $msg["reply_md"] . (($msg["md"] !== "" && $msg["md"] !== "（空消息）") ? "\n" . $msg["md"] : "");
             }
             if ($r["pinned_at"] !== null) $msg["pin"] = true;
             $msgs[] = $msg;
@@ -1106,6 +1147,21 @@ final class Compat {
         return "[img]" . $img;
     }
 
+    /** 出口图片字段可能带 [img] 前缀（老前端约定），拼地址前先剥掉 */
+    private static function stripImg(string $img): string {
+        return (string) preg_replace('#^\[img\]#', "", $img);
+    }
+
+    /** 拼一条消息的显示文本：图片/语音/卡片都转成 markdown，纯文本原样 */
+    private static function renderMd(string $text, string $imgUrl, string $voiceUrl, int $dur, bool $card): string {
+        $bits = [];
+        if ($text !== "") $bits[] = $text;
+        if ($imgUrl !== "") $bits[] = "[图片](" . $imgUrl . ")";
+        if ($voiceUrl !== "") $bits[] = "[语音](" . $voiceUrl . ") " . $dur . '"';
+        if ($card) $bits[] = "[卡片]";
+        return $bits === [] ? "（空消息）" : implode("\n", $bits);
+    }
+
     private static function send(PDO $pdo, array $scope): void {
         $m = self::requireMember($pdo);
         // 不传 conv 时行为与改造前一致：落在 scope 的公开大群
@@ -1341,11 +1397,17 @@ final class Compat {
         return max(1, (int) round($bytes / 1024)) . "KB";
     }
 
+    /** 补成绝对地址：第三方客户端不在浏览器里，相对路径没法直接加载；已是绝对地址的原样返回 */
     private static function absUrl(string $path): string {
+        $path = trim($path);
+        if ($path === "") return "";
         $https = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off")
             || (($_SERVER["HTTP_X_FORWARDED_PROTO"] ?? "") === "https");
+        $scheme = $https ? "https" : "http";
+        if (preg_match('#^https?://#i', $path) || str_starts_with($path, "data:")) return $path;
+        if (str_starts_with($path, "//")) return $scheme . ":" . $path;
         $host = (string) ($_SERVER["HTTP_HOST"] ?? "localhost");
-        return ($https ? "https" : "http") . "://" . $host . $path;
+        return $scheme . "://" . $host . ($path[0] === "/" ? "" : "/") . $path;
     }
 
     /**
