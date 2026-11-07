@@ -1,0 +1,7 @@
+{
+  "name": "LightGroup",
+  "version": "0.1.1",
+  "released_at": "2026-11-08",
+  "notes": "统一各页面图标；文档拆成用户 / AI / API 三份；门禁开启时拦截自助进群；后台新增更新检查与新版本提示。",
+  "url": "https://github.com/yyswys-yjyj/LightGroup/releases"
+}

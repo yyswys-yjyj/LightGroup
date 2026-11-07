@@ -1,0 +1,15 @@
+# Apache 零配置：把找不到的路径交给 public/index.php。
+# nginx 不读这个文件，看 deploy/nginx-rewrite.conf（一条 location）。
+
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 真实存在的文件（/assets/*、/uploads/*、/favicon.ico）直接给
+    RewriteCond %{REQUEST_FILENAME} -f
+    RewriteRule ^ - [L]
+
+    # 其余全部交给唯一入口
+    RewriteRule ^ index.php [L]
+</IfModule>

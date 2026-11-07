@@ -1,0 +1,346 @@
+/* ==========================================================================
+   LightGroup · 基础样式与主题变量
+   ---------------------------------------------------------------------------
+   【主题变量体系】所有颜色一律走变量，组件里不许再写裸色值。
+   分三层：
+     1) :root            —— 浅色基准取值（默认）
+     2) --dk-*           —— 深色取值，只在这里写一份，下面两处复用
+     3) 两处深色开关：
+          @media (prefers-color-scheme: dark) + :root:not([data-theme="light"])
+          :root[data-theme="dark"]
+        这样「跟随系统」靠媒体查询实时生效，「浅色/深色」靠 data-theme 强制，
+        两者不会互相打架（选了浅色时媒体查询那段被 :not() 挡掉）。
+   强调色（accent 系）由主题包 / 内建主题通过内联变量覆盖，
+   但它只覆盖 --accent / --accent-text 这类「强调系」，
+   --accent-soft / --accent-line 由 color-mix 从 --accent + --surface 现算，
+   所以深色下自动变成暗底浅色块，不会出现「浅底浅字」。
+   ========================================================================== */
+
+:root{
+  /* ---- 底色 / 表面 ---- */
+  --bg:#f7f8fa;
+  --surface:#ffffff;
+  --surface-2:#f1f3f6;
+  --surface-3:#e9edf3;
+  /* ---- 文字 ---- */
+  --text:#14171c;
+  --text-dim:#5b6472;
+  --text-faint:#8b95a3;
+  /* ---- 边框 ---- */
+  --border:#e4e8ee;
+  --border-strong:#cfd6e0;
+  /* ---- 强调色（主题包覆盖这一系） ---- */
+  --accent:#2563eb;
+  --accent-text:#ffffff;
+  --accent-soft:#e8efff;
+  --accent-line:#c6d6f8;
+  --accent-2:#7c3aed;
+  /* ---- 语义色 ---- */
+  --ok:#16a34a;
+  --warn:#d97706;
+  --danger:#dc2626;
+  --danger-solid:#dc2626;
+  --on-danger:#ffffff;
+  --on-ok:#ffffff;
+  --ok-soft:#e7f7ee;
+  --warn-soft:#fef3e2;
+  --danger-soft:#fdecec;
+  /* ---- 聊天气泡 ---- */
+  --bubble:#f1f3f6;
+  --bubble-text:#14171c;
+  --self-bubble:#2563eb;
+  --self-bubble-text:#ffffff;
+  --bubble-btn:rgba(255,255,255,.24);
+  /* 引用块 / 系统提示 / 时间分割线 */
+  --quote-line:currentColor;
+  --quote-opacity:.72;
+  --chip-bg:#f1f3f6;
+  --chip-text:#8b95a3;
+  /* ---- 代码块 ---- */
+  --code-bg:#f1f3f6;
+  --code-text:#14171c;
+  --code-border:#e4e8ee;
+  /* ---- 输入框 ---- */
+  --input-bg:#f1f3f6;
+  --input-bg-focus:#ffffff;
+  --input-border:#e4e8ee;
+  --input-placeholder:#8b95a3;
+  /* ---- 浮层 ---- */
+  --scrim:rgba(9,12,18,.42);
+  --scrim-strong:rgba(9,12,18,.58);
+  --toast-bg:rgba(20,23,28,.9);
+  --toast-text:#ffffff;
+  --sheet-bg:#ffffff;
+  /* ---- 头像占位 ---- */
+  --avatar-bg:#7c8ae0;
+  --avatar-text:#ffffff;
+  --hairline:rgba(0,0,0,.08);
+  --icon-mask-bg:rgba(16,24,40,.05);
+  --crop-frame:rgba(255,255,255,.9);
+  --crop-vignette:rgba(9,12,18,.2);
+  --icon-light-d:block;
+  --icon-dark-d:none;
+  /* ---- 阴影 ---- */
+  --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 10px 30px -12px rgba(16,24,40,.16);
+  --shadow-lg:0 20px 48px rgba(15,23,42,.22);
+  --shadow-pop:0 12px 32px rgba(0,0,0,.18);
+  --shadow-panel:0 24px 60px rgba(9,12,18,.28);
+  /* ---- 尺寸 ---- */
+  --radius:14px;
+  --radius-sm:9px;
+  --maxw:720px;
+  color-scheme:light dark;
+
+  /* ===== 深色取值（只写一份，供下面两处开关复用） ===== */
+  --dk-bg:#0e1116;
+  --dk-surface:#151a21;
+  --dk-surface-2:#1b222b;
+  --dk-surface-3:#232c37;
+  --dk-text:#e8edf4;
+  --dk-text-dim:#96a2b3;
+  --dk-text-faint:#6c7888;
+  --dk-border:#242c37;
+  --dk-border-strong:#333d4a;
+  --dk-accent:#4f8cff;
+  --dk-accent-text:#0b1220;
+  --dk-accent-2:#8b5cf6;
+  --dk-ok:#22c55e;
+  --dk-warn:#f59e0b;
+  --dk-danger:#f87171;
+  --dk-danger-solid:#b91c1c;
+  --dk-on-ok:#07240f;
+  --dk-bubble:#1b222b;
+  --dk-bubble-text:#e8edf4;
+  --dk-self-bubble:#4f8cff;
+  --dk-self-bubble-text:#0b1220;
+  --dk-bubble-btn:rgba(255,255,255,.16);
+  --dk-chip-bg:#1b222b;
+  --dk-chip-text:#96a2b3;
+  --dk-code-bg:#12171d;
+  --dk-code-text:#e8edf4;
+  --dk-code-border:#232c37;
+  --dk-input-bg:#1b222b;
+  --dk-input-bg-focus:#202934;
+  --dk-input-border:#2a3441;
+  --dk-scrim:rgba(0,0,0,.62);
+  --dk-scrim-strong:rgba(0,0,0,.72);
+  --dk-toast-bg:rgba(232,237,244,.94);
+  --dk-toast-text:#0e1116;
+  --dk-sheet-bg:#171d25;
+  --dk-avatar-bg:#48558c;
+  --dk-hairline:rgba(255,255,255,.12);
+  --dk-icon-mask-bg:rgba(255,255,255,.08);
+  --dk-shadow-sm:0 1px 2px rgba(0,0,0,.5);
+  --dk-shadow:0 1px 2px rgba(0,0,0,.45), 0 16px 40px -20px rgba(0,0,0,.85);
+  --dk-shadow-lg:0 20px 48px rgba(0,0,0,.55);
+  --dk-shadow-pop:0 12px 32px rgba(0,0,0,.5);
+  --dk-shadow-panel:0 28px 70px rgba(0,0,0,.7);
+}
+
+/* 浅色：显式选择时把浏览器原生控件也固定成浅色 */
+:root[data-theme="light"]{color-scheme:light}
+
+/* 深色（跟随系统，且用户没选浅色） */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:var(--dk-bg);
+    --surface:var(--dk-surface);
+    --surface-2:var(--dk-surface-2);
+    --surface-3:var(--dk-surface-3);
+    --text:var(--dk-text);
+    --text-dim:var(--dk-text-dim);
+    --text-faint:var(--dk-text-faint);
+    --border:var(--dk-border);
+    --border-strong:var(--dk-border-strong);
+    --accent:var(--dk-accent);
+    --accent-text:var(--dk-accent-text);
+    --accent-2:var(--dk-accent-2);
+    --ok:var(--dk-ok);
+    --warn:var(--dk-warn);
+    --danger:var(--dk-danger);
+    --danger-solid:var(--dk-danger-solid);
+    --on-ok:var(--dk-on-ok);
+    --bubble:var(--dk-bubble);
+    --bubble-text:var(--dk-bubble-text);
+    --self-bubble:var(--dk-self-bubble);
+    --self-bubble-text:var(--dk-self-bubble-text);
+    --bubble-btn:var(--dk-bubble-btn);
+    --chip-bg:var(--dk-chip-bg);
+    --chip-text:var(--dk-chip-text);
+    --code-bg:var(--dk-code-bg);
+    --code-text:var(--dk-code-text);
+    --code-border:var(--dk-code-border);
+    --input-bg:var(--dk-input-bg);
+    --input-bg-focus:var(--dk-input-bg-focus);
+    --input-border:var(--dk-input-border);
+    --scrim:var(--dk-scrim);
+    --scrim-strong:var(--dk-scrim-strong);
+    --toast-bg:var(--dk-toast-bg);
+    --toast-text:var(--dk-toast-text);
+    --sheet-bg:var(--dk-sheet-bg);
+    --avatar-bg:var(--dk-avatar-bg);
+    --hairline:var(--dk-hairline);
+    --icon-mask-bg:var(--dk-icon-mask-bg);
+    --icon-light-d:none;
+    --icon-dark-d:block;
+    --shadow-sm:var(--dk-shadow-sm);
+    --shadow:var(--dk-shadow);
+    --shadow-lg:var(--dk-shadow-lg);
+    --shadow-pop:var(--dk-shadow-pop);
+    --shadow-panel:var(--dk-shadow-panel);
+    color-scheme:dark;
+  }
+}
+
+/* 深色（用户显式选择） */
+:root[data-theme="dark"]{
+  --bg:var(--dk-bg);
+  --surface:var(--dk-surface);
+  --surface-2:var(--dk-surface-2);
+  --surface-3:var(--dk-surface-3);
+  --text:var(--dk-text);
+  --text-dim:var(--dk-text-dim);
+  --text-faint:var(--dk-text-faint);
+  --border:var(--dk-border);
+  --border-strong:var(--dk-border-strong);
+  --accent:var(--dk-accent);
+  --accent-text:var(--dk-accent-text);
+  --accent-2:var(--dk-accent-2);
+  --ok:var(--dk-ok);
+  --warn:var(--dk-warn);
+  --danger:var(--dk-danger);
+  --danger-solid:var(--dk-danger-solid);
+  --on-ok:var(--dk-on-ok);
+  --bubble:var(--dk-bubble);
+  --bubble-text:var(--dk-bubble-text);
+  --self-bubble:var(--dk-self-bubble);
+  --self-bubble-text:var(--dk-self-bubble-text);
+  --bubble-btn:var(--dk-bubble-btn);
+  --chip-bg:var(--dk-chip-bg);
+  --chip-text:var(--dk-chip-text);
+  --code-bg:var(--dk-code-bg);
+  --code-text:var(--dk-code-text);
+  --code-border:var(--dk-code-border);
+  --input-bg:var(--dk-input-bg);
+  --input-bg-focus:var(--dk-input-bg-focus);
+  --input-border:var(--dk-input-border);
+  --scrim:var(--dk-scrim);
+  --scrim-strong:var(--dk-scrim-strong);
+  --toast-bg:var(--dk-toast-bg);
+  --toast-text:var(--dk-toast-text);
+  --sheet-bg:var(--dk-sheet-bg);
+  --avatar-bg:var(--dk-avatar-bg);
+  --hairline:var(--dk-hairline);
+  --icon-mask-bg:var(--dk-icon-mask-bg);
+  --icon-light-d:none;
+  --icon-dark-d:block;
+  --shadow-sm:var(--dk-shadow-sm);
+  --shadow:var(--dk-shadow);
+  --shadow-lg:var(--dk-shadow-lg);
+  --shadow-pop:var(--dk-shadow-pop);
+  --shadow-panel:var(--dk-shadow-panel);
+  color-scheme:dark;
+}
+
+/* 强调色的浅底 / 描边跟着 --accent 与当前底色现算（换主题包、切深浅都自动跟） */
+@supports (color:color-mix(in srgb,red,blue)){
+  :root{
+    --accent-soft:color-mix(in srgb,var(--accent) 12%,var(--surface));
+    --accent-line:color-mix(in srgb,var(--accent) 32%,var(--border));
+    --ok-soft:color-mix(in srgb,var(--ok) 14%,var(--surface));
+    --warn-soft:color-mix(in srgb,var(--warn) 14%,var(--surface));
+    --danger-soft:color-mix(in srgb,var(--danger) 14%,var(--surface));
+  }
+}
+
+[hidden]{display:none !important}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  transition:background-color .2s,color .2s;
+}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+code,kbd,pre{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.92em}
+code{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:6px;padding:.12em .42em}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:10px;padding:10px 12px;overflow:auto}
+pre code{background:transparent;border:0;padding:0}
+::selection{background:var(--accent-soft);color:var(--text)}
+h1,h2,h3,p{margin:0}
+button{font:inherit;color:inherit}
+input,textarea,select{color-scheme:inherit}
+::placeholder{color:var(--input-placeholder);opacity:1}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:.5em;
+  height:38px;padding:0 16px;border-radius:10px;border:1px solid transparent;
+  font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;
+  transition:background .16s,border-color .16s,color .16s,transform .06s,box-shadow .16s;
+  user-select:none;
+}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn-primary{background:var(--accent);color:var(--accent-text);box-shadow:var(--shadow-sm)}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-ghost{background:var(--surface);color:var(--text);border-color:var(--border);box-shadow:var(--shadow-sm)}
+.btn-ghost:hover{background:var(--surface-2)}
+.btn-sm{height:34px;padding:0 13px;font-size:13.5px;border-radius:9px}
+.btn-lg{height:44px;padding:0 20px;font-size:15px;border-radius:11px}
+.btn-xs{height:28px;padding:0 9px;font-size:12.5px;border-radius:7px}
+.btn i{font-size:.95em}
+
+.muted{color:var(--text-dim)}
+.container{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 20px}
+
+/* 站点图标：全站统一用圆角方框做蒙版 */
+.icon-mask{
+  display:inline-flex;align-items:center;justify-content:center;
+  overflow:hidden;border-radius:10px;
+  background:var(--icon-mask-bg);
+  flex:none;width:100%;height:100%;
+}
+.icon-mask img{width:100%;height:100%;object-fit:cover;display:block}
+.icon-mask .i-light{display:var(--icon-light-d,block)}
+.icon-mask .i-dark{display:var(--icon-dark-d,none)}
+.icon-mask.empty{color:var(--text-faint);font-size:18px}
+
+
+/* ---- 底部常驻声明（对齐 Gitea）---- */
+.site-foot{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12.5px;color:var(--text-dim);line-height:1.6}
+.site-foot b{font-weight:600;color:var(--text)}
+.site-foot .foot-dot{opacity:.5}
+.site-foot .foot-link{font:inherit;color:var(--accent);background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:none;appearance:none;-webkit-appearance:none;box-shadow:none;outline-offset:2px}
+.site-foot .foot-link:hover{text-decoration:underline}
+
+/* ---- 关于弹层 ---- */
+.about{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--scrim);backdrop-filter:blur(2px)}
+.about[hidden]{display:none}
+.about-panel{position:relative;width:100%;max-width:420px;max-height:calc(100vh - 48px);overflow:auto;background:var(--sheet-bg);border:1px solid var(--border);border-radius:18px;padding:22px 22px 18px;box-shadow:var(--shadow-panel);color:var(--text)}
+.about-close{position:absolute;top:12px;right:12px;width:30px;height:30px;border:0;border-radius:9px;background:var(--surface-2);color:var(--text-dim);cursor:pointer}
+.about-close:hover{color:var(--text)}
+.about-site{display:flex;flex-direction:column;gap:10px}
+.about-brand{display:flex;align-items:center;gap:10px;padding-right:30px}
+.about-brand b{font-size:17px}
+.about-mark{width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:var(--accent-text);font-size:18px;overflow:hidden;flex:none}
+.about-intro{margin:0;font-size:13.5px;color:var(--text-dim);line-height:1.6}
+.about-stats{display:flex;gap:8px;margin:4px 0 0;padding:0;list-style:none}
+.about-stats li{flex:1;background:var(--surface-2);border-radius:12px;padding:10px 12px;text-align:center}
+.about-stats b{display:block;font-size:17px}
+.about-stats span{font-size:12px;color:var(--text-dim)}
+.about-copy{margin:2px 0 0;font-size:12.5px;color:var(--text-dim)}
+.about-proj{margin-top:16px;padding-top:14px;border-top:1px solid var(--border);font-size:13px;color:var(--text-dim);line-height:1.65}
+.about-proj p{margin:0 0 6px}
+.about-proj-name{font-size:15px;font-weight:700;color:var(--text)}
+.about-license a{color:var(--accent);text-decoration:none}
+.about-license a:hover{text-decoration:underline}
+html.about-open{overflow:hidden}
