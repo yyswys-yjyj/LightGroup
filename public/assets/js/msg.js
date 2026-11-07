@@ -49,6 +49,15 @@ export function sameAuthor(a, b) {
   return a.name === b.name && a.kind === b.kind;
 }
 
+// 服务端会给老客户端在 text 末尾补「[图片](地址)」这类媒体行；网页自己会渲染图片/语音，先剔掉再显示
+export function displayText(m) {
+  let t = String((m && m.text) || '');
+  if (m && m.text_auto) {
+    t = t.split('\n').filter(function (line) { return !/^\[(图片|语音|卡片)\]\(/.test(String(line).trim()); }).join('\n');
+  }
+  return t.trim();
+}
+
 // ---------- 渲染单条消息 ----------
 export function msgNode(m, prev) {
   // 系统提示（例如管理员查看了会话）单独一行，不属于任何人的气泡
@@ -107,9 +116,11 @@ export function msgNode(m, prev) {
       }
       bub.appendChild(q);
     }
-    if (m.text) {
+    // text_auto：服务端给老客户端补的媒体行，网页已经有图/语音气泡了，剔掉再渲染
+    const shown = displayText(m);
+    if (shown) {
       const p = h('div', 'txt');
-      paintText(p, m.text);
+      paintText(p, shown);
       bub.appendChild(p);
     }
     if (m.img) {
@@ -202,8 +213,8 @@ export function msgMenu(m, x, y) {
   const items = [];
   if (!recalled) {
     items.push(['引用', 'fa-quote-left', () => setReply(m)]);
-    if (m.text) items.push(['翻译', 'fa-language', () => doTranslate(m)]);
-    items.push(['复制文字', 'fa-copy', () => copyText(m.text || (m.img ? '[图片]' : (m.voice ? '[语音]' : '')))]);
+    if (displayText(m)) items.push(['翻译', 'fa-language', () => doTranslate(m)]);
+    items.push(['复制文字', 'fa-copy', () => copyText(displayText(m) || (m.img ? '[图片]' : (m.voice ? '[语音]' : '')))]);
     if (!isDm() && canModerate()) {
       const pinned = (S.pins || []).some(function (p) { return p.id === m.id; });
       items.push([pinned ? '取消置顶' : '置顶这条', 'fa-thumbtack', () => togglePin(m, !pinned)]);
@@ -243,7 +254,7 @@ export function setReply(m) {
   bar.hidden = false;
   const txt = h('div', 'reply-txt');
   txt.appendChild(h('b', '', m.name || ''));
-  txt.appendChild(h('span', '', (m.text || '[图片]').slice(0, 80)));
+  txt.appendChild(h('span', '', (displayText(m) || '[图片]').slice(0, 80)));
   const x = document.createElement('button');
   x.type = 'button';
   x.className = 'reply-x';
@@ -297,7 +308,7 @@ export function openImage(src) {
 /** 一条消息的简短预览：置顶条、待办、引用都用它，别再把「没有文字」当成已撤回 */
 export function previewText(m) {
   if (!m) return '';
-  const t = String(m.text || '').trim();
+  const t = displayText(m);
   if (t) return t;
   if (m.img) return '[图片]';
   if (m.voice) return m.dur ? '[语音 ' + m.dur + '"]' : '[语音]';

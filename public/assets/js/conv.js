@@ -19,8 +19,11 @@ export function convPeer(c) { return (c && c.kind === 'dm' && c.member) || null;
 export function lastLine(c) {
   const last = c && c.last;
   if (!last) return '还没有消息';
+  // text 里可能带着服务端补的「[图片](地址)」媒体行（见 Compat::fetchSince 的 text_auto），预览里剔掉
+  const clean = String(last.text || '').split('\n')
+    .filter(function (line) { return !/^\[(图片|语音|卡片)\]\(/.test(line.trim()); }).join(' ').trim();
   const body = last.recalled ? '消息已撤回'
-    : (last.text || (last.img ? '[图片]' : (last.voice ? '[语音]' : (last.card ? '[卡片]' : '新消息'))));
+    : (clean || (last.img ? '[图片]' : (last.voice ? '[语音]' : (last.card ? '[卡片]' : '新消息'))));
   if (c.kind !== 'dm' && last.name) return last.name + '：' + body;
   return body;
 }

@@ -476,6 +476,11 @@ final class Compat {
                 "at"   => (int) $r["pinned_at"],
                 "ts"   => (int) $r["ts_ms"],
             ];
+            $last = $out[count($out) - 1];
+            if ((string) $last["text"] === "" && (string) $last["md"] !== "") {
+                $out[count($out) - 1]["text"] = (string) $last["md"];
+                $out[count($out) - 1]["text_auto"] = true;
+            }
         }
         return $out;
     }
@@ -525,6 +530,11 @@ final class Compat {
                 "total"  => self::memberCount($pdo, $scope),
                 "meDone" => (bool) $mine->fetch(),
             ];
+            $last = $out[count($out) - 1];
+            if ((string) $last["text"] === "" && (string) $last["md"] !== "") {
+                $out[count($out) - 1]["text"] = (string) $last["md"];
+                $out[count($out) - 1]["text_auto"] = true;
+            }
         }
         return $out;
     }
@@ -803,6 +813,19 @@ final class Compat {
                 $msg["md"] = $msg["reply_md"] . (($msg["md"] !== "" && $msg["md"] !== "（空消息）") ? "\n" . $msg["md"] : "");
             }
             if ($r["pinned_at"] !== null) $msg["pin"] = true;
+            // 老客户端（包括第三方 CLI/插件）只认 text，不会看 img/voice 字段：
+            // 出口把媒体和撤回文案拼进 text，并在 text_auto 上标记，网页端渲染时剔掉这一行。
+            $media = "";
+            if (!empty($msg["img"])) $media = "[图片](" . (string) ($msg["img_url"] ?? "") . ")";
+            elseif (!empty($msg["voice"])) $media = "[语音](" . (string) ($msg["voice_url"] ?? "") . ") " . (int) $msg["dur"] . '"';
+            elseif (!empty($msg["card"])) $media = "[卡片]";
+            if ($media !== "" && strpos((string) $msg["text"], $media) === false) {
+                $msg["text"] = (string) $msg["text"] === "" ? $media : (string) $msg["text"] . "\n" . $media;
+                $msg["text_auto"] = true;
+            } elseif ((string) $msg["text"] === "" && $recalled) {
+                $msg["text"] = "（该消息已被撤回）";
+                $msg["text_auto"] = true;
+            }
             $msgs[] = $msg;
         }
         return $msgs;
