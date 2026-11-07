@@ -132,13 +132,19 @@ final class Captcha {
      */
     public static function check(PDO $pdo, array $fields): string {
         if (!self::thirdParty($pdo)) {
+            $token = self::scalar($fields, "cap_token");
             $ok = self::verify(
-                self::scalar($fields, "cap_token"),
+                $token,
                 (int) self::scalar($fields, "cap_off"),
                 (int) self::scalar($fields, "cap_ms"),
-                (int) self::scalar($fields, "cap_moves")
+                (int) self::scalar($fields, "cap_moves"),
+                self::scalar($fields, "cap_path")
             );
-            return $ok ? "" : "人机验证没过，重新拖一下再试";
+            if (!$ok) return "人机验证没过，重新拖一下再试";
+            // 一条挑战只能换一次登录：不消费 nonce 的话，抓到一次合法请求
+            // 就能把同一份 cap_* 无限重放（攻击者不用真的拖滑块）。
+            if (!self::consume($pdo, $token)) return "这条验证已经用过了，刷新页面再拖一次";
+            return "";
         }
         $p     = self::active($pdo);
         $token = self::scalar($fields, "cap3");
@@ -158,7 +164,7 @@ final class Captcha {
     }
 
     /** 校验一条内建挑战：签名、有效期、位置、耗时、轨迹 */
-    public static function verify(string $token, int $offset, int $ms, int $moves): bool {
+    public static function verify(string $token, int $offset, int $ms, int $moves, string $path = ""): bool {
         $parts = explode(".", $token);
         if (count($parts) !== 4) return false;
         [$t, $exp, $nonce, $sig] = $parts;
@@ -168,6 +174,53 @@ final class Captcha {
         if (abs($offset - (int) $t) > self::TOL) return false;
         if ($ms < self::MIN_MS || $ms > self::TTL) return false;
         if ($moves < self::MIN_MOVES) return false;
+        if (!self::verifyPath($path, $offset)) return false;
+        return true;
+    }
+
+    /**
+     * 轨迹校验：只报「拖了几下」的话，脚本随手填个 5 就能过。
+     * 这里要求前端真的上报采样点，轨迹大体单调、起点靠左、终点落在缺口附近。
+     * 挡不住蓄意伪造（一维滑块本质就是这个水平），但能把「抓到一次答案无限重放」
+     * 变成「每次都得重新开一条挑战」。
+     */
+    private static function verifyPath(string $path, int $offset): bool {
+        if ($path === "" || strlen($path) > 512) return false;
+        $pts = [];
+        foreach (explode(",", $path) as $one) {
+            $one = trim($one);
+            if (!is_numeric($one)) return false;
+            $pts[] = (float) $one;
+            if (count($pts) > 64) return false;
+        }
+        if (count($pts) < self::MIN_MOVES) return false;
+        if ($pts[0] > 5) return false;
+        if (abs($pts[count($pts) - 1] - $offset) > 6) return false;
+        // 大体单调：允许手抖回退 1 个百分点
+        for ($i = 1; $i < count($pts); $i++) {
+            if ($pts[$i] < $pts[$i - 1] - 1) return false;
+        }
+        return true;
+    }
+
+    /** 记下这条挑战已经用过；重复使用（主键冲突）返回 false */
+    private static function consume(PDO $pdo, string $token): bool {
+        $parts = explode(".", $token);
+        $nonce = $parts[2] ?? "";
+        if (!preg_match('/^[0-9a-f]{12}$/', $nonce)) return false;
+        try {
+            $pdo->prepare("INSERT INTO captcha_used (nonce, used_at) VALUES (?, ?)")->execute([$nonce, self::now()]);
+        } catch (\Throwable $e) {
+            $msg = strtolower($e->getMessage());
+            // 主键冲突 = 这条挑战已经用过了；其它异常（老库还没建表之类）放行，别把人挡在门外
+            $dup = strpos($msg, "duplicate") !== false || strpos($msg, "unique") !== false || strpos($msg, "constraint") !== false;
+            return !$dup;
+        }
+        // 顺手清掉两倍有效期以前的记录，表别无限长
+        try {
+            $pdo->prepare("DELETE FROM captcha_used WHERE used_at < ?")->execute([self::now() - self::TTL * 2]);
+        } catch (\Throwable $e) {
+        }
         return true;
     }
 

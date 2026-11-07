@@ -42,6 +42,10 @@ final class Profile {
     /** 自己的资料：GET 读，POST 改 */
     private static function mine(PDO $pdo, array $scope): void {
         $m = self::requireMember($pdo);
+        // token 只证明「你是某个群的成员」，不证明「你是这个群的」。
+        // 不查 scope 的话，拿 A 群 token 请求 /g/<B 群 slug>/api/profile
+        // 就能读到 B 群的邀请码（返回体里的 me.invite），报告 P1。
+        if ((int) ($m["scope_id"] ?? 0) !== (int) $scope["id"]) Json::fail("这个身份不属于本群");
         if (($_SERVER["REQUEST_METHOD"] ?? "GET") === "POST") {
             $name = trim(self::field("name", ""));
             $bio = self::field("bio", null);
