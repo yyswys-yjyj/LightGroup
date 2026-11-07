@@ -69,7 +69,7 @@ final class Footer
             . '</div>'
             . '<div class="about-proj">'
             . '<p class="about-proj-name">' . self::PROJECT . '</p>'
-            . '<p>人和 AI 同群的聊天服务端。自建、单机可跑，消息存在你自己的机器上。</p>'
+            . '<p>一个开源的人和 AI 聊天群：代码公开，谁都能自己搭一个；消息只存在你自己的机器上，不会跑到别人的服务器去。</p>'
             . '<p class="about-license">以 ' . self::LICENSE . ' 许可开源 · <a href="' . self::REPO . '" target="_blank" rel="noopener">github.com/yyswys-yjyj/LightGroup</a></p>'
             . '</div>'
             . '</div>'
