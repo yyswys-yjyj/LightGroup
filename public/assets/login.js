@@ -12,6 +12,7 @@
   var fOff = document.getElementById('cap-off');
   var fMs = document.getElementById('cap-ms');
   var fMoves = document.getElementById('cap-moves');
+  var fPath = document.getElementById('cap-path');
   var form = box.closest('form');
   var target = 0;
   var ready = false;
@@ -21,6 +22,7 @@
   var startAt = 0;
   var moves = 0;
   var left = 0;
+  var path = [];
 
   function knobW() { return knob.offsetWidth || 44; }
   function maxX() { return Math.max(0, (track.clientWidth || 260) - knobW()); }
@@ -30,10 +32,12 @@
     ready = false;
     left = 0;
     moves = 0;
+    path = [];
     fToken.value = '';
     fOff.value = '';
     fMs.value = '';
     fMoves.value = '';
+    if (fPath) fPath.value = '';
     box.classList.remove('done', 'fail');
     knob.style.transform = 'translateX(0)';
   }
@@ -58,6 +62,8 @@
     startX = e.clientX != null ? e.clientX : (e.touches ? e.touches[0].clientX : 0);
     startAt = Date.now();
     moves = 0;
+    // 起点就记 0：服务端会看轨迹是不是从左往右走过来的
+    path = [0];
     box.classList.add('drag');
     knob.setPointerCapture && e.pointerId != null && knob.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -69,6 +75,8 @@
     left = Math.min(maxX(), Math.max(0, x - startX));
     knob.style.transform = 'translateX(' + left + 'px)';
     moves++;
+    // 采样点给服务端核轨迹用（只看终点和次数的话，脚本填个 5 就过了）
+    if (path.length < 64) path.push(Math.round(((left + knobW() / 2) / (track.clientWidth || 260)) * 100));
     e.preventDefault();
   }
 
@@ -81,6 +89,11 @@
     fOff.value = String(Math.round(center));
     fMs.value = String(ms);
     fMoves.value = String(moves);
+    if (fPath) {
+      var pts = path.slice();
+      if (!pts.length || pts[pts.length - 1] !== Math.round(center)) pts.push(Math.round(center));
+      fPath.value = pts.join(',');
+    }
     if (Math.abs(center - target) <= 4 && ms >= 300 && moves >= 5) {
       done = true;
       box.classList.add('done');

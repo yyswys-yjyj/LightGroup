@@ -247,6 +247,10 @@ final class Schema {
                 . " created_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_join_guard_ip ON join_guard(ip, created_at)",
+            // 用过的验证码挑战：一条挑战只能换一次会话，堵掉「离线构造同一份答案重放」
+            "CREATE TABLE IF NOT EXISTS captcha_used ("
+                . "nonce VARCHAR(32) NOT NULL PRIMARY KEY, used_at BIGINT NOT NULL DEFAULT 0"
+                . ")$suffix",
             "CREATE TABLE IF NOT EXISTS todo_done ("
                 . "todo_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
                 . " done_at BIGINT NOT NULL DEFAULT 0,"

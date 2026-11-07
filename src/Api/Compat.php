@@ -204,6 +204,8 @@ final class Compat {
         $name   = Input::get("name");
         $invite = Input::get("invite");
         if ($name === "" || mb_strlen($name) > 24) Json::fail("昵称不能为空，且不超过 24 个字");
+        // 邀请码只有这一个秘密，试错次数必须限；不然「邀请码不正确」就是一个可枚举的判据
+        self::rateLimit($pdo, "join:" . self::clientIp(), 20, "试得太频繁了，过几分钟再来");
         if ($invite !== (string) $scope["invite"]) Json::fail("邀请码不正确");
 
         // 门禁开着的时候账号是两层的：OAuth 主账号 → 群里的业务账号。
@@ -300,13 +302,23 @@ final class Compat {
         $invite = Input::get("invite");
         $owner  = Input::get("owner");
         $name   = Input::get("name");
-        if ($invite !== (string) $scope["invite"]) Json::fail("邀请码不正确");
+
+        // 建 AI 身份也要过门禁：门禁下账号是「OAuth 主账号 → 业务账号」两层，
+        // 脚本拿一个邀请码就能建出没有主账号的幽灵 AI，等于把门禁架空。
+        if (self::setting($pdo, "auth.mode", "none") === "oauth") {
+            Json::fail("本站开启了 OAuth 门禁，请先用第三方账号登录，再在网页里给 AI 建身份");
+        }
+        // 有邀请码就能无限建 AI 的话，名额再多也顶不住脚本刷
+        self::rateLimit($pdo, "link:" . self::clientIp(), 20, "建 AI 太频繁了，过几分钟再试");
+
+        // 邀请码错和主人不存在合并成一句话：分开报就是一个邀请码枚举器
+        if ($invite !== (string) $scope["invite"]) Json::fail("邀请码或主人不对");
         if ($name === "" || mb_strlen($name) > 24) Json::fail("AI 名字不能为空，且不超过 24 个字");
 
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? AND kind = 'human' LIMIT 1");
         $st->execute([(int) $scope["id"], $owner]);
         $human = $st->fetch();
-        if (!$human) Json::fail("找不到主人：" . $owner);
+        if (!$human) Json::fail("邀请码或主人不对");
         if ((int) $human["banned"] === 1) Json::fail("主人的账号已被封禁");
 
         $st2 = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
@@ -1435,7 +1447,9 @@ final class Compat {
         if (($_SERVER["REQUEST_METHOD"] ?? "GET") === "POST") {
             $css = (string) Input::get("css");
             if (mb_strlen($css) > 20000) Json::fail("样式最多 2 万字符");
-            if (preg_match("#</style|@import|expression\(|url\(\s*['\"]?https?://#i", $css)) {
+            // 只放行内联 data:image，其余 url() 一律拒：协议相对地址（url(//x)）
+            // 和相对路径都能绕开「只拦 http(s)」的旧规则，把访客的 IP 送给第三方。
+            if (preg_match("#</style|@import|expression\(|javascript:|behavior\s*:|url\(\s*['\"]?(?!data:image/)#i", $css)) {
                 Json::fail("样式里不能有外部资源或标签");
             }
             $pdo->prepare("UPDATE members SET styles_css = ? WHERE id = ?")->execute([$css, (int) $m["id"]]);
@@ -1589,17 +1603,62 @@ final class Compat {
         Json::ok(["role" => self::roleOf($pdo, $m), "name" => (string) $m["name"]]);
     }
 
-    /** 账号密码登录：管理员账号存在 accounts 表，登录后用同一个身份进网页 */
+    /**
+     * 账号密码登录：管理员账号存在 accounts 表，登录后用同一个身份进网页。
+     * 后台的登录弹窗（admin.js renderLogin）也走这条接口，所以节流口径
+     * 必须和网页登录（Web\Login）对齐：IP 松一点、账号名紧一点。
+     */
     private static function passwordLogin(PDO $pdo, array $scope): void {
         $name = trim((string) Input::get("name"));
         $pass = (string) Input::get("password");
         if ($name === "" || $pass === "") Json::fail("账号和密码都要填");
+
+        // 先看是不是被节流了，省得再去验密码（爆破面小不等于可以不限速）
+        $keys = ["ip:" . self::clientIp() => 10];
+        $keys["admin:" . $name] = 5;
+        foreach ($keys as $k => $limit) {
+            $wait = Throttle::wait($pdo, $k, $limit);
+            if ($wait !== null) Json::fail("试了太多次，请 " . $wait . " 秒后再来");
+        }
+
+        $t0 = microtime(true);
         $st = $pdo->prepare("SELECT * FROM accounts WHERE name = ? AND deleted_at IS NULL LIMIT 1");
         $st->execute([$name]);
         $a = $st->fetch();
-        if (!$a || empty($a["pass_hash"]) || !password_verify($pass, (string) $a["pass_hash"])) {
+        if (!$a || empty($a["pass_hash"])) {
+            // 账号不存在时也跑一次 bcrypt：不然「175ms 没这个号 / 450ms 有」
+            // 本身就是一个账号枚举器，慢的那一边等于告诉对面「这个名字存在」。
+            password_verify($pass, self::DUMMY_HASH);
+            self::authDelay($t0);
+            foreach (array_keys($keys) as $k) Throttle::fail($pdo, $k);
             Json::fail("账号或密码不对");
         }
+        if (!password_verify($pass, (string) $a["pass_hash"])) {
+            self::authDelay($t0);
+            foreach (array_keys($keys) as $k) Throttle::fail($pdo, $k);
+            Json::fail("账号或密码不对");
+        }
+
+        // 门禁开着的时候业务账号只能走 OAuth，这条接口服务的是管理员后台，
+        // 所以只放行 admin / super；别的角色在这里拿到会话就等于绕过门禁。
+        if (self::setting($pdo, "auth.mode", "none") === "oauth"
+            && !in_array((string) ($a["role"] ?? ""), ["admin", "super"], true)) {
+            self::authDelay($t0);
+            foreach (array_keys($keys) as $k) Throttle::fail($pdo, $k);
+            Json::fail("本站开启了 OAuth 门禁，请用第三方账号登录");
+        }
+
+        // 开了人机验证的站点，登录也要过这一道；前端没带 cap_* 时按节流兜底，
+        // 免得后台弹窗（没有滑块控件）被这条规则锁死。
+        if (Captcha::enabled($pdo) && self::hasCaptcha()) {
+            $why = Captcha::check($pdo, self::captchaFields());
+            if ($why !== "") {
+                self::authDelay($t0);
+                foreach (array_keys($keys) as $k) Throttle::fail($pdo, $k);
+                Json::fail($why);
+            }
+        }
+
         if ((int) $a["banned"] === 1) Json::fail("这个账号被停用了");
         $st = $pdo->prepare("SELECT * FROM members WHERE account_id = ? AND scope_id = ? AND deleted_at IS NULL ORDER BY id LIMIT 1");
         $st->execute([(int) $a["id"], (int) $scope["id"]]);
@@ -1611,8 +1670,52 @@ final class Compat {
         }
         if (!$m) Json::fail("这个账号在本群没有身份");
         if ((int) $m["banned"] === 1) Json::fail("该账号已被封禁");
+        foreach (array_keys($keys) as $k) Throttle::clear($pdo, $k);
         Session::login($pdo, $m);
         Json::ok(["role" => self::roleOf($pdo, $m), "name" => (string) $m["name"]]);
+    }
+
+    /**
+     * 账号不存在时拿来陪跑的 bcrypt hash（密码是随机的，谁也撞不上）。
+     * 目的只有一个：让「这个账号不存在」和「密码错了」花一样的时间。
+     */
+    private const DUMMY_HASH = '$2y$10$bccLVa3qCXU58empO0tpleg4Hpb1hSmY69c48TjbfPoTrZ/6uqCUm';
+
+    /** 请求方 IP：只在服务端取值，别信 X-Forwarded-For（那串是客户端能改的） */
+    private static function clientIp(): string {
+        return (string) ($_SERVER["REMOTE_ADDR"] ?? "");
+    }
+
+    /** 把一次认证请求至少拖到 300ms，抹掉「查得快 = 没这个号」的时间差 */
+    private static function authDelay(float $t0): void {
+        $spent = microtime(true) - $t0;
+        if ($spent < 0.30) usleep((int) ((0.30 - $spent) * 1000000));
+    }
+
+    /** 请求里带没带人机验证字段（内建 slider 与第三方 widget 都算） */
+    private static function hasCaptcha(): bool {
+        foreach (["cap_token", "cap3", "cf-turnstile-response", "h-captcha-response", "g-recaptcha-response"] as $k) {
+            if ((string) Input::get($k) !== "") return true;
+        }
+        return false;
+    }
+
+    /** 把请求体转成 Captcha::check() 认识的一维数组 */
+    private static function captchaFields(): array {
+        $out = [];
+        foreach (["cap_token", "cap_off", "cap_ms", "cap_moves", "cap3", "cf-turnstile-response", "h-captcha-response", "g-recaptcha-response"] as $k) {
+            $out[$k] = (string) Input::get($k);
+        }
+        return $out;
+    }
+
+    /**
+     * 计数型限流（Throttle 的窗口是 5 分钟）：link 这类「有邀请码就能无限刷」
+     * 的接口，每次调用都记一笔，超过上限就拒。
+     */
+    private static function rateLimit(PDO $pdo, string $key, int $limit, string $msg): void {
+        if (Throttle::wait($pdo, $key, $limit) !== null) Json::fail($msg);
+        Throttle::fail($pdo, $key);
     }
 
 

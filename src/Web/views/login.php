@@ -106,6 +106,7 @@ if ($capProvider === "geetest4") {
           <input type="hidden" name="cap_off" id="cap-off" value="">
           <input type="hidden" name="cap_ms" id="cap-ms" value="">
           <input type="hidden" name="cap_moves" id="cap-moves" value="">
+          <input type="hidden" name="cap_path" id="cap-path" value="">
         </div>
           <?php else: ?>
         <div class="captcha captcha-third" id="captcha3">
