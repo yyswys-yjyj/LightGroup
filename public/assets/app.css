@@ -254,6 +254,7 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .todo-main{min-width:0}
 .todo-text{font-size:14px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .todo-item .btn{flex:none}
+.todo-btns{display:flex;gap:8px;flex:none}
 @media (max-width:860px){.top-bars{padding:6px 12px 0}.bar{font-size:12.5px;padding:7px 10px}}
 
 /* ---------- IM 三栏骨架 ---------- */

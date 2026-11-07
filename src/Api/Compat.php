@@ -525,6 +525,7 @@ final class Compat {
                 "md"     => self::renderMd((string) $r["text"], $tImgUrl, $tVoiceUrl, (int) ($r["dur"] ?? 0), $tCard),
                 "img_url" => $tImgUrl,
                 "voice_url" => $tVoiceUrl,
+                "mine"   => (int) $r["created_by"] === $meId,
                 "at"     => (int) $r["created_at"],
                 "done"   => $done,
                 "total"  => self::memberCount($pdo, $scope),
@@ -618,13 +619,28 @@ final class Compat {
             $chk->execute([$id, ...self::scopeIds($pdo, $scope)]);
             if (!$chk->fetch()) Json::fail("待办不在了");
             try {
-                $ins = $pdo->prepare("INSERT OR REPLACE INTO todo_done (todo_id, member_id, done_at) VALUES (?,?,?)");
+                // SQLite 用 INSERT OR REPLACE，MySQL 只有 REPLACE INTO；写死一种会在另一种库上直接语法错
+                $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === "mysql"
+                    ? "REPLACE INTO todo_done (todo_id, member_id, done_at) VALUES (?,?,?)"
+                    : "INSERT OR REPLACE INTO todo_done (todo_id, member_id, done_at) VALUES (?,?,?)";
+                $ins = $pdo->prepare($sql);
                 $ins->execute([$id, (int) $m["id"], lg_now()]);
-            } catch (Throwable $e) {
+            } catch (\Throwable $e) {
                 $pdo->prepare("DELETE FROM todo_done WHERE todo_id = ? AND member_id = ?")->execute([$id, (int) $m["id"]]);
             }
         } elseif ($op === "close") {
-            self::requireModerator($pdo);
+            // 管理员能撤任意待办，发起人能撤自己发起的
+            $ids = self::scopeIds($pdo, $scope);
+            $in = implode(",", array_fill(0, count($ids), "?"));
+            $st = $pdo->prepare("SELECT created_by FROM todos WHERE id = ? AND scope_id IN ($in) AND closed_at IS NULL LIMIT 1");
+            $st->execute([$id, ...$ids]);
+            $row = $st->fetch();
+            if (!$row) Json::fail("待办不在了");
+            $role = self::roleOf($pdo, $m);
+            $isAdmin = $role === "admin" || $role === "super";
+            if (!$isAdmin && (int) $row["created_by"] !== (int) $m["id"]) {
+                Json::fail("只有管理员或发起人能撤掉这条待办");
+            }
             $st = $pdo->prepare("UPDATE todos SET closed_at = ? WHERE id = ? AND scope_id = ?");
             $st->execute([lg_now(), $id, (int) $scope["id"]]);
         } else {
@@ -1298,7 +1314,10 @@ final class Compat {
         $token = Input::get("token");
         $key = $token !== "" ? Token::hash($token) : "api:" . (int) $m["id"];
         try {
-            $st = $pdo->prepare("INSERT OR REPLACE INTO waiters (token_hash, expires_at) VALUES (?, ?)");
+            $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === "mysql"
+                ? "REPLACE INTO waiters (token_hash, expires_at) VALUES (?, ?)"
+                : "INSERT OR REPLACE INTO waiters (token_hash, expires_at) VALUES (?, ?)";
+            $st = $pdo->prepare($sql);
             $st->execute([$key, (int) (microtime(true) * 1000) + $secs * 1000 + 5000]);
         } catch (\Throwable $e) {
             // 记录失败不影响等待本身

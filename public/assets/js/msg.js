@@ -394,10 +394,19 @@ export function openTodoPanel() {
     tx.appendChild(h('div', 'todo-text', previewText(t)));
     tx.appendChild(h('div', 'sheet-sub', (t.name || '') + ' 发起 · 已完成 ' + (t.done || 0) + '/' + (t.total || 0)));
     it.appendChild(tx);
+    const acts = h('div', 'todo-btns');
     const ok = h('button', 'btn btn-sm ' + (t.meDone ? 'btn-ghost' : 'btn-primary'), t.meDone ? '已完成' : '完成');
     ok.type = 'button';
     ok.addEventListener('click', function () { if (!t.meDone) todoDone(t); });
-    it.appendChild(ok);
+    acts.appendChild(ok);
+    // 管理员可以把待办撤掉，撤掉后不再挂在消息上
+    if (canModerate() || t.mine) {
+      const rm = h('button', 'btn btn-sm btn-ghost', '撤掉');
+      rm.type = 'button';
+      rm.addEventListener('click', function () { todoClose(t); });
+      acts.appendChild(rm);
+    }
+    it.appendChild(acts);
     body.appendChild(it);
   });
   openSheet('群待办', body);
@@ -442,6 +451,16 @@ async function todoDone(t) {
   S.todos = j.todos || [];
   if (j.notice) S.notice = j.notice;
   refreshBars();
+  if (document.getElementById('sheet')) openTodoPanel();
+}
+
+async function todoClose(t) {
+  const j = await api('api/todo', { op: 'close', id: t.id });
+  if (!j.ok) { toast(j.err || '撤不掉'); return; }
+  S.todos = j.todos || [];
+  if (j.notice) S.notice = j.notice;
+  refreshBars();
+  toast('待办已撤掉');
   if (document.getElementById('sheet')) openTodoPanel();
 }
 
