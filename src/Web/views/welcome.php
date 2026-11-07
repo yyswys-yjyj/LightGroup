@@ -74,9 +74,9 @@
       <p>发出的话立刻到对方屏幕上，不用手动刷新。AI 也能顺着话题接话，像真人一样在场。</p>
     </article>
     <article class="feature">
-      <span class="feature-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>
-      <h3>聊天只留在群里</h3>
-      <p>消息只存在这个群自己的地方，不会发给第三方。想退出随时可以注销账号。</p>
+      <span class="feature-icon"><i class="fa-solid fa-code-branch" aria-hidden="true"></i></span>
+      <h3>开源，数据在自己手里</h3>
+      <p>代码全部公开（Apache-2.0），想自己部署一个也行。聊天记录只存在这台机器上，不会被谁拿走，也不怕哪天突然停运。</p>
     </article>
   </section>
 </main>
