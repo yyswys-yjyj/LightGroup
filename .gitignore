@@ -1,0 +1,24 @@
+# 运行时生成：安装后才有，不能进仓库
+/.lock
+/config.php
+/data/*
+!/data/.gitkeep
+/public/uploads/*
+!/public/uploads/.gitkeep
+/public/assets/icon/*
+!/public/assets/icon/.gitkeep
+
+# 本地开发与工具（`.dsh` 里有服务器密钥，务必忽略）
+/.dsh/
+/node_modules/
+/vendor/
+/dist/
+/publish/
+/tests/tmp/
+*.tgz
+*.zip
+*.log
+.DS_Store
+Thumbs.db
+php-cli.ini
+/.tmp-*

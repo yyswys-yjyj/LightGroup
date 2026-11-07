@@ -1,0 +1,488 @@
+/* LightGroup · 用户资料卡 / 资料页 / markdown 简介编辑器（由 profile.js 动态引入） */
+
+/* ---------- 悬浮资料卡 ---------- */
+.pf-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 74;
+  background: transparent;
+}
+
+.pf-pop {
+  position: fixed;
+  z-index: 75;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .18);
+  padding: 14px;
+  animation: pf-pop-in .14s ease-out;
+}
+
+@keyframes pf-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.pf-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pf-pop-i {
+  min-width: 0;
+}
+
+.pf-pop-n {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.pf-pop-n b {
+  font-weight: 600;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-pop-s {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pf-pop-bio {
+  margin-top: 10px;
+  max-height: 132px;
+  overflow: auto;
+  font-size: 13px;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.pf-pop-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.pf-pop-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 窄屏：贴底弹层 */
+.pf-pop.pf-pop-sheet {
+  left: 0 !important;
+  right: 0;
+  top: auto !important;
+  bottom: 0;
+  width: auto;
+  max-width: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  animation: pf-sheet-in .18s ease-out;
+}
+
+@keyframes pf-sheet-in {
+  from { transform: translateY(18px); opacity: .6; }
+  to { transform: none; opacity: 1; }
+}
+
+.pf-pop.pf-pop-sheet .pf-pop-bio {
+  max-height: 40vh;
+}
+
+/* ---------- 独立资料页 ---------- */
+.pf-page {
+  /* page-host 是 flex column，不写 width:100% 的话这一层会被内容挤成窄条，
+     max-width 根本轮不到生效，宽屏下卡片就缩在中间一小块 */
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 14px 14px 40px;
+}
+
+/* 窄屏纵向堆叠：身份卡在上，简介在下 */
+.pf-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 宽屏改成两栏：左身份卡 340，右简介吃掉剩下的宽度 */
+@media (min-width: 900px) {
+  .pf-page {
+    max-width: 940px;
+    padding-top: 30px;
+  }
+  .pf-page-body {
+    display: grid;
+    grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+    /* 两栏等高，右边简介再短也不会缩成一条 */
+    align-items: stretch;
+    gap: 16px;
+  }
+}
+
+.pf-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+/* 简介是独立卡片了，原来那条分隔线和上边距就不要了 */
+.pf-card-main .pf-card-bio {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.pf-page-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pf-page-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pf-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.pf-card-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pf-card-who {
+  min-width: 0;
+}
+
+.pf-card-n {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 18px;
+  color: var(--text);
+}
+
+.pf-card-n b {
+  font-weight: 600;
+}
+
+.pf-card-s {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pf-card-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pf-card-bio {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.pf-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pf-card-tag {
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+/* ---------- markdown 正文 ---------- */
+.md-body {
+  line-height: 1.6;
+}
+
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child { margin-bottom: 0; }
+
+.md-body p {
+  margin: 0 0 8px;
+}
+
+.md-body .pf-md-h {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.md-body .pf-md-h1 { font-size: 20px; }
+.md-body .pf-md-h2 { font-size: 18px; }
+.md-body .pf-md-h3 { font-size: 16px; }
+.md-body .pf-md-h4,
+.md-body .pf-md-h5,
+.md-body .pf-md-h6 { font-size: 14px; color: var(--text-dim); }
+
+.md-body .pf-md-ul,
+.md-body .pf-md-ol {
+  margin: 6px 0 8px;
+  padding-left: 20px;
+}
+
+.md-body .pf-md-ul li,
+.md-body .pf-md-ol li {
+  margin: 2px 0;
+}
+
+.md-body .pf-md-pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.md-body .pf-md-pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
+.md-body .pf-md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .92em;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.md-body .pf-md-quote {
+  margin: 8px 0;
+  padding: 4px 0 4px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
+.md-body .pf-md-hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md-body .pf-md-link {
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.md-body .pf-md-link:hover {
+  text-decoration: underline;
+}
+
+.md-body del {
+  color: var(--text-faint);
+}
+
+/* ---------- 简介编辑器 ---------- */
+.pf-ed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 编写区 + 预览区的外框：窄屏上下堆叠，宽屏左右分栏（见文件末尾 761px 那段） */
+.pf-ed-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pf-ed-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pf-ed-prev-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.pf-ed-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pf-ed-tool {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pf-ed-tool:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pf-ed-ta {
+  width: 100%;
+  min-height: 168px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+.pf-ed-ta:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pf-ed-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.pf-ed-prev {
+  min-height: 48px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pf-ed-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.pf-ed-cnt {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.pf-ed-cnt.pf-ed-over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* #/me 页上注入的 markdown 编辑入口 */
+.pf-md-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.pf-md-tip {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* 头像可点 */
+.ava.ava-click {
+  cursor: pointer;
+}
+
+.ava.ava-click:hover {
+  filter: brightness(1.08);
+}
+
+/* 宽屏编辑器：弹层放宽，左边写右边看 */
+@media (min-width: 761px) {
+  .pf-ed-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    overflow: hidden;
+  }
+  .pf-ed-ta {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 320px;
+    resize: none;
+  }
+  .pf-ed-prev {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .pf-page {
+    padding: 10px 10px 32px;
+  }
+  .pf-card {
+    padding: 14px;
+  }
+  .pf-ed-ta {
+    min-height: 140px;
+  }
+}
