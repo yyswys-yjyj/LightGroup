@@ -38,16 +38,6 @@ if (preg_match('#^/(assets|vendor)/#', $path)) {
     exit;
 }
 
-// 更新清单：文件在项目根的 api/ 目录（随代码一起提交、一起发版），由这里输出。
-// 不放进 public/，免得同一份清单在源码和生产各维护一遍。
-if ($path === "/api/manifest.json") {
-    header("Content-Type: application/json; charset=utf-8");
-    header("Cache-Control: no-store");
-    $file = dirname(__DIR__) . "/api/manifest.json";
-    echo is_file($file) ? (string) file_get_contents($file) : "{}";
-    exit;
-}
-
 // Operit 兼容层：插件把 base 配成 https://host/g/，后面直接拼 api/me
 if ($path === "/g" || str_starts_with($path, "/g/")) {
     Entry::handle();

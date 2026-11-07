@@ -1215,25 +1215,42 @@ final class Admin {
     // ---------------------------------------------------------------- 更新检查
 
     /**
-     * 更新清单放在项目根的 api/manifest.json，随代码一起提交、一起发版。
-     * 这里读的是站点自己的那份（/api/manifest.json），所以离线部署也能查。
+     * 更新服务器就是 GitHub：清单是仓库里的 api/manifest.json，直接取原文，
+     * 拿不到再退 jsDelivr（国内网络更稳）。站点自己不再托管清单，
+     * 否则「本站副本总是和代码同版本」，永远查不出真正的更新。
      */
+    private const UPDATE_REPO   = "yyswys-yjyj/LightGroup";
+    private const UPDATE_BRANCH = "main";
+
     private static function updateApi(PDO $pdo): void {
         $current = self::currentVersion();
-        $url = trim(self::setting($pdo, "update.manifest_url", ""));
-        if ($url === "") $url = self::origin() . "/api/manifest.json";
+        $sources = [
+            "github"   => "https://raw.githubusercontent.com/" . self::UPDATE_REPO . "/" . self::UPDATE_BRANCH . "/api/manifest.json",
+            "jsdelivr" => "https://cdn.jsdelivr.net/gh/" . self::UPDATE_REPO . "@" . self::UPDATE_BRANCH . "/api/manifest.json",
+        ];
 
         $latest = null;
         $error  = "";
-        $raw    = self::httpText($url);
+        $raw    = null;
+        $used   = "";
+        $from   = "";
+        foreach ($sources as $name => $url) {
+            $body = self::httpText($url);
+            if ($body === null) continue;
+            $raw  = $body;
+            $used = $url;
+            $from = $name;
+            break;
+        }
+
         if ($raw === null) {
-            $error = "拉不到更新清单（" . $url . "）";
+            $error = "拉不到更新清单（GitHub 和 jsDelivr 都试过了，可能是服务器不能出网）";
         } else {
             $j = json_decode($raw, true);
             if (!is_array($j)) {
-                $error = "更新清单不是合法 JSON";
+                $error = "更新清单不是合法 JSON（" . $used . "）";
             } elseif (!isset($j["version"]) || (string) $j["version"] === "") {
-                $error = "更新清单里没有 version 字段";
+                $error = "更新清单里没有 version 字段（" . $used . "）";
             } else {
                 $latest = [
                     "version"     => (string) $j["version"],
@@ -1246,7 +1263,8 @@ final class Admin {
 
         Json::ok([
             "current"      => $current,
-            "manifest_url" => $url,
+            "manifest_url" => $used,
+            "source"       => $from,
             "latest"       => $latest,
             "has_update"   => $latest !== null && version_compare($latest["version"], $current, ">"),
             "error"        => $error,
@@ -1263,13 +1281,6 @@ final class Admin {
             if ($v !== "") return $v;
         }
         return "0.1.0";
-    }
-
-    private static function origin(): string {
-        $https = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off")
-            || (($_SERVER["HTTP_X_FORWARDED_PROTO"] ?? "") === "https");
-        $host = (string) ($_SERVER["HTTP_HOST"] ?? "localhost");
-        return ($https ? "https" : "http") . "://" . $host;
     }
 
     /** 拉一小段文本（更新清单），超时/失败都返回 null，不抛 */
