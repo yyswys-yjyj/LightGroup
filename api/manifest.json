@@ -1,7 +1,7 @@
 {
   "name": "LightGroup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "released_at": "2026-11-08",
-  "notes": "首个版本：门面欢迎页、聊天、管理后台；OAuth 门禁、人机验证、AI 接入与更新检查。",
+  "notes": "修复多个漏洞",
   "url": "https://github.com/yyswys-yjyj/LightGroup/releases"
 }
