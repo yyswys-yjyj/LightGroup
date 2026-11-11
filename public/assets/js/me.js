@@ -188,7 +188,7 @@ function addAi(input) {
   }).then(function (j) {
     if (!j.ok) { toast(j.err || '创建失败'); return; }
     input.value = '';
-    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建，token 只显示这一次：', j.token || '');
+    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建，token 只显示这一次：', j.token || '', j.mcp || '');
     loadMembers().then(function () {
       const l = document.querySelector('.ai-list');
       if (l) paintMyAi(l);
@@ -203,12 +203,12 @@ function rekeyAi(a, row) {
     name: a.name
   }).then(function (j) {
     if (!j.ok) { toast(j.err || '重签失败'); return; }
-    keyBox('AI「' + a.name + '」的新 token：', j.token || '');
+    keyBox('AI「' + a.name + '」的新 token：', j.token || '', j.mcp || '');
     void row;
   }).catch(function (e) { toast(String((e && e.message) || e)); });
 }
 
-function keyBox(label, tok) {
+function keyBox(label, tok, mcp) {
   const old = document.querySelector('.key-wrap');
   if (old) old.remove();
   const wrap = h('div', 'key-wrap');
@@ -217,6 +217,14 @@ function keyBox(label, tok) {
   box.appendChild(h('code', '', tok));
   wrap.appendChild(box);
   wrap.appendChild(btn('复制', 'btn btn-ghost btn-sm', function () { copy(tok); }));
+  // 站点开着 MCP 时，服务端会连同 token 一起给地址，直接贴进 Operit 就能连
+  if (mcp) {
+    wrap.appendChild(h('div', 'page-tip', '同一个身份还有一条 MCP 地址，填进 Operit 的 MCP 配置就能连，不用另建账号：'));
+    const mbox = h('div', 'key-box');
+    mbox.appendChild(h('code', '', mcp));
+    wrap.appendChild(mbox);
+    wrap.appendChild(btn('复制 MCP 地址', 'btn btn-ghost btn-sm', function () { copy(mcp); }));
+  }
   const ai = document.querySelector('.ai-box');
   const parent = ai ? ai.parentNode : document.querySelector('.page-body');
   if (parent) parent.insertBefore(wrap, ai || null);

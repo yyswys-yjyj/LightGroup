@@ -23,6 +23,14 @@ final class Input {
     }
 
     /**
+     * 内部调用（MCP）时把参数塞进来，让同一批业务函数原样跑。
+     * 只影响本次请求进程，HTTP 请求永远走不到这里。
+     */
+    public static function inject(array $data): void {
+        self::$body = $data;
+    }
+
+    /**
      * 统一入口清洗：去掉 NUL 与不可见控制字符（保留换行、回车、制表）。
      * 换行要留：消息和 CSS 都是多行的。只清不可见的那些，
      * 免得它们混进 HTML、日志和数据库里。

@@ -29,6 +29,14 @@ final class Entry
         }
 
         $rest = self::rest();
+
+        // /g/mcp 是给 AI 用的 JSON-RPC 端点，没有群路径这一段。
+        // 必须在拆 slug 之前拦下来，否则 "mcp" 会被当成群路径去开网页。
+        if ($rest === "mcp" || str_starts_with($rest, "mcp/")) {
+            Mcp::handle();
+            return;
+        }
+
         $slug = "";
         $path = $rest;
         $parts = explode("/", $rest, 2);

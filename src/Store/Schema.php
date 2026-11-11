@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 9;
+    public const VERSION = 10;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -53,6 +53,8 @@ final class Schema {
                 "pinned_by"  => "BIGINT NULL",
                 "conv_id"    => "BIGINT NULL",
                 "sys"        => "TINYINT NOT NULL DEFAULT 0",
+                // AI 自己报的模型名（MCP 那边 chat_send 会带上），显示在名字旁边
+                "model"      => "VARCHAR(40) NULL",
             ],
         ];
         foreach ($wanted as $table => $cols) {
@@ -189,7 +191,7 @@ final class Schema {
                 . " reply_to BIGINT NULL, deleted_at BIGINT NULL, deleted_by BIGINT NULL,"
                 . " voice $text NULL, dur INT NOT NULL DEFAULT 0,"
                 . " pinned_at BIGINT NULL, pinned_by BIGINT NULL, conv_id BIGINT NULL,"
-                . " sys TINYINT NOT NULL DEFAULT 0"
+                . " sys TINYINT NOT NULL DEFAULT 0, model VARCHAR(40) NULL"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_msg_scope ON messages(scope_id, id)",
             "CREATE INDEX {$idx}idx_msg_conv ON messages(conv_id, id)",

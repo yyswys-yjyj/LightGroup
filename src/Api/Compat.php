@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
 use LightGroup\Store\Db;
+use LightGroup\Web\Site;
 use PDO;
 
 final class Compat {
@@ -26,6 +27,15 @@ final class Compat {
             return;
         }
 
+        self::dispatch($pdo, $scope, $path);
+    }
+
+    /**
+     * 路由表。网页聊天走 handle() → 这里；MCP 也是调这里，
+     * 所以「AI 用 token 调 MCP」和「AI 用 token 调 chat API」是同一个实现，
+     * 认证、校验、落库、互通逻辑只有一份。
+     */
+    public static function dispatch(PDO $pdo, array $scope, string $path): void {
         switch ($path) {
             case "join":      self::join($pdo, $scope); break;
             case "api/link":  self::link($pdo, $scope); break;
@@ -366,7 +376,7 @@ final class Compat {
             $plain = Token::issue();
             $up = $pdo->prepare("UPDATE members SET token_hash = ?, last_seen_at = ? WHERE id = ?");
             $up->execute([Token::hash($plain), lg_now(), (int) $exist["id"]]);
-            Json::ok(["token" => $plain, "bot" => ["name" => $exist["name"]], "again" => true]);
+            Json::ok(["token" => $plain, "bot" => ["name" => $exist["name"]], "again" => true, "mcp" => self::mcpUrl($pdo, $plain)]);
         }
 
         self::checkAiQuota($pdo, $scope, (int) $human["id"]);
@@ -378,7 +388,16 @@ final class Compat {
             $human["oauth_id"], Token::hash($plain), lg_now(), lg_now(),
         ]);
 
-        Json::ok(["token" => $plain, "bot" => ["name" => $name]]);
+        Json::ok(["token" => $plain, "bot" => ["name" => $name], "mcp" => self::mcpUrl($pdo, $plain)]);
+    }
+
+    /**
+     * 给 AI 用的 MCP 地址。站点关掉 MCP 时给空串，前端就不显示这一段。
+     * token 每次签发都不一样，所以地址只能现拼，不能存库。
+     */
+    private static function mcpUrl(PDO $pdo, string $token): string {
+        if (self::setting($pdo, "mcp.enabled", "1") !== "1") return "";
+        return Site::baseUrl() . "mcp?k=" . rawurlencode($token);
     }
 
     /**
@@ -810,7 +829,7 @@ final class Compat {
             if (count($convIds) > 1) $inC = implode(",", array_fill(0, count($convIds), "?"));
         }
         $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
-             . " m.voice, m.dur, m.pinned_at, m.sys,"
+             . " m.voice, m.dur, m.pinned_at, m.sys, m.model,"
              . " u.id AS author_id, u.name AS author, u.kind AS author_kind, u.avatar AS author_avatar,"
              . " u.deleted_at AS author_deleted, o.name AS owner_name,"
              . " r.text AS r_text, r.img AS r_img, r.voice AS r_voice, r.dur AS r_dur, r.card_json AS r_card,"
@@ -862,7 +881,8 @@ final class Compat {
                 "q"        => null,
                 "voice"    => "",
                 "dur"      => 0,
-                "model"    => "",
+                // MCP 那边 chat_send 会带上自己用的模型名，好让人知道这句话是谁说的
+                "model"    => (string) ($r["model"] ?? ""),
             ];
             if (!empty($r["sys"])) { $msg["sys"] = 1; }
             if ((string) $r["author_kind"] === "ai" && $r["owner_name"] !== null) $msg["owner"] = $r["owner_name"];
@@ -1302,6 +1322,9 @@ final class Compat {
         $card = Input::raw("card");
         $voice = Input::get("voice");
         $dur   = Input::int("dur", 0);
+        // AI 客户端可以带上自己用的模型名，网页端显示在消息旁边
+        $model = trim((string) Input::get("model"));
+        if (mb_strlen($model) > 40) $model = mb_substr($model, 0, 40);
 
         // 站长的图片带 [img] 前缀，我们库里只存路径
         if (str_starts_with($img, "[img]")) $img = substr($img, 5);
@@ -1316,18 +1339,35 @@ final class Compat {
         $replyTo = self::replyId($pdo, $scope, $convId);
 
         $ts = lg_now();
-        $ins = $pdo->prepare(
-            "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur)"
-            . " VALUES (?,?,?,?,?,?,?,?,?,?)"
-        );
-        $ins->execute([
-            (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
-            $img !== "" ? $img : null,
-            $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
-            $replyTo,
-            $voice !== "" ? $voice : null,
-            $dur,
-        ]);
+        try {
+            $ins = $pdo->prepare(
+                "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur, model)"
+                . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+            );
+            $ins->execute([
+                (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
+                $img !== "" ? $img : null,
+                $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
+                $replyTo,
+                $voice !== "" ? $voice : null,
+                $dur,
+                $model !== "" ? $model : null,
+            ]);
+        } catch (\Throwable $e) {
+            // 还没跑到 Schema VERSION 10 的老库没有 model 列，退回落库
+            $ins = $pdo->prepare(
+                "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur)"
+                . " VALUES (?,?,?,?,?,?,?,?,?,?)"
+            );
+            $ins->execute([
+                (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
+                $img !== "" ? $img : null,
+                $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
+                $replyTo,
+                $voice !== "" ? $voice : null,
+                $dur,
+            ]);
+        }
         $id = (int) $pdo->lastInsertId();
 
         $up = $pdo->prepare("UPDATE members SET last_seen_at = ? WHERE id = ?");

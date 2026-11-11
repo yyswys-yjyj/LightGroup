@@ -451,10 +451,14 @@ final class Admin {
             "mail.pass"               => "secret",
             "mail.from"               => "email",
             "mail.from_name"          => "text",
+            // MCP：给 AI 用的 JSON-RPC 端点，默认开着；关掉后建 AI 不再下发地址
+            "mcp.enabled"             => "int",
         ];
         if ($method === "GET") {
             $out = [];
             foreach ($types as $k => $_) $out[$k] = self::setting($pdo, $k, "");
+            // 默认值不是空串，得单独取，否则后台开关会显示成「关」
+            $out["mcp.enabled"] = self::setting($pdo, "mcp.enabled", "1");
             // 密钥不回传明文：前端只显示「已配置」，留空保存表示不改
             $hasSecret = trim($out["oauth.client_secret"]) !== "";
             $out["oauth.client_secret"] = "";
