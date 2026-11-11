@@ -1375,13 +1375,10 @@ final class Admin {
     // ---------------------------------------------------------------- 更新检查
 
     /**
-     * 更新服务器就是 GitHub：清单是仓库里的 api/manifest.json，直接取原文，
-     * 拿不到再退 jsDelivr（国内网络更稳）。站点自己不再托管清单，
+     * 更新服务器就是 GitHub：版本和说明读仓库里的 api/manifest.json，
+     * 源码包下载时才去取 latest release。站点自己不再托管清单，
      * 否则「本站副本总是和代码同版本」，永远查不出真正的更新。
      */
-    private const UPDATE_REPO   = "yyswys-yjyj/LightGroup";
-    private const UPDATE_BRANCH = "main";
-
     private static function updateApi(PDO $pdo): void {
         $current = self::currentVersion();
         $rel = \LightGroup\Web\Updater::latest();
