@@ -52,18 +52,19 @@ final class Login {
             return;
         }
 
+        // 注销相关的请求也走 /login：public/index.php 里只有这一个入口是我们能接的，
+        // 加新路由要改那里，不归我管（见报告里给 Compat 的接法）。
+        // 必须排在门禁之前：注销用的是已经登录的网页会话，不是登录凭据，门禁拦它没道理。
+        $action = self::field("action");
+        if (str_starts_with($action, "account.")) {
+            Account::handle($pdo, $action);
+            return;
+        }
+
         // 开了 OAuth 门禁，账密这条路就关掉，管理员也走同一个第三方入口。
         // 只有第三方没配好时才放行（否则 IdP 一挂连后台都进不去，配置也没法修）。
         if (self::gateOn($pdo) && self::oauthReady($pdo)) {
             self::render($site, $pdo, $mode, $next, "本站开启了 OAuth 门禁，请用第三方账号登录", "");
-            return;
-        }
-
-        // 注销相关的请求也走 /login：public/index.php 里只有这一个入口是我们能接的，
-        // 加新路由要改那里，不归我管（见报告里给 Compat 的接法）。
-        $action = self::field("action");
-        if (str_starts_with($action, "account.")) {
-            Account::handle($pdo, $action);
             return;
         }
 

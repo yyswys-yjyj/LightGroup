@@ -14,6 +14,24 @@ use PDO;
  * 好友只存在于同一个作用域内，跨 scope 一律看不到对方。
  */
 final class Social {
+    /** 任意群里的有效成员（超管跨群加好友时用） */
+    private static function anyLive(PDO $pdo, int $id): ?array {
+        if ($id <= 0) return null;
+        $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ?: null;
+    }
+
+    /** 当前身份的主账号是不是超级管理员 */
+    private static function isSuper(PDO $pdo, array $me): bool {
+        $aid = (int) ($me["account_id"] ?? 0);
+        if ($aid <= 0) return false;
+        $st = $pdo->prepare("SELECT role FROM accounts WHERE id = ? LIMIT 1");
+        $st->execute([$aid]);
+        return (string) ($st->fetchColumn() ?: "") === "super";
+    }
+
     /** 归一化成 (小 id, 大 id)，写库时 a_id < b_id 是硬约束 */
     private static function pair(int $x, int $y): array {
         return $x < $y ? [$x, $y] : [$y, $x];
@@ -53,7 +71,12 @@ final class Social {
         $mine = (int) $me["id"];
         if ($targetId <= 0) Json::fail("要加谁？");
         if ($targetId === $mine) Json::fail("不能加自己");
-        if (self::scopeMember($pdo, $scope, $targetId) === null) Json::fail("找不到这个成员");
+        // 同一个群里的人照常加；只有超级管理员能跨群加，因为超管在每个群都有成员身份，
+        // 但网页上的当前身份只属于一个群，不加这条就永远加不到别的群里的自己人。
+        if (self::scopeMember($pdo, $scope, $targetId) === null) {
+            if (!self::isSuper($pdo, $me)) Json::fail("找不到这个成员");
+            if (self::anyLive($pdo, $targetId) === null) Json::fail("找不到这个成员");
+        }
 
         $row = self::row($pdo, $mine, $targetId);
         if ($row !== null) {

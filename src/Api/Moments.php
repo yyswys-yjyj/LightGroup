@@ -51,8 +51,17 @@ final class Moments {
 
     // ---------- 读 ----------
 
+    /** h_12 / a_3 / 12 都认，返回内部成员 id；不认识的返回 0 */
+    private static function midOf(string $raw): int {
+        $raw = trim($raw);
+        if ($raw === "") return 0;
+        if (preg_match('/^[ha]_(\d+)$/i', $raw, $m)) return (int) $m[1];
+        return ctype_digit($raw) ? (int) $raw : 0;
+    }
+
     private static function timeline(PDO $pdo, array $scope, array $me): void {
-        $cu = Input::int("cu", 0);
+        // u / cu 前端传的是 uid（h_12 / a_3），不能按整数读，否则全被当成 0、过滤失效
+        $cu = self::midOf(Input::get("cu"));
         if ($cu > 0) {
             self::commentsBy($pdo, $scope, $me, $cu);
             return;
@@ -77,7 +86,7 @@ final class Moments {
             $params[] = (int) $me["id"];
         }
         // 看别人的资料页：按成员过滤（仍受本作用域可见范围限制）
-        $u = Input::int("u", 0);
+        $u = self::midOf(Input::get("u"));
         if ($u > 0) {
             $where[] = "m.member_id = ?";
             $params[] = $u;
