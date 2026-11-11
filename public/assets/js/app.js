@@ -51,10 +51,14 @@ function buildShell() {
  */
 function ensureSidePane(pane) {
   const list = document.getElementById('im-list');
-  if (!list || list.dataset.pane === pane) return;
+  if (!list) return;
+  // 空间是整页业务，不借中间那一栏：直接收起来，让业务区自己铺满
+  const wasHidden = list.classList.contains('pane-hidden');
+  list.classList.toggle('pane-hidden', pane === 'space');
+  if (pane === 'space') return;
+  if (!wasHidden && list.dataset.pane === pane) return;
   list.dataset.pane = pane;
-  if (pane === 'space') space.renderSideList(list);
-  else conv.mount(list);
+  conv.mount(list);
 }
 
 function layout() {

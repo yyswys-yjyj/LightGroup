@@ -24,16 +24,17 @@ function emitUnread() {
   window.dispatchEvent(new CustomEvent('lg:notices', { detail: { unread: unread } }));
 }
 
+let hostEl = null;
+
 export function renderSpace(host) {
+  hostEl = host;
   host.textContent = '';
   const body = h('div', 'page-body sp-page');
   host.appendChild(body);
   const inner = h('div', 'sp-inner');
   body.appendChild(inner);
 
-  inner.appendChild(hero());
-  // 手机上没有左边那一栏，导航放正文顶部；桌面藏起来，用侧栏
-  inner.appendChild(mobileTabs());
+  inner.appendChild(cover());
 
   if (tag) {
     const bar = h('div', 'sp-filter');
@@ -49,7 +50,7 @@ export function renderSpace(host) {
   else paintFeed(box);
 }
 
-/** 侧栏那一列：广场 / 我的动态 / 通知 / 标签 */
+/** 旧的侧栏导航：空间页已经不占中间那一栏了，留着给需要的时候用 */
 export function renderSideList(host) {
   if (!host) return;
   host.textContent = '';
@@ -106,28 +107,43 @@ export function renderSideList(host) {
   host.appendChild(side);
 }
 
-function syncSideTags() {
-  const list = document.getElementById('im-list');
-  if (list && list.dataset.pane === 'space') renderSideList(list);
-}
-
-/** 业务区 + 侧栏一起重画（两边的高亮要同步） */
+/** 只重画业务区，别碰别的东西 */
 function repaint() {
-  repaint();
-  const list = document.getElementById('im-list');
-  if (list && list.dataset.pane === 'space') renderSideList(list);
+  if (hostEl) renderSpace(hostEl);
 }
 
-function hero() {
-  const el = h('div', 'sp-hero');
-  const t = h('div', 'sp-hero-t');
-  t.appendChild(h('b', '', siteName() || '空间'));
-  t.appendChild(h('span', '', '群里的小广场，只有这个群的人看得到'));
-  el.appendChild(t);
-  return el;
+/** 顶上的封面 + 头像 + 发动态入口，朋友圈那一路 */
+function cover() {
+  const wrap = h('div', 'sp-cover-wrap');
+  wrap.appendChild(h('div', 'sp-cover'));
+
+  const row = h('div', 'sp-profile');
+  row.appendChild(avatar(S.me || { name: '我' }, 64));
+
+  const meta = h('div', 'sp-profile-meta');
+  meta.appendChild(h('b', '', siteName() || '空间'));
+  meta.appendChild(h('span', '', '群里的小广场，只有这个群的人看得到'));
+  row.appendChild(meta);
+
+  const acts = h('div', 'sp-profile-acts');
+  const write = btn('发动态', 'btn-primary btn-sm', openComposer);
+  write.insertBefore(icon('fa-pen'), write.firstChild);
+  acts.appendChild(write);
+  row.appendChild(acts);
+
+  wrap.appendChild(row);
+  wrap.appendChild(tabs());
+  return wrap;
 }
 
-function mobileTabs() {
+/** 写动态放弹层里，正文区不摆输入框 */
+function openComposer() {
+  const box = h('div', 'sp-sheet');
+  composer(box);
+  openSheet('发动态', box, { size: 'lg' });
+}
+
+function tabs() {
   const tabs = h('div', 'sp-tabs');
   [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']].forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine) || (it[0] === 'notice' && tab === 'notice');
@@ -150,8 +166,6 @@ function mobileTabs() {
 // ---------- 动态 ----------
 
 function paintFeed(box) {
-  box.appendChild(composer());
-
   if (tag) {
     box.appendChild(h('div', 'sp-filter', '正在看 #' + tag));
   }
@@ -192,18 +206,16 @@ async function loadFeed(list, before, replace) {
     if (replace) list.appendChild(h('div', 'sp-empty', tag ? '这个标签下还没有动态' : '还没有人发动态，第一条可以是你'));
     return 0;
   }
-  let gotTag = false;
   j.items.forEach(function (m) {
-    (m.tags || []).forEach(function (tg) { if (tags.indexOf(tg) < 0) { tags.push(tg); gotTag = true; } });
+    (m.tags || []).forEach(function (tg) { if (tags.indexOf(tg) < 0) tags.push(tg); });
     list.appendChild(itemNode(m, list));
   });
-  // 侧栏的标签是从动态里捡的，第一次看到新标签时补一下
-  if (gotTag) syncSideTags();
   return j.items.length;
 }
 
-function composer() {
+function composer(box) {
   const card = h('div', 'sp-card sp-compose');
+  card.classList.add('sp-compose-sheet');
   const row = h('div', 'sp-c-row');
   row.appendChild(avatar(S.me || { name: '我' }, 40));
   const main = h('div', 'sp-c-main');
@@ -241,6 +253,7 @@ function composer() {
     paintDraft();
     cnt.textContent = '0/300';
     toast('发出去了');
+    closeSheet();
     repaint();
   });
   bar.appendChild(sendBtn);
@@ -269,6 +282,7 @@ function composer() {
   }
   paintDraft();
 
+  box.appendChild(card);
   return card;
 }
 
