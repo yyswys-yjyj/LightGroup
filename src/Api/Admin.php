@@ -453,6 +453,11 @@ final class Admin {
             "mail.from_name"          => "text",
             // MCP：给 AI 用的 JSON-RPC 端点，默认开着；关掉后建 AI 不再下发地址
             "mcp.enabled"             => "int",
+            // 语音转文字：站内没有识别引擎，走外部 OpenAI 兼容接口，默认关闭
+            "stt.enabled"             => "int",
+            "stt.url"                 => "url",
+            "stt.key"                 => "secret",
+            "stt.model"               => "text",
         ];
         if ($method === "GET") {
             $out = [];
@@ -468,6 +473,9 @@ final class Admin {
             // 邮箱密码同理
             $hasMailPass = trim($out["mail.pass"]) !== "";
             $out["mail.pass"] = "";
+            // 语音转写的 Key 同理
+            $hasSttKey = trim($out["stt.key"]) !== "";
+            $out["stt.key"] = "";
             $callback = OAuth::callbackUrl($pdo);
             Json::ok([
                 "settings"      => $out,
@@ -477,6 +485,8 @@ final class Admin {
                 "has_mail_pass"      => $hasMailPass,
                 "mail_configured"    => Mailer::configured($pdo),
                 "mail_ready"         => Mailer::notifyOn($pdo),
+                "has_stt_key"        => $hasSttKey,
+                "stt_ready"          => Stt::configured($pdo),
                 "callback_url"  => $callback,
                 "callback_path" => OAuth::CALLBACK_PATH,
                 "start_url"     => OAuth::origin() . OAuth::START_PATH,

@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 10;
+    public const VERSION = 11;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -55,6 +55,8 @@ final class Schema {
                 "sys"        => "TINYINT NOT NULL DEFAULT 0",
                 // AI 自己报的模型名（MCP 那边 chat_send 会带上），显示在名字旁边
                 "model"      => "VARCHAR(40) NULL",
+                // 语音转文字的缓存：转一次存下来，别人再点同一条不再重复调接口
+                "voice_text" => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
             ],
         ];
         foreach ($wanted as $table => $cols) {
@@ -113,7 +115,7 @@ final class Schema {
 
     /** migrate() 只补建后来新增的表，避免把全部语句再跑一遍 */
     private static function isNewTable(string $sql): bool {
-        foreach (["api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs"] as $t) {
+        foreach (["api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs", "dm_invites"] as $t) {
             if (stripos($sql, $t) !== false) return true;
         }
         return false;
@@ -191,7 +193,7 @@ final class Schema {
                 . " reply_to BIGINT NULL, deleted_at BIGINT NULL, deleted_by BIGINT NULL,"
                 . " voice $text NULL, dur INT NOT NULL DEFAULT 0,"
                 . " pinned_at BIGINT NULL, pinned_by BIGINT NULL, conv_id BIGINT NULL,"
-                . " sys TINYINT NOT NULL DEFAULT 0, model VARCHAR(40) NULL"
+                . " sys TINYINT NOT NULL DEFAULT 0, model VARCHAR(40) NULL, voice_text $text NULL"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_msg_scope ON messages(scope_id, id)",
             "CREATE INDEX {$idx}idx_msg_conv ON messages(conv_id, id)",
@@ -299,6 +301,16 @@ final class Schema {
                 . " verified_at BIGINT NULL, created_at BIGINT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_sub_member ON notice_subs(member_id)",
+            // 私聊邀请 AI：码形如 lg1-<群id>-<会话id>-<8位hex>，全 ASCII；
+            // 24 小时内有效，用一次就作废（再用要重新生成）。
+            "CREATE TABLE IF NOT EXISTS dm_invites ("
+                . "id $pk, scope_id BIGINT NOT NULL, conv_id BIGINT NOT NULL,"
+                . " code VARCHAR(64) NOT NULL, created_by BIGINT NOT NULL,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, expires_at BIGINT NOT NULL DEFAULT 0,"
+                . " used_at BIGINT NULL, used_by BIGINT NULL"
+                . ")$suffix",
+            "CREATE UNIQUE INDEX {$idx}idx_dmcode ON dm_invites(code)",
+            "CREATE INDEX {$idx}idx_dminv_conv ON dm_invites(conv_id, id)",
         ];
     }
 }

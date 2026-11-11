@@ -1574,6 +1574,43 @@ async function renderSettings(box) {
   ]);
   box.append(card('注册配额', [quotaForm, div('hint', [el('p', { text: '配额在注册时校验，改小不会踢掉已有成员。' })])], { icon: 'fa-gauge' }));
 
+  // ---- 语音转文字：站内没有识别引擎，得把音频交给外部 OpenAI 兼容接口 ----
+  const fSttOn = el('input', { type: 'checkbox', checked: String(st['stt.enabled'] || '0') === '1' });
+  const fSttUrl = textInput('stt.url', st['stt.url'] || '', 'https://api.openai.com/v1/audio/transcriptions');
+  const fSttKey = textInput('stt.key', '', d.has_stt_key ? '已经存过，留空不修改' : '服务商的 Key', 'password');
+  const fSttModel = textInput('stt.model', st['stt.model'] || '', '留空用 whisper-1');
+  const saveStt = btn('保存语音设置', 'btn-primary', async function () {
+    try {
+      await api('settings', {
+        'stt.enabled': fSttOn.checked ? '1' : '0',
+        'stt.url': fSttUrl.value.trim(),
+        'stt.key': fSttKey.value,
+        'stt.model': fSttModel.value.trim(),
+      });
+      toast('语音设置已保存');
+      go('settings');
+    } catch (e) { toast(e.message, 'err'); }
+  }, 'fa-floppy-disk');
+
+  box.append(card('语音转文字', [
+    el('form', { class: 'adm-form' }, [
+      div('oauth-switches', [
+        el('label', { class: 'switch' }, [fSttOn, el('span', { text: '允许成员把语音转成文字' })]),
+      ]),
+      div('form-grid', [
+        div('span2', [field('识别接口地址', fSttUrl, 'OpenAI 兼容的转写接口，例如 https://api.openai.com/v1/audio/transcriptions')]),
+        field('服务商 Key', fSttKey, '留空就沿用已经存的那个'),
+        field('模型名', fSttModel, '留空用 whisper-1'),
+      ]),
+      div('hint', [el('p', {
+        text: d.stt_ready
+          ? '已就绪：成员点语音条下方的「转文字」，文字会存进那条消息，同一条只转一次。'
+          : '还没就绪：开关打开、接口地址填上才会生效。',
+      })]),
+    ]),
+    div('form-foot', [saveStt]),
+  ], { icon: 'fa-align-left' }));
+
   box.append(card('保存', [
     btn('保存全部设置', 'btn-primary', async function () {
       try {

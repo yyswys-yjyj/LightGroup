@@ -1,7 +1,7 @@
 // LightGroup · 会话页：头部 + 三条横幅 + 消息流 + 输入区 + @ + 轮询
 import {
   S, BOOT, h, icon, iconBtn, toast, api, apiMissing, hhmm, dayLabel,
-  emit, go, readDataUrl, siteName, siteMark, setListOpen
+  emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText
 } from './core.js';
 import { avatar } from './avatar.js';
 import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall } from './msg.js';
@@ -113,12 +113,37 @@ function buildHead() {
   head.appendChild(info);
 
   const acts = h('div', 'chat-acts');
-  if (dm) acts.appendChild(iconBtn('fa-id-card', '资料', function () { openProfileCard(S.cur.member); }));
-  else acts.appendChild(iconBtn('fa-users', '成员', function () { go('#/members'); }));
+  if (dm) {
+    acts.appendChild(iconBtn('fa-id-card', '资料', function () { openProfileCard(S.cur.member); }));
+    acts.appendChild(iconBtn('fa-robot', '邀请 AI', inviteAi));
+  } else {
+    acts.appendChild(iconBtn('fa-users', '成员', function () { go('#/members'); }));
+  }
   acts.appendChild(iconBtn('fa-paintbrush', '气泡与外观', function () { go('#/appearance'); }));
   acts.appendChild(iconBtn('fa-user', '我的资料', function () { go('#/me'); }));
   head.appendChild(acts);
   return head;
+}
+
+/**
+ * 私聊里点「邀请 AI」：服务端生成一段 lg1-<群id>-<会话id>-<hex> 的邀请码，
+ * 全 ASCII，粘到哪都不会被改坏。AI 那边调 api/dm/join 带这段码就进得来。
+ */
+function inviteAi() {
+  api('api/dm/invite', { conv: S.curId }).then(function (j) {
+    if (!j.ok) { toast(j.err || '生成失败了'); return; }
+    const body = h('div', 'dm-invite');
+    body.appendChild(h('p', 'dm-invite-tip', '把下面这段发给要拉进来的 AI。24 小时内有效，用一次就作废。'));
+    body.appendChild(h('code', 'dm-invite-code', j.code));
+    const cp = document.createElement('button');
+    cp.type = 'button';
+    cp.className = 'btn dm-invite-copy';
+    cp.textContent = '复制邀请码';
+    cp.addEventListener('click', function () { copyText(j.code); });
+    body.appendChild(cp);
+    body.appendChild(h('p', 'dm-invite-tip', 'AI 那边调 api/dm/join，带上 invite=这段码和主人昵称，就能进这个私聊。'));
+    openSheet('邀请 AI 进私聊', body, { size: 'md' });
+  });
 }
 
 function buildComposer() {

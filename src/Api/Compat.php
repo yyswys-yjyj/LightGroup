@@ -67,6 +67,9 @@ final class Compat {
             case "api/friends/reject":  self::friendReject($pdo, $scope); break;
             case "api/friends/remove":  self::friendRemove($pdo, $scope); break;
             case "api/dm/open":       self::dmOpen($pdo, $scope); break;
+            case "api/dm/invite":     self::dmInvite($pdo, $scope); break;
+            case "api/dm/join":       self::dmJoin($pdo, $scope); break;
+            case "api/voice/text":    self::voiceText($pdo, $scope); break;
             case "api/themes":          self::themes($pdo, $scope); break;
             case "api/theme/set":       self::themeSet($pdo, $scope); break;
             case "api/theme/pack/save": self::themePackSave($pdo, $scope); break;
@@ -829,7 +832,7 @@ final class Compat {
             if (count($convIds) > 1) $inC = implode(",", array_fill(0, count($convIds), "?"));
         }
         $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
-             . " m.voice, m.dur, m.pinned_at, m.sys, m.model,"
+             . " m.voice, m.dur, m.voice_text, m.pinned_at, m.sys, m.model,"
              . " u.id AS author_id, u.name AS author, u.kind AS author_kind, u.avatar AS author_avatar,"
              . " u.deleted_at AS author_deleted, o.name AS owner_name,"
              . " r.text AS r_text, r.img AS r_img, r.voice AS r_voice, r.dur AS r_dur, r.card_json AS r_card,"
@@ -893,6 +896,8 @@ final class Compat {
                 if ($r["card_json"] !== null && $r["card_json"] !== "") $msg["card"] = json_decode($r["card_json"], true);
                 if ($r["voice"] !== null && $r["voice"] !== "") $msg["voice"] = (string) $r["voice"];
                 $msg["dur"] = (int) $r["dur"];
+                // 语音已经转成文字的，直接把文字带下来，不用再点一次
+                if ($r["voice_text"] !== null && $r["voice_text"] !== "") $msg["voice_text"] = (string) $r["voice_text"];
             }
             if ($r["reply_to"] !== null && $r["reply_to"] !== "") {
                 $rName = !empty($r["ru_deleted"]) ? "账号已注销" : (string) $r["r_name"];
@@ -1259,6 +1264,174 @@ final class Compat {
 
         $conv = Conv::ensureDm($pdo, $scope, (int) $me["id"], $targetId, (int) $me["id"]);
         Json::ok(["conv" => self::convOut($pdo, $scope, $conv, $me, self::memberMap($pdo, $scope))]);
+    }
+
+    /**
+     * POST api/dm/invite：私聊里生成一段给 AI 用的邀请码。
+     * 形如 lg1-<群id>-<会话id>-<8位hex>，全 ASCII —— 整段可以直接粘进配置文件，
+     * 不会因为中文、空格、全角符号在传输路上被改坏。
+     * 同一个会话同一人 24 小时内复用同一个码，用一次即作废。
+     */
+    private static function dmInvite(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        if ((string) $me["kind"] === "ai") Json::fail("只有人能邀请 AI");
+
+        $convId = (int) (Input::get("conv") !== "" ? Input::get("conv") : Input::get("id"));
+        $conv = Conv::requireConv($pdo, $convId);
+        if ((int) $conv["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
+        if ((int) ($conv["is_public"] ?? 0) === 1) Json::fail("只有私聊能邀请 AI");
+        if (!Conv::isMember($pdo, $conv, (int) $me["id"])) Json::fail("你不在这个会话里");
+
+        $now = lg_now();
+        $st = $pdo->prepare(
+            "SELECT code, expires_at FROM dm_invites"
+            . " WHERE conv_id = ? AND created_by = ? AND used_at IS NULL AND expires_at > ?"
+            . " ORDER BY id DESC LIMIT 1"
+        );
+        $st->execute([$convId, (int) $me["id"], $now]);
+        $row = $st->fetch();
+
+        if (!$row) {
+            self::rateLimit($pdo, "dminv:" . self::clientIp(), 30, "生成得太频繁了，过几分钟再试");
+            $code = "lg1-" . (int) $scope["id"] . "-" . $convId . "-" . bin2hex(random_bytes(4));
+            $exp  = $now + 86400;
+            $ins = $pdo->prepare(
+                "INSERT INTO dm_invites (scope_id, conv_id, code, created_by, created_at, expires_at)"
+                . " VALUES (?,?,?,?,?,?)"
+            );
+            $ins->execute([(int) $scope["id"], $convId, $code, (int) $me["id"], $now, $exp]);
+            $row = ["code" => $code, "expires_at" => $exp];
+        }
+
+        Json::ok([
+            "code"       => (string) $row["code"],
+            "expires_at" => (int) $row["expires_at"],
+            "hours"      => 24,
+        ]);
+    }
+
+    /**
+     * POST api/dm/join：AI 拿邀请码进私聊。
+     * 两条路：已经拿到 token 的 AI 直接带 token 进来；还没身份的，带 name + owner
+     * 现建一个（和 api/link 一样的规矩：主人必须存在、没被封、不超名额）。
+     */
+    private static function dmJoin(PDO $pdo, array $scope): void {
+        $code = trim((string) Input::get("invite"));
+        if ($code === "") Json::fail("把邀请码填上再进");
+        self::rateLimit($pdo, "dmjoin:" . self::clientIp(), 20, "试得太频繁了，过几分钟再来");
+
+        $now = lg_now();
+        $st = $pdo->prepare("SELECT * FROM dm_invites WHERE code = ? AND scope_id = ? LIMIT 1");
+        $st->execute([$code, (int) $scope["id"]]);
+        $inv = $st->fetch();
+        if (!$inv) Json::fail("邀请码不对");
+        if ($inv["used_at"] !== null) Json::fail("这个邀请码已经用过了，让主人在私聊里重新生成");
+        if ((int) $inv["expires_at"] <= $now) Json::fail("邀请码过期了，让主人在私聊里重新生成");
+
+        $conv = Conv::convById($pdo, (int) $inv["conv_id"]);
+        if ($conv === null || (int) $conv["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
+
+        $plain = "";
+        $tok = (string) Input::get("k");
+        if ($tok === "") $tok = (string) Input::get("token");
+        $ai = $tok !== "" ? self::memberByToken($pdo, $tok) : null;
+
+        if ($ai !== null) {
+            if ((int) $ai["scope_id"] !== (int) $scope["id"]) Json::fail("这个 token 不属于本群");
+            if ((string) $ai["kind"] !== "ai") Json::fail("只有 AI 身份能这样进私聊");
+        } else {
+            $name  = trim((string) Input::get("name"));
+            $owner = trim((string) Input::get("owner"));
+            if ($name === "" || mb_strlen($name) > 24) Json::fail("AI 名字不能为空，且不超过 24 个字");
+
+            $st2 = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? AND kind = 'human' AND deleted_at IS NULL LIMIT 1");
+            $st2->execute([(int) $scope["id"], $owner]);
+            $human = $st2->fetch();
+            if (!$human) Json::fail("邀请码或主人不对");
+            if ((int) $human["banned"] === 1) Json::fail("主人的账号已被封禁");
+
+            $st3 = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
+            $st3->execute([(int) $scope["id"], $name]);
+            $exist = $st3->fetch();
+            $plain = Token::issue();
+
+            if ($exist) {
+                if ((string) $exist["kind"] !== "ai") Json::fail("该名字已被人类成员占用");
+                if ((int) ($exist["owner_id"] ?? 0) !== (int) $human["id"]) Json::fail("这个名字的 AI 属于别人");
+                $pdo->prepare("UPDATE members SET token_hash = ?, last_seen_at = ? WHERE id = ?")
+                    ->execute([Token::hash($plain), $now, (int) $exist["id"]]);
+                $ai = $exist;
+            } else {
+                self::checkAiQuota($pdo, $scope, (int) $human["id"]);
+                $pdo->prepare(
+                    "INSERT INTO members (scope_id, name, kind, owner_id, oauth_id, token_hash, created_at, last_seen_at)"
+                    . " VALUES (?,?,?,?,?,?,?,?)"
+                )->execute([
+                    (int) $scope["id"], $name, "ai", (int) $human["id"],
+                    $human["oauth_id"], Token::hash($plain), $now, $now,
+                ]);
+                $ai = [
+                    "id" => (int) $pdo->lastInsertId(), "name" => $name, "kind" => "ai",
+                    "scope_id" => (int) $scope["id"], "owner_id" => (int) $human["id"],
+                ];
+            }
+        }
+
+        if (!Conv::isMember($pdo, $conv, (int) $ai["id"])) {
+            try {
+                $pdo->prepare("INSERT INTO conv_members (conv_id, member_id, last_read_id, joined_at) VALUES (?,?,?,?)")
+                    ->execute([(int) $conv["id"], (int) $ai["id"], 0, $now]);
+            } catch (\Throwable $e) {
+                // 并发进来两次，已经在了就继续
+            }
+        }
+
+        $pdo->prepare("UPDATE dm_invites SET used_at = ?, used_by = ? WHERE id = ?")
+            ->execute([$now, (int) $ai["id"], (int) $inv["id"]]);
+
+        self::systemMessage(
+            $pdo, (int) $scope["id"], (int) $conv["id"], (int) $inv["created_by"],
+            "把 AI「" . (string) $ai["name"] . "」邀进了这个私聊"
+        );
+
+        Json::ok([
+            "joined" => true,
+            "token"  => $plain,
+            "me"     => ["id" => self::mid($ai), "name" => (string) $ai["name"], "kind" => "ai"],
+            "conv"   => ["id" => (int) $conv["id"], "title" => (string) ($conv["title"] ?? "")],
+            "mcp"    => $plain !== "" ? self::mcpUrl($pdo, $plain) : "",
+        ]);
+    }
+
+    /**
+     * POST api/voice/text：把一条语音转成文字。
+     * 转过的写进 messages.voice_text，之后同一间屋子里谁点都直接拿缓存，不再花钱调接口。
+     */
+    private static function voiceText(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        $conv = self::resolveConv($pdo, $scope, $me, self::convIdOfRequest(), true);
+
+        $msgId = Input::int("msg", 0);
+        if ($msgId <= 0) $msgId = Input::int("id", 0);
+        $st = $pdo->prepare("SELECT id, voice, voice_text FROM messages WHERE id = ? AND conv_id = ? LIMIT 1");
+        $st->execute([$msgId, (int) $conv["id"]]);
+        $msg = $st->fetch();
+        if (!$msg) Json::fail("找不到这条消息");
+
+        $cached = trim((string) ($msg["voice_text"] ?? ""));
+        if ($cached !== "") Json::ok(["text" => $cached, "cached" => true]);
+
+        $voice = trim((string) ($msg["voice"] ?? ""));
+        $voice = (string) preg_replace('#^\[voice\]#', "", $voice);
+        if ($voice === "") Json::fail("这条不是语音");
+        if (!Stt::configured($pdo)) Json::fail("站点没开语音转文字");
+        self::rateLimit($pdo, "stt:" . self::clientIp(), 30, "转写太频繁了，过几分钟再试");
+
+        $res = Stt::transcribe($pdo, $voice);
+        if (!$res["ok"]) Json::fail($res["err"]);
+
+        $pdo->prepare("UPDATE messages SET voice_text = ? WHERE id = ?")->execute([$res["text"], $msgId]);
+        Json::ok(["text" => $res["text"], "cached" => false]);
     }
 
     /** 群内成员名 => 对外 id，用于把 @名字 认成 mentions */

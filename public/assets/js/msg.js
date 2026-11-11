@@ -277,7 +277,50 @@ function voiceNode(m) {
   box.appendChild(play);
   box.appendChild(bar);
   box.appendChild(dur);
-  return box;
+
+  // 语音转文字：识别接口在后台配好之前不显示按钮，免得点了只弹错误
+  const wrap = h('div', 'voice-wrap');
+  wrap.appendChild(box);
+  const tx = document.createElement('button');
+  tx.type = 'button';
+  tx.className = 'voice-tx';
+  tx.title = '把这条语音转成文字';
+  tx.appendChild(icon('fa-align-left'));
+  const txLabel = h('span', '', '转文字');
+  tx.appendChild(txLabel);
+  const txOut = h('div', 'voice-tx-out');
+  txOut.hidden = true;
+
+  const showText = function (text) {
+    m.voiceText = text;
+    txOut.textContent = text;
+    txOut.hidden = false;
+    if (tx.parentNode) tx.parentNode.removeChild(tx);
+  };
+
+  tx.addEventListener('click', function () {
+    if (tx.disabled) return;
+    tx.disabled = true;
+    txLabel.textContent = '转写中';
+    const spin = icon('fa-spinner');
+    spin.classList.add('fa-spin');
+    tx.insertBefore(spin, tx.firstChild);
+    api('api/voice/text', { conv: S.curId, msg: m.id }).then(function (r) {
+      const text = (r && r.text) ? String(r.text) : '';
+      if (!text) throw new Error('没听清，再说一遍试试');
+      showText(text);
+    }).catch(function (e) {
+      toast((e && e.message) || '转写失败了');
+      tx.disabled = false;
+      txLabel.textContent = '转文字';
+      if (spin.parentNode) spin.parentNode.removeChild(spin);
+    });
+  });
+
+  if (m.voiceText) showText(String(m.voiceText));
+  else wrap.appendChild(tx);
+  wrap.appendChild(txOut);
+  return wrap;
 }
 
 // @名字 高亮：只有真成员才算
