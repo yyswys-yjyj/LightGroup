@@ -13,7 +13,9 @@ use PDO;
 final class Admin {
     public static function handle(PDO $pdo, array $scope, string $path): void {
         lg_session();
-        $me = Session::member($pdo);
+        // 同一主账号在多个群都有成员时（超管），按这次请求的群换身份，
+        // 否则在子群后台里动的还是主群那个身份。
+        $me = Compat::adoptScope($pdo, $scope);
         if ($me === null) Json::fail("请先登录");
         $role = self::role($pdo, $me);
         if ($role === "member") Json::fail("没有管理权限");

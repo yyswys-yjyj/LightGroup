@@ -204,12 +204,8 @@ final class Compat {
 
         // 同一个主账号在这个群里也有身份时换过去：超管、被拉进多个群的账号都属这类。
         // 不换的话，在主群登录后打开别的群只会看到「这里不是你的群」。
-        if ($token === "" && self::$ctxScope !== null) {
-            $alt = self::memberOfScope($pdo, $m, self::$ctxScope);
-            if ($alt !== null) {
-                Session::useMember($alt);
-                $m = $alt;
-            }
+        if ($token === "") {
+            $m = self::adoptScope($pdo, self::$ctxScope) ?? $m;
         }
 
         self::assertScope($pdo, $m);
@@ -221,6 +217,22 @@ final class Compat {
         $st->execute([$key]);
         $row = $st->fetch();
         return $row ? (string) $row["v"] : $default;
+    }
+
+    /**
+     * 按这次请求的群校正网页会话身份，并返回校正后的成员。
+     * 页面入口、后台、资料页这些在 requireMember 之外自己读会话的地方都走这里，
+     * 否则超管打开别的群的页面仍会被当成「不属于这个群」。
+     */
+    public static function adoptScope(PDO $pdo, ?array $scope): ?array {
+        $m = Session::member($pdo);
+        if ($m === null || $scope === null) return $m;
+        $alt = self::memberOfScope($pdo, $m, $scope);
+        if ($alt !== null) {
+            Session::useMember($alt);
+            return $alt;
+        }
+        return $m;
     }
 
     /**
@@ -492,7 +504,7 @@ final class Compat {
      * 两条都不满足，就是脚本拿着邀请码直连、背后没有主账号，挡掉。
      */
     private static function gateCallerOk(PDO $pdo, array $scope, string $owner): bool {
-        $me = Session::member($pdo);
+        $me = self::adoptScope($pdo, $scope);
         if ($me !== null && (int) $me["scope_id"] === (int) $scope["id"]) return true;
 
         $st = $pdo->prepare("SELECT account_id, oauth_id FROM members WHERE scope_id = ? AND name = ? AND kind = 'human' LIMIT 1");
@@ -2251,7 +2263,7 @@ final class Compat {
 
     /** key 的增删查走网页会话：key 只能给“我自己”建，不能替别人建 */
     private static function keysApi(PDO $pdo, array $scope, string $sub): void {
-        $me = Session::member($pdo);
+        $me = self::adoptScope($pdo, $scope);
         if ($me === null) Json::fail("请先登录网页");
         if ((int) $me["scope_id"] !== (int) $scope["id"]) Json::fail("这个身份不属于本群");
 

@@ -57,14 +57,16 @@ final class Entry
             $site = Site::info();
             $basePath = "/g/" . ($slug !== "" ? $slug . "/" : "");
             $pdo = Db::connect();
-            $me = Session::member($pdo);
-            if ($me === null) {
-                header("Location: " . Url::to("/login?next=" . rawurlencode($basePath)), true, 302);
-                exit;
-            }
             $scope = Compat::scopeBySlugPublic($pdo, $slug);
             if ($scope === null) {
                 View::render("notfound", ["site" => $site, "path" => $basePath], 404);
+                exit;
+            }
+            // 超管 / 被拉进多个群的账号：同一主账号在这个群也有身份，先换过去再开页面。
+            // 不换的话，从主群点进别的群只会看到「这里不是你的群」。
+            $me = Compat::adoptScope($pdo, $scope);
+            if ($me === null) {
+                header("Location: " . Url::to("/login?next=" . rawurlencode($basePath)), true, 302);
                 exit;
             }
             // 登录身份属于别的群：不能拿这个身份开这个群的页面。

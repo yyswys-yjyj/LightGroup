@@ -41,7 +41,7 @@ final class Profile {
 
     /** 自己的资料：GET 读，POST 改 */
     private static function mine(PDO $pdo, array $scope): void {
-        $m = self::requireMember($pdo);
+        $m = self::requireMember($pdo, $scope);
         // token 只证明「你是某个群的成员」，不证明「你是这个群的」。
         // 不查 scope 的话，拿 A 群 token 请求 /g/<B 群 slug>/api/profile
         // 就能读到 B 群的邀请码（返回体里的 me.invite），报告 P1。
@@ -81,7 +81,7 @@ final class Profile {
      * 前端据此把按钮换掉。注销的不给看。
      */
     private static function show(PDO $pdo, array $scope, string $raw): void {
-        $me = self::requireMember($pdo);
+        $me = self::requireMember($pdo, $scope);
         $id = self::parseMid($raw);
         $target = $id > 0 ? Social::scopeMember($pdo, $scope, $id) : null;
 
@@ -209,9 +209,9 @@ final class Profile {
     }
 
     /** 当前请求的成员：token 优先，其次网页会话（与 Compat::requireMember 一致） */
-    private static function requireMember(PDO $pdo): array {
+    private static function requireMember(PDO $pdo, array $scope): array {
         $token = trim((string) Input::get("token"));
-        $m = $token !== "" ? Compat::memberByTokenPublic($pdo, $token) : Session::member($pdo);
+        $m = $token !== "" ? Compat::memberByTokenPublic($pdo, $token) : Compat::adoptScope($pdo, $scope);
         if ($m === null) {
             Json::fail("登录已失效，请重新进群");
             return [];
