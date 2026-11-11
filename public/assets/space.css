@@ -2,7 +2,7 @@
 
 /* ---------- 页面骨架 ---------- */
 .sp-page{width:100%;box-sizing:border-box;padding:0 0 44px;background:var(--bg)}
-.sp-inner{max-width:760px;margin:0 auto;padding:0 16px;box-sizing:border-box}
+.sp-inner{width:100%;max-width:760px;margin:0 auto;padding:0 16px;box-sizing:border-box}
 
 /* 顶上那条渐变条：群的封面位 */
 .sp-hero{margin:14px 0 14px;padding:20px 20px 18px;border-radius:16px;color:#fff;
