@@ -57,7 +57,7 @@ export function h(tag, cls, text) {
 
 export function icon(name) {
   const i = document.createElement('i');
-  i.className = 'fa-solid ' + name;
+  i.className = /\bfa-(solid|regular|brands)\b/.test(name) ? name : 'fa-solid ' + name;
   i.setAttribute('aria-hidden', 'true');
   return i;
 }

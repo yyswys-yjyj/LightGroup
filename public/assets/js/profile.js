@@ -715,8 +715,14 @@ function paintUserPage(uid, p) {
       main.appendChild(grid);
     }
     const foot = h('div', 'pf-item-foot');
-    foot.appendChild(h('span', '', '♡ ' + (it.likes || 0)));
-    foot.appendChild(h('span', '', '💬 ' + ((it.comments && it.comments.length) || 0)));
+    const metric = function (ic, n) {
+      const span = h('span', 'pf-metric', '');
+      span.appendChild(icon(ic));
+      span.appendChild(document.createTextNode(' ' + n));
+      return span;
+    };
+    foot.appendChild(metric('fa-heart', it.likes || 0));
+    foot.appendChild(metric('fa-comment', (it.comments && it.comments.length) || 0));
     const go2 = document.createElement('button');
     go2.type = 'button';
     go2.className = 'btn btn-sm btn-ghost';

@@ -593,3 +593,6 @@
   .pf-hero-name b{font-size:19px}
   .pf-item{padding:12px}
 }
+
+.pf-metric{display:inline-flex;align-items:center;gap:4px}
+.pf-metric i{font-size:12px}
