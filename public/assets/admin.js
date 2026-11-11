@@ -388,7 +388,11 @@ function renderLogin(msg) {
   const adm = document.getElementById('adm');
   adm.innerHTML = '';
   adm.classList.add('adm-ready');
-  const err = div('login-err', msg && msg !== '请先登录' ? [el('span', { text: msg })] : []);
+  const gateMsg = msg && msg.indexOf('门禁') >= 0;
+  const err = div('login-err', msg && msg !== '请先登录' ? [
+    el('span', { text: msg }),
+    gateMsg ? el('a', { class: 'login-back', href: '/oauth/start' }, [icon('fa-right-to-bracket'), el('span', { text: '用第三方账号登录' })]) : null,
+  ] : []);
   const name = textInput('name', '', '管理员账号');
   const pass = textInput('password', '', '密码', 'password');
   const form = el('form', { class: 'adm-login-form' }, [

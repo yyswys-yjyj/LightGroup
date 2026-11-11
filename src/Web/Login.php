@@ -52,8 +52,9 @@ final class Login {
             return;
         }
 
-        // 开了 OAuth 门禁，账密这条路就关掉（管理员例外，不然超管自己被锁在外面）
-        if ($mode !== "admin" && self::gateOn($pdo)) {
+        // 开了 OAuth 门禁，账密这条路就关掉，管理员也走同一个第三方入口。
+        // 只有第三方没配好时才放行（否则 IdP 一挂连后台都进不去，配置也没法修）。
+        if (self::gateOn($pdo) && self::oauthReady($pdo)) {
             self::render($site, $pdo, $mode, $next, "本站开启了 OAuth 门禁，请用第三方账号登录", "");
             return;
         }

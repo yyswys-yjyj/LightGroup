@@ -212,6 +212,16 @@ final class Compat {
         return $row ? (string) $row["v"] : $default;
     }
 
+    /**
+     * 门禁是否把「账号密码」这条登录路也关掉：开了门禁、并且第三方登录确实能用。
+     * 第三方没配好时返回 false —— 那种状态下拦了就等于把所有人（含超管）锁在门外。
+     */
+    private static function gateBlocksPassword(PDO $pdo): bool {
+        if (self::setting($pdo, "auth.mode", "none") !== "oauth") return false;
+        if (self::setting($pdo, "oauth.enabled", "0") !== "1") return false;
+        return trim(self::setting($pdo, "oauth.client_id", "")) !== "";
+    }
+
     private static function superName(PDO $pdo): string {
         $st = $pdo->query("SELECT name FROM accounts WHERE role = 'super' LIMIT 1");
         $row = $st->fetch();
@@ -2088,10 +2098,10 @@ final class Compat {
             Json::fail("账号或密码不对");
         }
 
-        // 门禁开着的时候业务账号只能走 OAuth，这条接口服务的是管理员后台，
-        // 所以只放行 admin / super；别的角色在这里拿到会话就等于绕过门禁。
-        if (self::setting($pdo, "auth.mode", "none") === "oauth"
-            && !in_array((string) ($a["role"] ?? ""), ["admin", "super"], true)) {
+        // 门禁开着的时候账号密码这条路整体关掉，管理员也算：
+        // 后台是最值钱的入口，凭密码就能进等于门禁白开。
+        // 第三方没配好时不拦，否则没人能进去把配置补上。
+        if (self::gateBlocksPassword($pdo)) {
             self::authDelay($t0);
             foreach (array_keys($keys) as $k) Throttle::fail($pdo, $k);
             Json::fail("本站开启了 OAuth 门禁，请用第三方账号登录");
