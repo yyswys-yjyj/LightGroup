@@ -247,7 +247,13 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .voice-dur{font-size:12px;opacity:.85;flex:none}
 .sheet{position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:24px;z-index:70}
 .sheet-card{background:var(--sheet-bg);color:var(--text);border:1px solid var(--border);border-radius:16px;width:100%;max-width:460px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+.sheet-card.sheet-md{max-width:600px}
 .sheet-card.sheet-lg{max-width:920px;max-height:86vh}
+.sheet-card.sheet-xl{max-width:1120px;max-height:88vh}
+/* 编辑器：宽高都撑开，里面的 ta / 预览自己分配高度 */
+.sheet-card.sheet-editor{max-width:min(1280px,calc(100vw - 40px));height:min(840px,calc(100vh - 40px));max-height:none}
+.sheet-card.sheet-editor>.pf-ed{padding:14px 16px 16px;overflow:hidden}
+@media (max-width:760px){.sheet-card.sheet-editor{height:calc(100vh - 24px);max-width:calc(100vw - 24px)}}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);flex:none}
 .sheet-head b{font-size:15px}
 .sheet-body{padding:16px;overflow:auto;display:flex;flex-direction:column;gap:10px}

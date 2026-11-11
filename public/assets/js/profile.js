@@ -628,15 +628,15 @@ function refreshUserPageBio(bio) {
 
 // ---------- markdown 简介编辑器 ----------
 const ED_TOOLS = [
-  { t: 'B', tip: '粗体', wrap: ['**', '**'], ph: '粗体' },
-  { t: 'I', tip: '斜体', wrap: ['*', '*'], ph: '斜体' },
-  { t: 'H', tip: '标题', line: '# ', ph: '标题' },
-  { t: '•', tip: '无序列表', line: '- ', ph: '列表项' },
-  { t: '1.', tip: '有序列表', line: '1. ', ph: '列表项' },
-  { t: '>', tip: '引用', line: '> ', ph: '引用' },
-  { t: '链接', tip: '链接', link: true, ph: '链接文字' },
-  { t: '代码', tip: '行内代码', wrap: ['\x60', '\x60'], ph: 'code' },
-  { t: '块', tip: '代码块', block: true }
+  { ic: 'fa-bold', tip: '粗体 **文字**', wrap: ['**', '**'], ph: '粗体' },
+  { ic: 'fa-italic', tip: '斜体 *文字*', wrap: ['*', '*'], ph: '斜体' },
+  { ic: 'fa-heading', tip: '标题 #', line: '# ', ph: '标题' },
+  { ic: 'fa-list-ul', tip: '无序列表 -', line: '- ', ph: '列表项' },
+  { ic: 'fa-list-ol', tip: '有序列表 1.', line: '1. ', ph: '列表项' },
+  { ic: 'fa-quote-left', tip: '引用 >', line: '> ', ph: '引用' },
+  { ic: 'fa-link', tip: '链接 [文字](地址)', link: true, ph: '链接文字' },
+  { ic: 'fa-code', tip: '行内代码', wrap: ['\x60', '\x60'], ph: 'code' },
+  { ic: 'fa-file-code', tip: '代码块', block: true }
 ];
 
 export function openBioEditor(bio, onSaved, title) {
@@ -727,9 +727,12 @@ export function openBioEditor(bio, onSaved, title) {
   }
 
   ED_TOOLS.forEach(function (tool) {
-    const b = h('button', 'pf-ed-tool', tool.t);
+    const b = document.createElement('button');
     b.type = 'button';
+    b.className = 'pf-ed-tool';
+    b.appendChild(icon(tool.ic));
     b.title = tool.tip;
+    b.setAttribute('aria-label', tool.tip);
     b.addEventListener('click', function () {
       if (tool.wrap) wrap(tool.wrap[0], tool.wrap[1], tool.ph);
       else if (tool.line) lineStart(tool.line, tool.ph);
@@ -767,7 +770,7 @@ export function openBioEditor(bio, onSaved, title) {
   // 隔太久（说明是另外一次误触）就重新提醒，避免「提示早过期了还静默丢弃」。
   let armAt = 0;
   openSheet(title || '编辑简介', box, {
-    size: 'lg',
+    size: 'editor',
     onBeforeClose: function () {
       if (String(ta.value || '') === initialText) return true;
       const now = Date.now();

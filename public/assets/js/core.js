@@ -593,7 +593,8 @@ export function openSheet(title, body, opts) {
   const mask = h('div', 'sheet');
   mask.id = 'sheet';
   const card = h('div', 'sheet-card');
-  if (o.size === 'lg') card.className = 'sheet-card sheet-lg';
+  // sm（默认 460）/ md 600 / lg 920 / xl 1120 / editor 编辑器专用（高也撑满）
+  if (o.size) card.className = 'sheet-card sheet-' + o.size;
   const head = h('div', 'sheet-head');
   head.appendChild(h('b', '', title));
   const x = document.createElement('button');

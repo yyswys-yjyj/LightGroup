@@ -495,7 +495,7 @@ function reportDialog(m) {
     toast('已提交，管理员会看到');
   });
   body.appendChild(send);
-  openSheet('举报动态', body);
+  openSheet('举报动态', body, { size: 'md' });
 }
 
 function openProfile(m) {

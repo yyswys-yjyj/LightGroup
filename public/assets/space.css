@@ -127,8 +127,8 @@
   color:var(--text);font:inherit;font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer;text-align:left}
 .sp-menu button:hover{background:var(--chip-bg)}
 
-.sp-form{display:flex;flex-direction:column;gap:10px;padding:4px 2px 2px}
-.sp-form textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:96px}
+.sp-form{display:flex;flex-direction:column;gap:10px;padding:14px 16px 16px}
+.sp-form textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:140px}
 
 /* ---------- 通知 ---------- */
 .sp-sub b{font-size:14px}

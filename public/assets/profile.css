@@ -361,20 +361,24 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding-bottom: 6px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  flex: none;
 }
 
 .pf-ed-tool {
-  min-width: 30px;
-  height: 28px;
-  padding: 0 8px;
+  width: 32px;
+  height: 30px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pf-ed-tool:hover {
