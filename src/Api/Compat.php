@@ -695,7 +695,13 @@ final class Compat {
         $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId);
         Json::ok([
             "msgs"   => $msgs,
-            "recalled" => Conv::recalledIds($pdo, $convId, $convId === null ? self::scopeIds($pdo, $scope) : null),
+            "recalled" => Conv::recalledIds(
+                $pdo,
+                $convId,
+                $convId === null ? self::scopeIds($pdo, $scope) : null,
+                200,
+                $convId === null ? null : self::convReadIds($pdo, $scope, $convId)
+            ),
             "lastId" => $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since,
             "now"    => lg_now(),
             "tick"   => self::tick(),
@@ -718,7 +724,13 @@ final class Compat {
         $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId);
         Json::ok([
             "msgs"    => $msgs,
-            "recalled" => Conv::recalledIds($pdo, $convId, $convId === null ? self::scopeIds($pdo, $scope) : null),
+            "recalled" => Conv::recalledIds(
+                $pdo,
+                $convId,
+                $convId === null ? self::scopeIds($pdo, $scope) : null,
+                200,
+                $convId === null ? null : self::convReadIds($pdo, $scope, $convId)
+            ),
             "members" => self::convMembers($pdo, $scope, $conv),
             "lastId"  => $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since,
             "now"     => lg_now(),
@@ -745,12 +757,25 @@ final class Compat {
         return $id;
     }
 
+    /** 指定会话读取时该合并的 conv 列表：公开大群在互通时合并同圈子的兄弟群，私聊就是自己 */
+    private static function convReadIds(PDO $pdo, array $scope, int $convId): array {
+        $conv = Conv::convById($pdo, $convId);
+        if ($conv === null || (int) $conv["is_public"] !== 1) return [$convId];
+        return Conv::publicConvIds($pdo, $scope);
+    }
+
     public static function fetchSince(PDO $pdo, array $scope, int $since, int $limit, ?int $convId = null): array {
         $ids = [];
         $in  = "";
+        $convIds = [];
+        $inC = "";
         if ($convId === null) {
             $ids = self::scopeIds($pdo, $scope);
             $in  = implode(",", array_fill(0, count($ids), "?"));
+        } else {
+            // 网页端总是带 conv：互通时只按一个 conv 过滤会把兄弟群的消息全挡掉
+            $convIds = self::convReadIds($pdo, $scope, $convId);
+            if (count($convIds) > 1) $inC = implode(",", array_fill(0, count($convIds), "?"));
         }
         $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
              . " m.voice, m.dur, m.pinned_at, m.sys,"
@@ -769,10 +794,18 @@ final class Compat {
                         . " AND (m.conv_id IN (SELECT c.id FROM conversations c WHERE c.is_public = 1 AND c.scope_id IN ($in))"
                         . " OR m.conv_id IS NULL)"
                         . " AND m.id > ?"
-                    : " WHERE m.conv_id = ? AND m.id > ?")
+                    : ($inC !== ""
+                        ? " WHERE m.conv_id IN ($inC) AND m.id > ?"
+                        : " WHERE m.conv_id = ? AND m.id > ?"))
              . " ORDER BY m.id ASC LIMIT $limit";
         $st = $pdo->prepare($sql);
-        $st->execute($convId === null ? [...$ids, ...$ids, $since] : [$convId, $since]);
+        if ($convId === null) {
+            $st->execute([...$ids, ...$ids, $since]);
+        } elseif ($inC !== "") {
+            $st->execute([...$convIds, $since]);
+        } else {
+            $st->execute([$convId, $since]);
+        }
         $rows = $st->fetchAll();
 
         $names = self::memberIdMap($pdo, $scope);
@@ -1055,7 +1088,7 @@ final class Compat {
 
         Json::ok([
             "msgs"    => $msgs,
-            "recalled" => Conv::recalledIds($pdo, (int) $conv["id"]),
+            "recalled" => Conv::recalledIds($pdo, (int) $conv["id"], null, 200, self::convReadIds($pdo, $scope, (int) $conv["id"])),
             "members" => self::convMembers($pdo, $scope, $conv),
             "lastId"  => $lastId,
             "now"     => lg_now(),

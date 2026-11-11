@@ -55,6 +55,26 @@ final class Conv {
         Json::fail("公开大群不存在");
     }
 
+    /**
+     * 读消息时该合并哪些公开大群：同圈子的群互通，消息要能互相看见。
+     * 没配圈子就只有自己那一个；本群的 id 永远在列表里（sent 消息落在它上面）。
+     */
+    public static function publicConvIds(PDO $pdo, array $scope): array {
+        $mine = (int) self::publicConv($pdo, $scope)["id"];
+        $cid  = $scope["cluster_id"] ?? null;
+        if ($cid === null) return [$mine];
+        $st = $pdo->prepare(
+            "SELECT c.id FROM conversations c JOIN scopes s ON s.id = c.scope_id"
+            . " WHERE c.is_public = 1 AND s.cluster_id = ? AND s.archived = 0"
+        );
+        $st->execute([(int) $cid]);
+        $all = array_map("intval", $st->fetchAll(PDO::FETCH_COLUMN));
+        if (!$all) return [$mine];
+        if (!in_array($mine, $all, true)) $all[] = $mine;
+        sort($all);
+        return $all;
+    }
+
     /** 两个成员之间的私聊会话，存在就复用 */
     public static function ensureDm(PDO $pdo, array $scope, int $a, int $b, int $by = 0): array {
         $sid = (int) $scope["id"];
@@ -137,13 +157,23 @@ final class Conv {
     }
 
     /** 会话的最后一条消息摘要，给会话列表用 */
-    public static function lastLine(PDO $pdo, array $conv): ?array {
+    public static function lastLine(PDO $pdo, array $conv, ?array $convIds = null): ?array {
         $cid = (int) $conv["id"];
         $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.voice, m.deleted_at, m.sys, u.name, u.id AS uid"
-            . " FROM messages m LEFT JOIN members u ON u.id = m.member_id"
-            . " WHERE m.conv_id = ? ORDER BY m.id DESC LIMIT 1";
+            . " FROM messages m LEFT JOIN members u ON u.id = m.member_id";
+        $args = [];
+        if ($convIds !== null && count($convIds) > 1) {
+            // 互通：摘要要取同圈子所有公开大群里最新的那条，不然对方群的新消息不刷新
+            $in  = implode(",", array_fill(0, count($convIds), "?"));
+            $sql .= " WHERE m.conv_id IN ($in)";
+            $args = array_map("intval", $convIds);
+        } else {
+            $sql .= " WHERE m.conv_id = ?";
+            $args = [$cid];
+        }
+        $sql .= " ORDER BY m.id DESC LIMIT 1";
         $st = $pdo->prepare($sql);
-        $st->execute([$cid]);
+        $st->execute($args);
         $row = $st->fetch();
         if (!$row) return null;
         $text = (string) ($row["text"] ?? "");
@@ -164,7 +194,7 @@ final class Conv {
         ];
     }
 
-    public static function unread(PDO $pdo, array $conv, array $me): int {
+    public static function unread(PDO $pdo, array $conv, array $me, ?array $convIds = null): int {
         $mid = (int) $me["id"];
         if ((int) ($conv["is_public"] ?? 0) === 1) {
             $since = (int) ($me["last_read_id"] ?? 0);
@@ -172,6 +202,13 @@ final class Conv {
             $st = $pdo->prepare("SELECT last_read_id FROM conv_members WHERE conv_id = ? AND member_id = ?");
             $st->execute([(int) $conv["id"], $mid]);
             $since = (int) ($st->fetchColumn() ?: 0);
+        }
+        if ($convIds !== null && count($convIds) > 1) {
+            // 互通：未读要把兄弟群的消息一起算
+            $in = implode(",", array_fill(0, count($convIds), "?"));
+            $st = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE conv_id IN ($in) AND id > ? AND member_id <> ? AND deleted_at IS NULL AND sys = 0");
+            $st->execute([...array_map("intval", $convIds), $since, $mid]);
+            return (int) $st->fetchColumn();
         }
         $st = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE conv_id = ? AND id > ? AND member_id <> ? AND deleted_at IS NULL AND sys = 0");
         $st->execute([(int) $conv["id"], $since, $mid]);
@@ -185,6 +222,8 @@ final class Conv {
         $sid = (int) $scope["id"];
         $mid = (int) $me["id"];
         $pub = self::publicConv($pdo, $scope);
+        // 互通时公开大群的摘要/未读要跨兄弟群聚合
+        $pubIds = self::publicConvIds($pdo, $scope);
         $st = $pdo->prepare(
             "SELECT c.* FROM conversations c"
             . " JOIN conv_members cm ON cm.conv_id = c.id AND cm.member_id = ?"
@@ -201,8 +240,8 @@ final class Conv {
                 "kind"     => $isPub ? "group" : "dm",
                 "title"    => $isPub ? (string) ($scope["title"] ?? "") : "",
                 "isPublic" => $isPub ? 1 : 0,
-                "last"     => self::lastLine($pdo, $c),
-                "unread"   => self::unread($pdo, $c, $me),
+                "last"     => self::lastLine($pdo, $c, $isPub ? $pubIds : null),
+                "unread"   => self::unread($pdo, $c, $me, $isPub ? $pubIds : null),
             ];
             if ($isPub) {
                 $stc = $pdo->prepare("SELECT COUNT(*) FROM members WHERE scope_id = ? AND deleted_at IS NULL");
@@ -232,8 +271,18 @@ final class Conv {
      * @param int|null   $convId   给了会话就只算这个会话；null = 按作用域（集群内公开大群）
      * @param array|null $scopeIds 作用域 id 列表（集群互通时不止一个）
      */
-    public static function recalledIds(PDO $pdo, ?int $convId, ?array $scopeIds = null, int $limit = 200): array {
+    public static function recalledIds(PDO $pdo, ?int $convId, ?array $scopeIds = null, int $limit = 200, ?array $convIds = null): array {
         $limit = max(1, min(500, $limit));
+        if ($convIds !== null && count($convIds) > 1) {
+            // 互通：撤回也要从兄弟群一起拉，否则对方撤回的消息这边不变灰
+            $in = implode(",", array_fill(0, count($convIds), "?"));
+            $st = $pdo->prepare(
+                "SELECT id FROM messages WHERE conv_id IN ($in) AND deleted_at IS NOT NULL"
+                . " ORDER BY id DESC LIMIT " . $limit
+            );
+            $st->execute(array_map("intval", $convIds));
+            return array_map("intval", $st->fetchAll(PDO::FETCH_COLUMN));
+        }
         if ($convId !== null && $convId > 0) {
             $st = $pdo->prepare(
                 "SELECT id FROM messages WHERE conv_id = ? AND deleted_at IS NOT NULL"

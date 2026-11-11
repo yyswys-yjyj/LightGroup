@@ -35,10 +35,16 @@ final class Entry
         if (count($parts) === 2 && $parts[0] !== "" && $parts[0] !== "join" && $parts[0] !== "api") {
             $slug = $parts[0];
             $path = $parts[1];
+        } elseif ($rest !== "" && $rest !== "join" && $rest !== "api" && !str_contains($rest, "/")) {
+            // /g/<slug> 这种只有群路径、没有后续接口的地址：slug 就是这一段。
+            // 原先没拆，会被当成「网页入口 + 空 slug」，页面里的接口全打到主群去，
+            // 表现就是互通群里显示的群名/成员/消息都是主群的。
+            $slug = $rest;
+            $path = "";
         }
 
         // /g/ 与 /g/{slug}/ 是网页入口，老书签照样能开
-        if ($rest === "" || (substr_count($rest, "/") === 0 && $rest !== "join")) {
+        if ($rest === "" || ($slug !== "" && $path === "")) {
             $site = Site::info();
             $basePath = "/g/" . ($slug !== "" ? $slug . "/" : "");
             $pdo = Db::connect();
