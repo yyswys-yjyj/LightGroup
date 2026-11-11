@@ -2,6 +2,9 @@
 import { S, h, icon, toast, api, hhmm, dayLabel, copyText, openSheet, closeSheet, emit } from './core.js';
 import { avatar } from './avatar.js';
 
+// 超过这个字数就把消息折成「消息盒子」，默认只露前面一段
+const LONG_TEXT = 200;
+
 // 站内上传的资源统一转成站内相对路径。
 // 上传接口回的是带域名的绝对 URL；站点跑在 https 而后端因为反代没传 X-Forwarded-Proto
 // 把地址算成 http 时，浏览器会把 <img>/<audio> 当混合内容直接挡掉，表现就是「图发不出去 / 语音放不了」。
@@ -119,9 +122,33 @@ export function msgNode(m, prev) {
     // text_auto：服务端给老客户端补的媒体行，网页已经有图/语音气泡了，剔掉再渲染
     const shown = displayText(m);
     if (shown) {
-      const p = h('div', 'txt');
-      paintText(p, shown);
-      bub.appendChild(p);
+      // 长文折成消息盒子：一条几千字的消息会把整个会话顶掉，先露个头
+      if (shown.length > LONG_TEXT) {
+        const p = h('div', 'txt msg-box');
+        const cut = h('span', 'msg-box-cut', shown.slice(0, LONG_TEXT) + '…');
+        const full = h('span', 'msg-box-full');
+        paintText(full, shown);
+        full.style.display = 'none';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'msg-box-toggle';
+        const label = '展开全文（共 ' + shown.length + ' 字）';
+        toggle.textContent = label;
+        toggle.addEventListener('click', function () {
+          const opened = full.style.display !== 'none';
+          full.style.display = opened ? 'none' : '';
+          cut.style.display = opened ? '' : 'none';
+          toggle.textContent = opened ? label : '收起';
+        });
+        p.appendChild(cut);
+        p.appendChild(full);
+        p.appendChild(toggle);
+        bub.appendChild(p);
+      } else {
+        const p = h('div', 'txt');
+        paintText(p, shown);
+        bub.appendChild(p);
+      }
     }
     if (m.img) {
       const src = imgSrc(m.img);

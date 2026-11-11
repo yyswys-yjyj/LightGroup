@@ -1252,13 +1252,12 @@ async function renderMoments(box) {
   box.append(loading());
   const d = await api('moments').catch(function () { return null; });
   box.innerHTML = '';
-  box.append(pageHead('空间', '群成员在这里发短动态（文字 300 字、最多 9 张图）；推流默认关闭，需要提醒再打开'));
+  box.append(pageHead('空间', '群成员在这里发短动态（文字 300 字、最多 9 张图）；推荐算法默认关闭，开了才有「信息茧房」'));
 
   const cur = d && typeof d.mode === 'number' ? d.mode : (d && d.on ? 1 : 0);
   const opts = [
-    { v: 0, t: '关闭（默认）', s: '成员照样能在「空间」看到动态，只是不会收到提醒。人少、圈子小的时候这样就够了。' },
-    { v: 1, t: '推给全群', s: '同群和互通圈子里的每个成员都收一条站内信。圈子一大就是刷屏，慎用。' },
-    { v: 2, t: '只推给最近活跃的人', s: '只提醒最近 30 天在圈子里说过话的成员：冷清的人不被打扰，活跃的人不错过。' },
+    { v: 0, t: '关闭（默认）', s: '广场按时间倒序，最新的在最上面。小圈子这样最公平。' },
+    { v: 1, t: '开启推荐算法', s: '按「你赞过、评论过的人和标签」优先排序，再叠加热度和时间衰减。用得越久，越只看到自己熟悉的那一类。' },
   ];
   const radios = opts.map(function (o) {
     const r = el('input', { type: 'radio', name: 'pushmode', value: String(o.v), checked: cur === o.v });
@@ -1268,7 +1267,7 @@ async function renderMoments(box) {
     ]);
   });
 
-  box.append(card('推流算法', [
+  box.append(card('帖子推荐算法', [
     el('form', { class: 'adm-form' }, radios.concat([
       div('hint', [
         el('p', { text: '这个开关只管当前这个群；互通圈子里的其它群各自管各自的。' }),
@@ -1614,6 +1613,26 @@ async function renderSettings(box) {
     ]),
     div('form-foot', [saveStt]),
   ], { icon: 'fa-align-left' }));
+
+  const fMcpOn = el('input', { type: 'checkbox', checked: String(st['mcp.enabled'] || '0') === '1' });
+  const mcpHint = d.mcp_url
+    ? 'AI 那边填「' + d.mcp_url + '?k=<它自己的 token>」。token 在「我的资料」里给 AI 建身份时只显示一次。'
+    : '站点地址没配好，暂时拼不出完整端点。';
+  box.append(card('MCP 接入', [
+    div('oauth-switches', [
+      el('label', { class: 'switch' }, [fMcpOn, el('span', { text: '允许 AI 通过 MCP 接入这个群' })]),
+    ]),
+    div('form-grid', [div('span2', [field('端点', el('input', { value: d.mcp_url || '', disabled: true, readOnly: true }), mcpHint)])]),
+    div('hint', [el('p', { text: '关掉之后，新建 AI 不再下发地址；已经连上的 AI 请求会被拒。' })]),
+    div('form-foot', [
+      btn('保存 MCP 设置', 'btn-primary', async function () {
+        try {
+          await api('settings', { 'mcp.enabled': fMcpOn.checked ? '1' : '0' });
+          toast('已保存');
+        } catch (e) { toast(e.message, 'err'); }
+      }, 'fa-floppy-disk'),
+    ]),
+  ], { icon: 'fa-plug' }));
 
   box.append(card('保存', [
     btn('保存全部设置', 'btn-primary', async function () {

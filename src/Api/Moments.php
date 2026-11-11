@@ -92,10 +92,25 @@ final class Moments {
             $params[] = $u;
         }
 
-        $sql = "SELECT m.* FROM moments m WHERE " . implode(" AND ", $where) . " ORDER BY m.id DESC LIMIT " . self::PAGE;
-        $st = $pdo->prepare($sql);
-        $st->execute($params);
-        $rows = $st->fetchAll();
+        // 推荐算法只用在广场主列表：看标签/看某人/我的动态都按时间走，别乱序
+        $recommend = self::pushMode($pdo, (int) $scope["id"]) === 1
+            && $tag === "" && $u <= 0 && Input::int("mine", 0) !== 1;
+        $off = max(0, Input::int("off", 0));
+        $nextOff = null;
+        if ($recommend) {
+            // 候选取最近 300 条再重排，越翻越久的东西不该把新的挤下去
+            $sql = "SELECT m.* FROM moments m WHERE " . implode(" AND ", $where) . " ORDER BY m.id DESC LIMIT 300";
+            $st = $pdo->prepare($sql);
+            $st->execute($params);
+            $cand = self::rank($pdo, $st->fetchAll(), $me);
+            $rows = array_slice($cand, $off, self::PAGE);
+            $nextOff = ($off + count($rows)) < count($cand) ? $off + count($rows) : null;
+        } else {
+            $sql = "SELECT m.* FROM moments m WHERE " . implode(" AND ", $where) . " ORDER BY m.id DESC LIMIT " . self::PAGE;
+            $st = $pdo->prepare($sql);
+            $st->execute($params);
+            $rows = $st->fetchAll();
+        }
 
         $mids = array_map(fn($r) => (int) $r["id"], $rows);
         $memberIds = [];
@@ -158,6 +173,8 @@ final class Moments {
             "items" => $items,
             "push"  => $pmode > 0,
             "push_mode" => $pmode,
+            "recommend" => $recommend,
+            "next_off"  => $nextOff,
             "me"    => Compat::memberBriefPublic($pdo, $me),
             "admin" => $isAdmin,
         ]);
@@ -208,6 +225,54 @@ final class Moments {
         return $out;
     }
 
+    /**
+     * 推荐排序：在候选里重排。
+     * 打底是时间（越新越高，但衰减很慢，昨天的好帖不会被早上的流水账顶掉），
+     * 然后加互动热度，再加「我赞过/评论过的作者」和「我互动过的标签」加权。
+     */
+    private static function rank(PDO $pdo, array $rows, array $me): array {
+        if (!$rows) return [];
+        $mid = (int) $me["id"];
+        $seenAuthors = [];
+        $seenTags = [];
+        $st = $pdo->prepare(
+            "SELECT m.member_id, m.tags FROM moment_likes l JOIN moments m ON m.id = l.moment_id WHERE l.member_id = ?"
+            . " UNION "
+            . "SELECT m.member_id, m.tags FROM moment_comments c JOIN moments m ON m.id = c.moment_id WHERE c.member_id = ?"
+        );
+        $st->execute([$mid, $mid]);
+        foreach ($st->fetchAll() as $r) {
+            $seenAuthors[(int) $r["member_id"]] = true;
+            foreach (self::decodeTags((string) ($r["tags"] ?? "")) as $t) $seenTags[$t] = true;
+        }
+
+        $ids = array_map(fn($r) => (int) $r["id"], $rows);
+        $in = implode(",", array_fill(0, count($ids), "?"));
+        $likes = [];
+        $cmts = [];
+        $q = $pdo->prepare("SELECT moment_id, COUNT(*) AS n FROM moment_likes WHERE moment_id IN ($in) GROUP BY moment_id");
+        $q->execute($ids);
+        foreach ($q->fetchAll() as $r) $likes[(int) $r["moment_id"]] = (int) $r["n"];
+        $q = $pdo->prepare("SELECT moment_id, COUNT(*) AS n FROM moment_comments WHERE moment_id IN ($in) AND deleted_at IS NULL GROUP BY moment_id");
+        $q->execute($ids);
+        foreach ($q->fetchAll() as $r) $cmts[(int) $r["moment_id"]] = (int) $r["n"];
+
+        $now = lg_now();
+        foreach ($rows as $i => $r) {
+            $id = (int) $r["id"];
+            $ageH = max(0.2, ($now - (int) $r["created_at"]) / 3600);
+            $score = 80 / pow(1 + $ageH / 18, 0.75);
+            $score += ($likes[$id] ?? 0) * 5 + ($cmts[$id] ?? 0) * 7;
+            if (isset($seenAuthors[(int) $r["member_id"]])) $score += 14;
+            foreach (self::decodeTags((string) ($r["tags"] ?? "")) as $t) {
+                if (isset($seenTags[$t])) $score += 8;
+            }
+            $rows[$i]["_score"] = $score;
+        }
+        usort($rows, fn($a, $b) => $b["_score"] <=> $a["_score"]);
+        return $rows;
+    }
+
     // ---------- 写 ----------
 
     private static function create(PDO $pdo, array $scope, array $me): void {
@@ -233,35 +298,7 @@ final class Moments {
         ]);
         $id = (int) $pdo->lastInsertId();
 
-        $pmode = self::pushMode($pdo, (int) $scope["id"]);
-        if ($pmode > 0) {
-            self::pushTimeline($pdo, $scope, $me, $id, $text, (bool) $images, $pmode);
-        }
-
         Json::ok(["id" => $id, "ts" => $now]);
-    }
-
-    /** 推流：给同群（含圈子）其他成员发一条站内信，人多也不至于刷爆收件箱 */
-    private static function pushTimeline(PDO $pdo, array $scope, array $me, int $id, string $text, bool $hasImage, int $mode = 1): void {
-        $ids = Compat::scopeIdsPublic($pdo, $scope);
-        $in = implode(",", array_fill(0, count($ids), "?"));
-        $sql = "SELECT id FROM members WHERE scope_id IN ($in) AND deleted_at IS NULL AND id <> ?";
-        $params = array_merge($ids, [(int) $me["id"]]);
-        if ($mode === 2) {
-            // 只找最近 30 天在这个圈子范围内说过话的人，冷清成员不再被打扰
-            $since = lg_now() - 30 * 86400;
-            $sql .= " AND id IN (SELECT DISTINCT member_id FROM messages WHERE scope_id IN ($in) AND created_at >= ? AND deleted_at IS NULL)";
-            $params = array_merge($params, $ids, [$since]);
-        }
-        $sql .= " LIMIT 200";
-        $st = $pdo->prepare($sql);
-        $st->execute($params);
-
-        $title = (string) $me["name"] . " 发了一条动态";
-        $body = $text !== "" ? mb_substr($text, 0, 80) : "（图片）";
-        foreach ($st->fetchAll() as $r) {
-            Notices::push($pdo, $scope, (int) $r["id"], "moment", $title, $body, "#/space", (int) $me["id"]);
-        }
     }
 
     private static function remove(PDO $pdo, array $scope, array $me): void {
@@ -394,8 +431,9 @@ final class Moments {
     }
 
     /**
-     * 推流档位（默认关闭）：0 关闭 / 1 推给同群（含圈子）所有人 / 2 只推给最近活跃的人。
-     * 人多的时候全推等于刷屏，"只推活跃"给管理员一个省心的折中。
+     * 推荐算法开关（默认关闭）：0 按时间倒序 / 1 按兴趣推荐排序。
+     * 打开后广场列表不再单纯按新到旧，而是「你赞过、评论过的人与标签」优先，
+     * 再叠加热度和时间衰减——就是把人往自己的信息茧房里推。
      */
     private static function pushMode(PDO $pdo, int $scopeId): int {
         try {
@@ -403,8 +441,7 @@ final class Moments {
             $st->execute(["moment.push." . $scopeId]);
             $v = $st->fetchColumn();
             if ($v === false) return 0;
-            $n = (int) $v;
-            return ($n === 1 || $n === 2) ? $n : 0;
+            return (int) $v === 1 ? 1 : 0;
         } catch (\Throwable $e) {
             return 0;
         }

@@ -10,6 +10,8 @@ let mine = false;          // 只看我发的
 let unread = 0;
 let tags = [];             // 最近出现过的标签，侧栏列出来
 let draft = [];            // 发布框里已上传的图片
+let feedRec = false;       // 广场是否开了推荐算法（决定翻页用 off 还是 before）
+let feedOff = 0;           // 下一页的游标：推荐算法用 offset，时间序用最后一条 id
 let openComment = 0;       // 当前展开评论框的动态 id
 
 export function unreadCount() { return unread; }
@@ -180,13 +182,14 @@ function paintFeed(box) {
 
   const more = btn('再看一些', 'btn-ghost sp-more', function () {
     const last = list.querySelector('.sp-item:last-of-type');
-    const before = last ? Number(last.dataset.id || 0) : 0;
+    const cursor = feedRec ? feedOff : (last ? Number(last.dataset.id || 0) : 0);
     more.disabled = true;
-    loadFeed(list, before, false).then(function (n) {
+    loadFeed(list, cursor, false).then(function (n) {
       more.disabled = false;
       if (n < 20) more.remove();
     });
   });
+  feedOff = 0;
   loadFeed(list, 0, true).then(function (n) { if (n < 20) more.remove(); });
   box.appendChild(more);
 }
@@ -196,7 +199,7 @@ async function loadFeed(list, before, replace) {
   const qs = [];
   if (tag) qs.push('tag=' + encodeURIComponent(tag));
   if (mine) qs.push('mine=1');
-  if (before) qs.push('before=' + before);
+  if (before) qs.push((feedRec ? 'off=' : 'before=') + before);
   if (qs.length) q = q + '?' + qs.join('&');
 
   const j = await api(q);
@@ -210,6 +213,8 @@ async function loadFeed(list, before, replace) {
     if (replace) list.appendChild(h('div', 'sp-empty', tag ? '这个标签下还没有动态' : '还没有人发动态，第一条可以是你'));
     return 0;
   }
+  feedRec = !!j.recommend && !tag && !mine;
+  if (feedRec && typeof j.next_off === 'number') feedOff = j.next_off;
   j.items.forEach(function (m) {
     (m.tags || []).forEach(function (tg) { if (tags.indexOf(tg) < 0) tags.push(tg); });
     list.appendChild(itemNode(m, list));

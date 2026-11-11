@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
+use LightGroup\Web\Site;
 use PDO;
 
 /**
@@ -489,6 +490,7 @@ final class Admin {
                 "mail_ready"         => Mailer::notifyOn($pdo),
                 "has_stt_key"        => $hasSttKey,
                 "stt_ready"          => Stt::configured($pdo),
+                "mcp_url"            => Site::baseUrl() . "mcp",
                 "callback_url"  => $callback,
                 "callback_path" => OAuth::CALLBACK_PATH,
                 "start_url"     => OAuth::origin() . OAuth::START_PATH,
@@ -578,23 +580,21 @@ final class Admin {
         $sid = (int) $me["scope_id"];
         $key = "moment.push." . $sid;
         if ($method === "GET") {
-            $mode = (int) self::setting($pdo, $key, "0");
-            if ($mode !== 1 && $mode !== 2) $mode = 0;
+            $mode = (int) self::setting($pdo, $key, "0") === 1 ? 1 : 0;
             Json::ok(["on" => $mode > 0, "mode" => $mode, "scope_id" => $sid]);
             return;
         }
         $raw = Input::body()["mode"] ?? null;
         if ($raw === null) {
-            // 兼容旧前端：on=true 当作「全群」
+            // 兼容旧前端：on=true 当作开启
             $on = Input::body()["on"] ?? null;
-            if ($on === null) Json::fail("要告诉我是哪一种推流");
+            if ($on === null) Json::fail("要告诉我是开还是关");
             $raw = in_array((string) $on, ["1", "true", "on"], true) ? 1 : 0;
         }
-        $mode = (int) $raw;
-        if ($mode !== 1 && $mode !== 2) $mode = 0;
+        $mode = (int) $raw === 1 ? 1 : 0;
         self::putSetting($pdo, $key, (string) $mode);
-        $label = [0 => "关闭", 1 => "推给全群", 2 => "只推给最近活跃的人"][$mode];
-        self::log($pdo, "moment.push", "本群空间推流改为「" . $label . "」");
+        $label = [0 => "关闭", 1 => "开启"][$mode];
+        self::log($pdo, "moment.push", "本群空间推荐算法改为「" . $label . "」");
         Json::ok(["on" => $mode > 0, "mode" => $mode]);
     }
 

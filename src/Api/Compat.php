@@ -229,11 +229,41 @@ final class Compat {
         $m = Session::member($pdo);
         if ($m === null || $scope === null) return $m;
         $alt = self::memberOfScope($pdo, $m, $scope);
+        // 超管是所有群的共同成员：任何一个群没有他的身份，就地补一个，
+        // 否则换个群就被判「不属于这个群」，还得手工去后台建人。
+        if ($alt === null && (int) ($m["scope_id"] ?? 0) !== (int) $scope["id"]) {
+            $alt = self::ensureSuperIn($pdo, $m, $scope);
+        }
         if ($alt !== null) {
             Session::useMember($alt);
             return $alt;
         }
         return $m;
+    }
+
+    /** 超管主账号在本群还没有成员时补一个；不是超管就返回 null */
+    private static function ensureSuperIn(PDO $pdo, array $m, array $scope): ?array {
+        $aid = (int) ($m["account_id"] ?? 0);
+        if ($aid <= 0) return null;
+        $st = $pdo->prepare("SELECT name, role FROM accounts WHERE id = ? LIMIT 1");
+        $st->execute([$aid]);
+        $a = $st->fetch();
+        if (!$a || (string) $a["role"] !== "super") return null;
+        $sid = (int) $scope["id"];
+        try {
+            $ins = $pdo->prepare(
+                "INSERT INTO members (scope_id, name, kind, account_id, created_at) VALUES (?, ?, 'human', ?, ?)"
+            );
+            $ins->execute([$sid, (string) $a["name"], $aid, lg_now()]);
+        } catch (\Throwable $e) {
+            // 并发下唯一索引会挡一次，下面重查即可
+        }
+        $st = $pdo->prepare(
+            "SELECT * FROM members WHERE scope_id = ? AND account_id = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1"
+        );
+        $st->execute([$sid, $aid]);
+        $row = $st->fetch();
+        return $row ?: null;
     }
 
     /**
@@ -1662,7 +1692,7 @@ final class Compat {
         if (str_starts_with($img, "[img]")) $img = substr($img, 5);
 
         if ($text === "" && $img === "" && $voice === "" && !$card) Json::fail("不能发空消息");
-        if (mb_strlen($text) > 2000) Json::fail("单条消息不要超过 2000 字");
+        if (mb_strlen($text) > 500) Json::fail("单条消息不要超过 500 字，长的分几条发");
         if ($dur < 0) $dur = 0;
         if ($dur > 600) $dur = 600;
 
@@ -2290,7 +2320,7 @@ final class Compat {
             "scope"    => $scope["title"],
             "features" => ["reply", "recall", "styles", "profile", "upload", "wait", "doc", "translate", "apikey"],
             "limits"   => [
-                "text"      => 2000,
+                "text"      => 500,
                 "upload"    => 5200000,
                 "wait_max"  => 25,
                 "read_max"  => 200,
