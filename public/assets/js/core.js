@@ -461,67 +461,15 @@ function onSystemModeChange() {
   applyThemeMode('auto');
   emit('theme');
 }
-// 开放平台的纯色主题一个主题给 5 个颜色：顶栏 / 侧栏底 / 侧栏字 / 悬停 / 内容区底。
-// 这里的 accent 就是顶栏色、THEMES 里的 soft 是悬停色，另外补两列：
-//   ink —— 浅底上的强调文字（选中菜单、链接、标签），比 accent 压深一档才看得清
-//   bg  —— 内容区底色，整站会跟着泛一层主色调，不再只有按钮变色
-const THEME_EXTRA = {
-  dadi: ['#7f1d1d', '#fbeceb'],
-  zhuanhong: ['#7c2d12', '#fdeee6'],
-  shuguang: ['#7c2d22', '#fcf2f0'],
-  daoxiang: ['#9a3412', '#fdefe2'],
-  nuanyangcheng: ['#7d4a06', '#fdf5e6'],
-  kafei: ['#422006', '#f6efe3'],
-  naicha: ['#6b4a2a', '#f8f3ec'],
-  xingse: ['#7a4a1f', '#fbf4ec'],
-  shechijin: ['#6b4f0a', '#fbf5e4'],
-  luori: ['#713f12', '#fdf6da'],
-  dianjihuang: ['#5b4306', '#faf7ec'],
-  mocha: ['#3f6212', '#f3f9e0'],
-  xiaocao: ['#14532d', '#e9f8ed'],
-  songlv: ['#14532d', '#edf8e4'],
-  danbohe: ['#0f5c4a', '#ecfbf5'],
-  qingbi: ['#134e4a', '#e5f7f4'],
-  yunqing: ['#155e75', '#e5f6fa'],
-  minghuanqing: ['#0e5c6b', '#f1fbfd'],
-  dailan: ['#334867', '#f7faff'],
-  tianqing: ['#0c4a6e', '#e6f1fb'],
-  wumailan: ['#3f4f5e', '#f3f7f9'],
-  hulan: ['#1e3a8a', '#e8f0fd'],
-  xuanfenglan: ['#1e3a8a', '#eff4ff'],
-  menghuanlan: ['#33407a', '#f5f8ff'],
-  beijixing: ['#22307a', '#f1f4fb'],
-  shenkongming: ['#28305a', '#f4f6fc'],
-  ziluolan: ['#4c1d95', '#f1ebfd'],
-  dingxiangzi: ['#55409b', '#f7f4ff'],
-  huopo: ['#701a75', '#fcf0fd'],
-  mengdong: ['#831843', '#fdebf5'],
-  daifen: ['#6b3b52', '#fff7fb'],
-  caixiafen: ['#9d174d', '#fff5fa'],
-  yinghuafen: ['#7a3352', '#fffafd'],
-  mitao: ['#7c3b2e', '#fffaf8'],
-  naihuang: ['#78530a', '#fffefa'],
-  bohenai: ['#14543f', '#f9fffc'],
-  yunduolan: ['#1d4f66', '#fafdff'],
-  yuni: ['#4c3a86', '#fcfbff'],
-  oufen: ['#6b4451', '#fffbfc'],
-  tongtou: ['#334155', '#f6f7f9'],
-  mibai: ['#4a453c', '#f9f6ef'],
-  yuebai: ['#455468', '#fcfdff'],
-  shiban: ['#1e293b', '#edf1f6'],
-  yanhui: ['#334155', '#eff1f4'],
-  menglonghui: ['#3d4451', '#f5f7f9'],
-  didiao: ['#18181b', '#f2f3f4'],
-  gaoyahei: ['#3a3a42', '#f6f6f8'],
-  wuye: ['#39445e', '#f4f7fb'],
-};
+// 主题色板：整站的颜色都从主色推出来（页面底 / 面板 / 卡片 / 描边 / 文字 / 气泡），
+// 不再给每个主题手写一组 [ink,bg]。同一套公式在 src/Web/ThemePreset.php 里有一份
+// 一模一样的实现：门面页首帧用的就是那份，两边算出的值必须逐位相同，否则进站会跳色。
+// 口诀：主色转 HSL → 取一个统一的染色强度 st → 铺一条同饱和度的明度色阶。
+const NEUTRAL_HUE = 214;
 
 export const THEME_INDEX = (() => {
   const m = {};
-  THEMES.forEach((t) => {
-    const e = THEME_EXTRA[t.id] || [];
-    m[t.id] = { id: t.id, name: t.name, accent: t.accent, soft: t.soft, ink: e[0] || '', bg: e[1] || '' };
-  });
+  THEMES.forEach((t) => { m[t.id] = { id: t.id, name: t.name, accent: t.accent, soft: t.soft }; });
   return m;
 })();
 
@@ -544,15 +492,11 @@ window.__lgTagIndex = TAG_INDEX;
 
 export function tagOf(id, dim) { return (TAG_INDEX[id] || {})[dim] || ""; }
 
-// 亮底配深字、暗底配浅字
+// 亮底配深字、暗底配浅字：直接在两个候选里挑对比更高的那个
+// （只按亮度阈值挑，中等亮度会挑到对比更低的一边）
 export function contrastText(hex) {
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || ""));
-  if (!m) return "#ffffff";
-  const v = parseInt(m[1], 16);
-  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
-  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  const l = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-  return l > 0.45 ? "#111827" : "#ffffff";
+  if (!hexRgb(hex)) return "#ffffff";
+  return contrastRatio(hex, "#111827") >= contrastRatio(hex, "#ffffff") ? "#111827" : "#ffffff";
 }
 
 // 强调色这一系全交给这里写：主色 / 字色 / 浅底 / 浅底文字 / 描边 / 页面底。
@@ -560,8 +504,14 @@ export function contrastText(hex) {
 // 首帧缓存：app-shell.php 的内联脚本会读它，先按上次的颜色铺一层再等接口
 const ACCENT_CACHE = 'lg.accent';
 
-const ACCENT_VARS = ['--accent', '--accent-text', '--self-bubble', '--self-bubble-text',
-  '--accent-soft', '--accent-ink', '--accent-line', '--page-bg'];
+// 引擎写出去的全部变量：clearAccent 按这份清单清，漏一个就会留一块上一套主题的颜色
+const ACCENT_VARS = ['--page-bg', '--bg', '--surface', '--surface-2', '--surface-3',
+  '--border', '--border-strong', '--accent', '--accent-text', '--accent-ink',
+  '--accent-soft', '--accent-line', '--text', '--text-dim', '--text-faint',
+  '--bubble', '--bubble-text', '--self-bubble', '--self-bubble-text',
+  '--dk-bg', '--dk-surface', '--dk-surface-2', '--dk-surface-3', '--dk-border',
+  '--dk-border-strong', '--dk-text', '--dk-text-dim', '--dk-text-faint',
+  '--dk-accent', '--dk-accent-text'];
 
 function hexRgb(hex) {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || ''));
@@ -610,45 +560,157 @@ function lumTo(hex, target) {
   return mixHex(hex, other, (lo + hi) / 2);
 }
 
-// base 是内建主题那一行（带 soft / ink / bg），主题包传 null 走现算
+// 染色强度：主色越艳整站越带色；近灰主色也留一档最低强度，别又回到一片白
+function tintStrength(s) { return s < 0.05 ? 0.32 : clampNum(s, 0.32, 0.88); }
+
+function clampNum(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// 主色转 HSL。近白 / 近灰（通透白、米白、月白）的色相没有意义，统一按中性色处理，
+// 否则 h=0 会把整站面板染成红色系
+function rgbHsl(hex) {
+  const c = hexRgb(hex) || [0, 0, 0];
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  const d = mx - mn;
+  let h = 0, s = 0;
+  if (d > 0.0001) {
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    if (mx === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  if (s < 0.05) { h = NEUTRAL_HUE; s = 0; }
+  return { h: h, s: s, l: l };
+}
+
+// HSL -> #rrggbb。变量值只留 hex：老 WebView 不认 hsl()，别把函数写进 style
+function hslHex(h, s, l) {
+  const hh = ((h % 360) + 360) % 360 / 360;
+  const ss = clampNum(s, 0, 1), ll = clampNum(l, 0, 1);
+  if (ss === 0) { const v = Math.round(ll * 255); return rgbHex([v, v, v]); }
+  const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss;
+  const p = 2 * ll - q;
+  const ch = function (t) {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  return rgbHex([ch(hh + 1 / 3) * 255, ch(hh) * 255, ch(hh - 1 / 3) * 255]);
+}
+
+// 强调文字：同色相压深，直到在面板底色上对比 >= 4.5。主色极浅时只压这一支，
+// --accent 保留原值继续当填充色（白底白字这口锅不背）
+function accentInk(h, st, surface, srcL) {
+  const sat = Math.max(0.12, Math.min(0.72, st * 0.80));
+  const top = Math.max(0.04, Math.min(srcL, 0.45));
+  const first = hslHex(h, sat, top);
+  if (contrastRatio(first, surface) >= 4.5) return first;
+  let lo = 0.04, hi = top;
+  for (let i = 0; i < 20; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (contrastRatio(hslHex(h, sat, mid), surface) >= 4.5) lo = mid; else hi = mid;
+  }
+  return hslHex(h, sat, lo);
+}
+
+// 主色 -> 整套变量：浅色 19 个、深色 19 个同名取值 + 11 个 --dk-*。
+// PHP 侧 ThemePreset::palette() 逐行同款，改这里记得同步那边。
+function themePalette(accent, accentText) {
+  const src = rgbHex(hexRgb(accent) || [37, 99, 235]);
+  const hsl = rgbHsl(src);
+  const h = hsl.h, st = tintStrength(hsl.s);
+  const surface = hslHex(h, st, 0.982);
+  const surface2 = hslHex(h, st, 0.963);
+  const pageBg = hslHex(h, st, 0.951);
+  let text = hslHex(h, st * 0.30, 0.16);
+  if (contrastRatio(text, surface) < 4.5) text = '#14171c';
+  const given = hexRgb(accentText || '') ? rgbHex(hexRgb(accentText)) : '';
+  const tc = given && contrastRatio(given, src) >= 3 ? given : contrastText(src);
+  const dkAccent = hslHex(h, Math.max(0.30, Math.min(0.72, st * 0.75)), 0.60);
+  const dkAccentText = contrastText(dkAccent);
+  const dkBg = hslHex(h, st * 0.27, 0.070);
+  const dkSurface = hslHex(h, st * 0.34, 0.110);
+  const dkSurface2 = hslHex(h, st * 0.36, 0.145);
+  const dkSurface3 = hslHex(h, st * 0.34, 0.180);
+  const dkBorder = hslHex(h, st * 0.30, 0.245);
+  const dkBorderStrong = hslHex(h, st * 0.32, 0.345);
+  const dkText = hslHex(h, st * 0.12, 0.93);
+  const dkTextDim = hslHex(h, st * 0.12, 0.72);
+  const dkTextFaint = hslHex(h, st * 0.12, 0.58);
+  return {
+    light: {
+      '--page-bg': pageBg,
+      '--bg': pageBg,
+      '--surface': surface,
+      '--surface-2': surface2,
+      '--surface-3': hslHex(h, st, 0.940),
+      '--border': hslHex(h, st * 0.86, 0.885),
+      '--border-strong': hslHex(h, st * 0.88, 0.80),
+      '--accent': src,
+      '--accent-text': tc,
+      '--accent-ink': accentInk(h, st, surface, hsl.l),
+      '--accent-soft': hslHex(h, st * 0.55, 0.94),
+      '--accent-line': hslHex(h, st * 0.60, 0.845),
+      '--text': text,
+      '--text-dim': hslHex(h, st * 0.30, 0.42),
+      '--text-faint': hslHex(h, st * 0.30, 0.58),
+      '--bubble': surface2,
+      '--bubble-text': text,
+      '--self-bubble': src,
+      '--self-bubble-text': tc
+    },
+    dark: {
+      '--page-bg': dkBg,
+      '--bg': dkBg,
+      '--surface': dkSurface,
+      '--surface-2': dkSurface2,
+      '--surface-3': dkSurface3,
+      '--border': dkBorder,
+      '--border-strong': dkBorderStrong,
+      '--accent': dkAccent,
+      '--accent-text': dkAccentText,
+      '--accent-ink': hslHex(h, st * 0.55, 0.78),
+      '--accent-soft': hslHex(h, st * 0.40, 0.20),
+      '--accent-line': hslHex(h, st * 0.40, 0.30),
+      '--text': dkText,
+      '--text-dim': dkTextDim,
+      '--text-faint': dkTextFaint,
+      '--bubble': dkSurface2,
+      '--bubble-text': dkText,
+      '--self-bubble': dkAccent,
+      '--self-bubble-text': dkAccentText,
+      '--dk-bg': dkBg,
+      '--dk-surface': dkSurface,
+      '--dk-surface-2': dkSurface2,
+      '--dk-surface-3': dkSurface3,
+      '--dk-border': dkBorder,
+      '--dk-border-strong': dkBorderStrong,
+      '--dk-text': dkText,
+      '--dk-text-dim': dkTextDim,
+      '--dk-text-faint': dkTextFaint,
+      '--dk-accent': dkAccent,
+      '--dk-accent-text': dkAccentText
+    }
+  };
+}
+
+// 色板完全由主色推导；第三个参数 base（内建主题那一行）只为兼容旧调用保留，
+// 它的手写 ink / bg 不再参与计算，否则 JS 与 PHP 算不出同一套值。
 function paintAccent(accent, accentText, base) {
+  void base;
   const el = document.documentElement;
   if (!accent) { ACCENT_VARS.forEach(function (k) { el.style.removeProperty(k); }); return; }
-  const src = hexRgb(accent) ? String(accent) : '#2563eb';
   const dark = effectiveMode() === 'dark';
-  let main, soft, ink, line, pageBg = '';
-  if (dark) {
-    // 深色底上过暗的主色要提亮一档才看得清（0.30 差不多就是原 #4f8cff）
-    main = lumTo(src, 0.30);
-    soft = mixHex(main, '#1b222b', 0.18);
-    ink = lumTo(src, 0.72);
-    line = mixHex(main, '#1b222b', 0.5);
-  } else {
-    main = src;
-    soft = (base && base.soft) ? base.soft : mixHex(src, '#ffffff', 0.13);
-    const want = (base && base.ink) ? base.ink : '';
-    // ink 只会往深里走：主色本身够暗就别再提亮，浅色主色按亮度压下去
-    ink = want && lumOf(want) < 0.40 ? want : lumTo(src, Math.min(lumOf(src) * 0.55, 0.20));
-    line = (base && base.soft) ? mixHex(src, base.soft, 0.35) : mixHex(src, '#ffffff', 0.32);
-    pageBg = (base && base.bg) ? base.bg : mixHex(src, '#ffffff', 0.07);
-  }
-  // 主题包给的字色只在对比够用时采纳，否则按主色重算（浅主题配白字就是这么看不见的）
-  const given = accentText ? String(accentText) : '';
-  const tc = given && contrastRatio(given, main) >= 3 ? given : contrastText(main);
-  el.style.setProperty('--accent', main);
-  el.style.setProperty('--accent-text', tc);
-  el.style.setProperty('--self-bubble', main);
-  el.style.setProperty('--self-bubble-text', tc);
-  el.style.setProperty('--accent-soft', soft);
-  el.style.setProperty('--accent-ink', ink);
-  el.style.setProperty('--accent-line', line);
-  if (pageBg) el.style.setProperty('--page-bg', pageBg); else el.style.removeProperty('--page-bg');
+  const pal = themePalette(accent, accentText);
+  const vars = dark ? pal.dark : pal.light;
+  Object.keys(vars).forEach(function (k) { el.style.setProperty(k, vars[k]); });
   try {
-    const vars = {
-      '--accent': main, '--accent-text': tc, '--self-bubble': main, '--self-bubble-text': tc,
-      '--accent-soft': soft, '--accent-ink': ink, '--accent-line': line
-    };
-    if (pageBg) vars['--page-bg'] = pageBg;
     localStorage.setItem(ACCENT_CACHE, JSON.stringify({ mode: dark ? 'dark' : 'light', vars: vars }));
   } catch (e) { void e; }
   syncMetaColor();

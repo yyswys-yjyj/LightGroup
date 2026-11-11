@@ -142,6 +142,8 @@ textarea.tb{height:auto;min-height:96px;padding:10px 12px;line-height:1.6;resize
 .img-dialog{position:fixed;inset:0;z-index:210;background:rgba(8,10,14,.84);display:flex;align-items:center;justify-content:center;padding:24px;opacity:0;transition:opacity .16s}
 .img-dialog.on{opacity:1}
 .img-dialog img{max-width:min(92vw,1400px);max-height:86vh;border-radius:10px;background:#0b0d11;box-shadow:0 24px 60px rgba(0,0,0,.45);object-fit:contain;cursor:default}
+/* 看图弹层的关闭键始终压在深色遮罩上，这里不能取主题面：深色模式下 --surface 是暗的，
+   取它会让按钮和遮罩糊成一片。所以保留一层固定的白色提亮。 */
 .img-dialog-x{position:absolute;top:16px;right:16px;width:38px;height:38px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px}
 .img-dialog-x:hover{background:rgba(255,255,255,.26)}
 
@@ -287,7 +289,7 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 /* 「个人」只在手机上出现：桌面的个人入口是左上角头像按钮 */
 .rail-tab-person{display:none}
 .req-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 5px;border-radius:999px;background:var(--danger-solid);color:var(--on-danger);font-size:10.5px;font-weight:600;line-height:1}
-.req-badge.quiet{background:var(--chip);color:var(--text-2)}
+.req-badge.quiet{background:var(--chip-bg);color:var(--text-dim)}
 .rail-tab .req-badge{position:absolute;top:3px;right:5px}
 
 .im-list{width:300px;flex:none;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
@@ -426,7 +428,7 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .dm-invite-copy{align-self:flex-start}
 
 /* 会话越界：登录身份属于别的群时盖一整页，别让人继续在错的群里点 */
-.sm-wrap{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,42,.42)}
+.sm-wrap{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--scrim)}
 .sm-card{width:min(420px,100%);padding:22px 22px 18px;border-radius:14px;background:var(--surface);color:var(--text);text-align:center;box-shadow:0 18px 44px rgba(15,23,42,.22)}
 .sm-ic{display:block;margin-bottom:10px;font-size:22px;color:var(--text-faint)}
 .sm-title{margin:0 0 8px;font-size:16px}

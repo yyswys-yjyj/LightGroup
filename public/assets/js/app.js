@@ -323,7 +323,8 @@ async function bootChat() {
 
 function boot() {
   S.css = localStorage.getItem(LSK('css')) || '';
-  applyThemeMode(S.theme || (BOOT.site && BOOT.site.theme) || 'auto');
+  // 服务端已经在 head 里按个人主题铺好首帧，这里只切深浅，别重画
+  applyThemeMode(S.theme || (BOOT.site && BOOT.site.theme) || 'auto', { keepPaint: true });
   applyScopeCss(S.css);
   applyWall();
   onLayout(layout);

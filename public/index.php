@@ -107,7 +107,13 @@ if ($path === "/app") {
     View::render("app-shell", [
         "site"   => Site::info(),
         "base"   => $base,
-        "bootMe" => ["id" => (int) $me["id"], "name" => (string) $me["name"], "kind" => (string) $me["kind"]],
+        // theme 要带上：首屏配色按本人主题直接输出，不然先闪一下站点默认色
+        "bootMe" => [
+            "id"   => (int) $me["id"],
+            "name" => (string) $me["name"],
+            "kind" => (string) $me["kind"],
+            "theme" => (string) ($me["theme"] ?? ""),
+        ],
     ]);
     exit;
 }

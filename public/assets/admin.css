@@ -319,7 +319,7 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
 .adm-error { display: flex; align-items: flex-start; gap: 9px; padding: 14px; color: var(--danger); font-size: 13px; line-height: 1.6; }
 .adm-mask {
   position: fixed; inset: 0; z-index: 90;
-  background: rgba(9, 12, 18, .45);
+  background: var(--scrim);
   display: flex; align-items: center; justify-content: center;
   padding: 20px;
 }
@@ -348,7 +348,7 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
   padding: 10px 14px;
   border-radius: 10px;
   font-size: 13px;
-  color: #fff;
+  color: var(--on-ok);
   box-shadow: var(--shadow-lg);
   transition: opacity .2s, transform .2s;
 }
@@ -425,7 +425,7 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
   font-size: 12px; font-weight: 600;
 }
 .adm-update-badge.new { background: var(--accent-soft); color:var(--accent-ink); }
-.adm-update-badge.ok { background: var(--chip); color: var(--text-dim); }
+.adm-update-badge.ok { background: var(--chip-bg); color: var(--text-dim); }
 .adm-update-badge.err { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .adm-update-notes { line-height: 1.75; color: var(--text-dim); font-size: 13.5px; margin: 0; white-space: pre-wrap; }
 .adm-update-url { font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; word-break: break-all; margin: 0 0 6px; }

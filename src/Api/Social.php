@@ -25,10 +25,14 @@ final class Social {
 
     /** 当前身份的主账号是不是超级管理员 */
     private static function isSuper(PDO $pdo, array $me): bool {
-        $aid = (int) ($me["account_id"] ?? 0);
-        if ($aid <= 0) return false;
+        return self::isSuperAccount($pdo, (int) ($me["account_id"] ?? 0));
+    }
+
+    /** 某个主账号是不是超级管理员 */
+    private static function isSuperAccount(PDO $pdo, int $accountId): bool {
+        if ($accountId <= 0) return false;
         $st = $pdo->prepare("SELECT role FROM accounts WHERE id = ? LIMIT 1");
-        $st->execute([$aid]);
+        $st->execute([$accountId]);
         return (string) ($st->fetchColumn() ?: "") === "super";
     }
 
@@ -54,13 +58,20 @@ final class Social {
         return $row !== null && (string) $row["status"] === "accepted";
     }
 
-    /** 同作用域内的有效成员，不在这个 scope / 已注销都返回 null */
+    /**
+     * 同作用域内的有效成员，不在这个 scope / 已注销都返回 null。
+     * 超级管理员是所有作用域的共同成员：当前身份虽然只挂在某一个群上，
+     * 但在别的群里点到超管时不该当成「外群的人」。
+     */
     public static function scopeMember(PDO $pdo, array $scope, int $id): ?array {
         if ($id <= 0) return null;
         $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND scope_id = ? AND deleted_at IS NULL LIMIT 1");
         $st->execute([$id, (int) $scope["id"]]);
         $row = $st->fetch();
-        return $row ?: null;
+        if ($row) return $row;
+        $any = self::anyLive($pdo, $id);
+        if ($any === null) return null;
+        return self::isSuperAccount($pdo, (int) ($any["account_id"] ?? 0)) ? $any : null;
     }
 
     /**

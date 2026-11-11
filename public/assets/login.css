@@ -73,7 +73,7 @@
 .captcha-hole{position:absolute;top:6px;left:70%;width:32px;height:32px;margin-left:-16px;border-radius:8px;background:color-mix(in srgb, var(--accent) 14%, transparent);border:1px dashed color-mix(in srgb, var(--accent) 55%, transparent)}
 .captcha-knob{position:absolute;top:0;left:0;width:44px;height:42px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-radius:9px;box-shadow:var(--shadow-sm);color:var(--accent-ink);cursor:grab;transition:background .15s}
 .captcha-knob:active{cursor:grabbing}
-.captcha.done .captcha-knob{background:var(--ok);color:var(--surface)}
+.captcha.done .captcha-knob{background:var(--ok);color:var(--on-ok)}
 .captcha.done .captcha-track{border-color:var(--ok)}
 .captcha.fail .captcha-track{animation:cap-shake .32s ease}
 @keyframes cap-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}

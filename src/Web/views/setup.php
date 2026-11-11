@@ -12,6 +12,7 @@ $lgCallback = rtrim(\LightGroup\Api\OAuth::origin(), "/") . \LightGroup\Api\OAut
 <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
 <link rel="stylesheet" href="/assets/base.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/base.css") ?>">
 <link rel="stylesheet" href="/assets/setup.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/setup.css") ?>">
+<?= \LightGroup\Web\ThemePreset::style() ?>
 </head>
 <body class="page-setup">
 <div class="setup-wrap">

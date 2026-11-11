@@ -9,18 +9,32 @@ foreach (@glob(PUBLIC_ROOT . "/assets/js/*.js") ?: [] as $jsFile) {
     $appVer = (int) max($appVer, (int) (@filemtime($jsFile) ?: 0));
     $lgName = basename($jsFile);
     $lgJsImports["/assets/js/" . $lgName] = "/assets/js/" . $lgName . "?v=" . (int) (@filemtime($jsFile) ?: 0);
-} ?>
+}
+// 本人明确选过深浅（members.theme 的 "dark-xxx" / "light-xxx"）就由服务端直接定在 <html> 上，
+// 别让下面那段本地脚本按「跟随系统」把它掰回浅色，再等接口回来变深色
+$lgThemeChoice = (string) ($bootMe["theme"] ?? "");
+$lgMode = strtok($lgThemeChoice, "-");
+if ($lgMode !== "dark" && $lgMode !== "light") $lgMode = "";
+?>
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN"<?= $lgMode !== "" ? ' data-theme="' . $lgMode . '"' : '' ?> data-theme-mode="<?= $lgMode !== "" ? $lgMode : "auto" ?>">
 <head>
 <script>
 // 首屏就定深浅，避免深色用户先看到一帧白底；键与 public/assets/js/core.js 的 LSK('theme') 一致
 (function () {
   try {
-    var m = localStorage.getItem("lg.theme") || "auto";
-    if (m !== "light" && m !== "dark") m = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    document.documentElement.setAttribute("data-theme", m);
-    document.documentElement.setAttribute("data-theme-mode", m);
+    // 只说得出三种：本人选了深/浅，或者跟随系统。服务端已经把结论写在 <html> 上，
+    // 这里只补「跟随系统」那一种，不再看 localStorage —— 本地残留的模式会把首帧带偏。
+    var el = document.documentElement;
+    var srv = el.getAttribute("data-theme");
+    var mode = el.getAttribute("data-theme-mode") || "auto";
+    var m = srv;
+    if (m !== "light" && m !== "dark") {
+      m = (mode === "light" || mode === "dark") ? mode
+        : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+    el.setAttribute("data-theme", m);
+    el.setAttribute("data-theme-mode", m);
   } catch (e) { void e; }
 })();
 </script>
@@ -29,6 +43,7 @@ foreach (@glob(PUBLIC_ROOT . "/assets/js/*.js") ?: [] as $jsFile) {
 <title><?= e($site["name"]) ?></title>
 <meta name="theme-color" content="#2563eb">
 <?= \LightGroup\Web\Brand::heads($site) ?>
+<?= \LightGroup\Web\ThemePreset::firstPaint((string) ($bootMe["theme"] ?? "")) ?>
 <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
 <link rel="stylesheet" href="/assets/base.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/base.css") ?>">
 <link rel="stylesheet" href="/assets/app.css?v=<?= $appVer ?>">
