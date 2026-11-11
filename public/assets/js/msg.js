@@ -278,7 +278,7 @@ function voiceNode(m) {
   box.appendChild(bar);
   box.appendChild(dur);
 
-  // 语音转文字：识别接口在后台配好之前不显示按钮，免得点了只弹错误
+  // 语音转文字：按钮一直放着，站点没配识别接口时后端会明确回「站点没开语音转文字」
   const wrap = h('div', 'voice-wrap');
   wrap.appendChild(box);
   const tx = document.createElement('button');
