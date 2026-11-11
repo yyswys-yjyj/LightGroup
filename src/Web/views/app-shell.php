@@ -35,6 +35,22 @@ foreach (@glob(PUBLIC_ROOT . "/assets/js/*.js") ?: [] as $jsFile) {
 <!-- 资料卡 / 资料页 / markdown 编辑器的样式；带 filemtime，改完不用手动改版本号 -->
 <link rel="stylesheet" data-lg-profile="1" href="/assets/profile.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/profile.css") ?>">
 <link rel="stylesheet" data-lg-space="1" href="/assets/space.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/space.css") ?>">
+<?= \LightGroup\Web\ThemePreset::style((string) ($bootMe["theme"] ?? "")) ?>
+<script>
+// 上次真正生效的强调色（core.js 的 paintAccent 写进 lg.accent）：首帧直接套上，
+// 不然会先看到站点默认色，等接口回来再换成本人的主题，看着像被白底盖了一下
+(function () {
+  try {
+    var raw = localStorage.getItem("lg.accent");
+    if (!raw) return;
+    var c = JSON.parse(raw);
+    var m = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    if (!c || c.mode !== m || !c.vars) return;
+    var el = document.documentElement;
+    for (var k in c.vars) if (Object.prototype.hasOwnProperty.call(c.vars, k)) el.style.setProperty(k, c.vars[k]);
+  } catch (e) { void e; }
+})();
+</script>
 </head>
 <body class="page-app">
 <div id="app">

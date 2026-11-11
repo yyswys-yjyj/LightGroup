@@ -90,7 +90,11 @@ final class Entry
                 ], 409);
                 exit;
             }
-            $bootMe = ["id" => (int) $me["id"], "name" => $me["name"], "kind" => $me["kind"]];
+            $bootMe = [
+                "id" => (int) $me["id"], "name" => $me["name"], "kind" => $me["kind"],
+                // 首屏配色要用：members.theme 存的是「模式-主题」
+                "theme" => (string) ($me["theme"] ?? ""),
+            ];
             View::render("app-shell", ["site" => $site, "base" => $basePath, "bootMe" => $bootMe]);
             exit;
         }

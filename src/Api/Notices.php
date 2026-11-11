@@ -39,13 +39,14 @@ final class Notices {
             $body = Input::body();
             $op = (string) ($body["op"] ?? "read");
             if ($op === "readAll") {
-                $st = $pdo->prepare("UPDATE notices SET read_at = ? WHERE scope_id = ? AND (member_id = ? OR member_id = 0) AND read_at IS NULL");
-                $st->execute([lg_now(), $scopeId, (int) $me["id"]]);
+                // 个人的通知按 member_id 认，不按作用域：超管在哪个群看到的都是同一批
+                $st = $pdo->prepare("UPDATE notices SET read_at = ? WHERE (member_id = ? OR (member_id = 0 AND scope_id = ?)) AND read_at IS NULL");
+                $st->execute([lg_now(), (int) $me["id"], $scopeId]);
             } else {
                 $id = (int) ($body["id"] ?? 0);
                 if ($id <= 0) Json::fail("要指定是哪一条");
-                $st = $pdo->prepare("UPDATE notices SET read_at = ? WHERE id = ? AND scope_id = ? AND (member_id = ? OR member_id = 0) AND read_at IS NULL");
-                $st->execute([lg_now(), $id, $scopeId, (int) $me["id"]]);
+                $st = $pdo->prepare("UPDATE notices SET read_at = ? WHERE id = ? AND (member_id = ? OR (member_id = 0 AND scope_id = ?)) AND read_at IS NULL");
+                $st->execute([lg_now(), $id, (int) $me["id"], $scopeId]);
             }
             self::send($pdo, $scopeId, $me);
             return;
@@ -55,13 +56,13 @@ final class Notices {
 
     private static function send(PDO $pdo, int $scopeId, array $me): void {
         if (Input::int("count", 0) === 1) {
-            $st = $pdo->prepare("SELECT COUNT(*) FROM notices WHERE scope_id = ? AND (member_id = ? OR member_id = 0) AND read_at IS NULL");
-            $st->execute([$scopeId, (int) $me["id"]]);
+            $st = $pdo->prepare("SELECT COUNT(*) FROM notices WHERE (member_id = ? OR (member_id = 0 AND scope_id = ?)) AND read_at IS NULL");
+            $st->execute([(int) $me["id"], $scopeId]);
             Json::ok(["unread" => (int) $st->fetchColumn()]);
             return;
         }
-        $st = $pdo->prepare("SELECT * FROM notices WHERE scope_id = ? AND (member_id = ? OR member_id = 0) ORDER BY id DESC LIMIT 50");
-        $st->execute([$scopeId, (int) $me["id"]]);
+        $st = $pdo->prepare("SELECT * FROM notices WHERE (member_id = ? OR (member_id = 0 AND scope_id = ?)) ORDER BY id DESC LIMIT 50");
+        $st->execute([(int) $me["id"], $scopeId]);
         $rows = $st->fetchAll();
 
         $fromIds = [];
@@ -103,13 +104,35 @@ final class Notices {
         self::mailTo($pdo, $memberId, $title, $body, $link);
     }
 
+    /**
+     * 给一个成员发站内信，但不需要知道他在哪个群。
+     * 好友申请、同意、拒绝这些是「人 to 人」，收件人可能不在发起人当前的作用域里。
+     */
+    public static function pushToMember(PDO $pdo, int $memberId, string $kind, string $title, string $body, string $link = "", int $fromId = 0): void {
+        if ($memberId <= 0) return;
+        $scopeId = 0;
+        $st = $pdo->prepare("SELECT scope_id FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$memberId]);
+        $row = $st->fetch();
+        if ($row) $scopeId = (int) $row["scope_id"];
+        $ins = $pdo->prepare("INSERT INTO notices (scope_id, member_id, kind, title, body, link, from_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $ins->execute([$scopeId, $memberId, $kind, $title, $body, $link, $fromId, lg_now()]);
+        self::mailTo($pdo, $memberId, $title, $body, $link);
+    }
+
     /** 发给这个群里所有管理员（举报提醒用） */
     public static function pushAdmins(PDO $pdo, array $scope, string $kind, string $title, string $body, string $link = "", int $fromId = 0): void {
         $st = $pdo->prepare("SELECT m.* FROM members m JOIN accounts a ON a.id = m.account_id
             WHERE m.scope_id = ? AND m.deleted_at IS NULL AND a.role IN ('admin', 'super')");
         $st->execute([(int) $scope["id"]]);
-        foreach ($st->fetchAll() as $r) {
-            self::push($pdo, $scope, (int) $r["id"], $kind, $title, $body, $link, $fromId);
+        $ids = [];
+        foreach ($st->fetchAll() as $r) $ids[(int) $r["id"]] = true;
+        // 超管是所有作用域共同成员，只在主群有一行成员，要单独补上
+        $sup = $pdo->query("SELECT m.id FROM members m JOIN accounts a ON a.id = m.account_id
+            WHERE a.role = 'super' AND m.deleted_at IS NULL ORDER BY m.id ASC LIMIT 1")->fetchColumn();
+        if ($sup) $ids[(int) $sup] = true;
+        foreach (array_keys($ids) as $mid) {
+            self::push($pdo, $scope, (int) $mid, $kind, $title, $body, $link, $fromId);
         }
     }
 

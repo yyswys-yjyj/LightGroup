@@ -69,6 +69,62 @@ final class ThemePreset
 
     public const DEFAULT_ID = 'hulan';
 
+    /**
+     * 内建主题的【浅底文字色, 页面底色】，与 core.js 的 THEME_EXTRA 一一对应。
+     * 门面页只能靠这里把首屏配色定成和进站后一致，少一帧跳色。
+     * @var array<string,array{0:string,1:string}>
+     */
+    public const EXTRA = [
+        'dadi' => ['#7f1d1d', '#fbeceb'],
+        'zhuanhong' => ['#7c2d12', '#fdeee6'],
+        'shuguang' => ['#7c2d22', '#fcf2f0'],
+        'daoxiang' => ['#9a3412', '#fdefe2'],
+        'nuanyangcheng' => ['#7d4a06', '#fdf5e6'],
+        'kafei' => ['#422006', '#f6efe3'],
+        'naicha' => ['#6b4a2a', '#f8f3ec'],
+        'xingse' => ['#7a4a1f', '#fbf4ec'],
+        'shechijin' => ['#6b4f0a', '#fbf5e4'],
+        'luori' => ['#713f12', '#fdf6da'],
+        'dianjihuang' => ['#5b4306', '#faf7ec'],
+        'mocha' => ['#3f6212', '#f3f9e0'],
+        'xiaocao' => ['#14532d', '#e9f8ed'],
+        'songlv' => ['#14532d', '#edf8e4'],
+        'danbohe' => ['#0f5c4a', '#ecfbf5'],
+        'qingbi' => ['#134e4a', '#e5f7f4'],
+        'yunqing' => ['#155e75', '#e5f6fa'],
+        'minghuanqing' => ['#0e5c6b', '#f1fbfd'],
+        'dailan' => ['#334867', '#f7faff'],
+        'tianqing' => ['#0c4a6e', '#e6f1fb'],
+        'wumailan' => ['#3f4f5e', '#f3f7f9'],
+        'hulan' => ['#1e3a8a', '#e8f0fd'],
+        'xuanfenglan' => ['#1e3a8a', '#eff4ff'],
+        'menghuanlan' => ['#33407a', '#f5f8ff'],
+        'beijixing' => ['#22307a', '#f1f4fb'],
+        'shenkongming' => ['#28305a', '#f4f6fc'],
+        'ziluolan' => ['#4c1d95', '#f1ebfd'],
+        'dingxiangzi' => ['#55409b', '#f7f4ff'],
+        'huopo' => ['#701a75', '#fcf0fd'],
+        'mengdong' => ['#831843', '#fdebf5'],
+        'daifen' => ['#6b3b52', '#fff7fb'],
+        'caixiafen' => ['#9d174d', '#fff5fa'],
+        'yinghuafen' => ['#7a3352', '#fffafd'],
+        'mitao' => ['#7c3b2e', '#fffaf8'],
+        'naihuang' => ['#78530a', '#fffefa'],
+        'bohenai' => ['#14543f', '#f9fffc'],
+        'yunduolan' => ['#1d4f66', '#fafdff'],
+        'yuni' => ['#4c3a86', '#fcfbff'],
+        'oufen' => ['#6b4451', '#fffbfc'],
+        'tongtou' => ['#334155', '#f6f7f9'],
+        'mibai' => ['#4a453c', '#f9f6ef'],
+        'yuebai' => ['#455468', '#fcfdff'],
+        'shiban' => ['#1e293b', '#edf1f6'],
+        'yanhui' => ['#334155', '#eff1f4'],
+        'menglonghui' => ['#3d4451', '#f5f7f9'],
+        'didiao' => ['#18181b', '#f2f3f4'],
+        'gaoyahei' => ['#3a3a42', '#f6f6f8'],
+        'wuye' => ['#39445e', '#f4f7fb'],
+    ];
+
     /** 站点默认主题 id（可能是内建 id，也可能是主题包 p_N） */
     public static function presetId(): string
     {
@@ -182,19 +238,41 @@ final class ThemePreset
     }
 
     /**
+     * 把 members.theme 里那串「模式-主题」解成主题 id；解不出就用站点默认。
+     * 老数据只存了主题 id，也认。
+     */
+    public static function pick(string $choice): string
+    {
+        $s = trim($choice);
+        if ($s === '') return self::presetId();
+        $modes = ['auto', 'light', 'dark'];
+        if (in_array($s, $modes, true)) return self::presetId();
+        $i = strpos($s, '-');
+        if ($i !== false && in_array(substr($s, 0, $i), $modes, true)) $s = substr($s, $i + 1);
+        if ($s === '') return self::presetId();
+        if (isset(self::ACCENT[$s]) || str_starts_with($s, 'p')) return $s;
+        return self::presetId();
+    }
+
+    /**
      * 直接可输出的 <style>：门面页面在 base.css 之后插入即可。
      * 门面页不加载前端模块，所以浅色 / 深色两套都在这儿算好，
      * 变量口径与 public/assets/js/core.js 的 paintAccent 保持一致。
      */
-    public static function style(): string
+    public static function style(?string $choice = null): string
     {
-        $accent = self::accentOf(self::presetId());
+        // 有个人主题就按个人的算：首帧就是用户选的那套，不用等接口回来再换
+        $id = $choice === null ? self::presetId() : self::pick($choice);
+        $accent = self::accentOf($id);
         $text = self::textOn($accent);
         $soft = self::mix($accent, '#ffffff', 0.13);
-        // ink 只会往深里走：主色本身够暗就别提亮，浅色主色按亮度压下去
-        $ink = self::lumTo($accent, min(self::lum($accent) * 0.55, 0.20));
+        $ex = self::EXTRA[$id] ?? [];
+        // 内建主题的浅底文字色 / 页面底色跟着前端表走，别再各算一套
+        $ink = (string) ($ex[0] ?? '');
+        if ($ink === '') $ink = self::lumTo($accent, min(self::lum($accent) * 0.55, 0.20));
         $line = self::mix($accent, $soft, 0.35);
-        $page = self::mix($accent, '#ffffff', 0.07);
+        $page = (string) ($ex[1] ?? '');
+        if ($page === '') $page = self::mix($accent, '#ffffff', 0.07);
 
         $dAccent = self::lumTo($accent, 0.30);
         $dText = self::textOn($dAccent);

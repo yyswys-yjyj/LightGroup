@@ -394,7 +394,7 @@ function storedMode() {
 }
 
 /** 只把模式打到 <html> 上（不写存储），app.js 启动时也直接调它 */
-export function applyThemeMode(mode) {
+export function applyThemeMode(mode, opts) {
   let m = normalizeMode(mode);
   // 安装器把站点默认主题写成 'light'，那不算用户的选择；没自己选过的老用户一律
   // 跟随系统，否则深色系统会被强行刷成白底（就是「深色不生效」的老毛病）
@@ -406,7 +406,8 @@ export function applyThemeMode(mode) {
   else el.setAttribute('data-theme', m);
   el.setAttribute('data-theme-mode', m);      // auto 时也能从 DOM 看出在跟随系统
   syncMetaColor();
-  repaintAccent();                            // 主题色跟着深浅重算（页面底、浅底块都变）
+  // 首帧的底色已经由服务端 style + 上次的颜色铺好，启动时别重画（会白一下再换回来）
+  if (!(opts && opts.keepPaint)) repaintAccent(); // 主题色跟着深浅重算（页面底、浅底块都变）
 }
 
 // 浏览器状态栏 / 地址栏颜色跟随当前底色
@@ -556,6 +557,9 @@ export function contrastText(hex) {
 
 // 强调色这一系全交给这里写：主色 / 字色 / 浅底 / 浅底文字 / 描边 / 页面底。
 // 深浅两套由 mode 决定，主题包在深色下再也不会把浅底深字盖回来。
+// 首帧缓存：app-shell.php 的内联脚本会读它，先按上次的颜色铺一层再等接口
+const ACCENT_CACHE = 'lg.accent';
+
 const ACCENT_VARS = ['--accent', '--accent-text', '--self-bubble', '--self-bubble-text',
   '--accent-soft', '--accent-ink', '--accent-line', '--page-bg'];
 
@@ -639,12 +643,28 @@ function paintAccent(accent, accentText, base) {
   el.style.setProperty('--accent-ink', ink);
   el.style.setProperty('--accent-line', line);
   if (pageBg) el.style.setProperty('--page-bg', pageBg); else el.style.removeProperty('--page-bg');
+  try {
+    const vars = {
+      '--accent': main, '--accent-text': tc, '--self-bubble': main, '--self-bubble-text': tc,
+      '--accent-soft': soft, '--accent-ink': ink, '--accent-line': line
+    };
+    if (pageBg) vars['--page-bg'] = pageBg;
+    localStorage.setItem(ACCENT_CACHE, JSON.stringify({ mode: dark ? 'dark' : 'light', vars: vars }));
+  } catch (e) { void e; }
   syncMetaColor();
 }
 
 function clearAccent() {
   const el = document.documentElement;
   ACCENT_VARS.forEach(function (k) { el.style.removeProperty(k); });
+  try { localStorage.removeItem(ACCENT_CACHE); } catch (e) { void e; }
+}
+
+/** 兜底主题：本群默认 → 站点默认 → 湖蓝，永远给得出一个内建主题 */
+function fallbackTheme() {
+  const list = [S.scopeTheme, S.siteTheme, 'hulan'];
+  for (let i = 0; i < list.length; i += 1) if (THEME_INDEX[list[i]]) return THEME_INDEX[list[i]];
+  return THEME_INDEX.hulan || null;
 }
 
 function paintById(id) {
@@ -652,10 +672,17 @@ function paintById(id) {
   const t = THEME_INDEX[id];
   if (t) { paintAccent(t.accent, '', t); return; }
   const pack = (S.themePacks || []).find(function (x) { return x.id === id; });
-  if (!pack) { clearAccent(); return; }
-  const v = pack.vars || {};
+  const v = pack ? (pack.vars || {}) : {};
+  const acc = v.accent || v.bubble || '';
+  // 主题包还没拉到 / 包被删了 / 包里没给主色：退回本群或站点主题。
+  // 这里以前是 clearAccent()，那一瞬间页面底会掉回默认近白色，看着就是「主题被白盖了一下」。
+  if (!acc) {
+    const fb = fallbackTheme();
+    if (fb) paintAccent(fb.accent, '', fb);
+    return;
+  }
   // 主题包里的 bg/surface/text/border 一律忽略，只认 accent 系
-  paintAccent(v.accent || v.bubble || '', v.accentText || v.bubbleText || '', null);
+  paintAccent(acc, v.accentText || v.bubbleText || '', null);
 }
 
 /** 换浅/深后重画：页面底与浅底块都跟模式相关，不重画就会留上一套 */
@@ -697,7 +724,8 @@ export async function refreshThemes() {
       // 服务端存了模式（换设备登录）：以服务端为准，同时回写本地
       S.themeUserPicked = true;
       try { localStorage.setItem(LSK('theme'), dec.mode); } catch (e) { void e; }
-      applyThemeMode(dec.mode);
+      // 只切深浅模式，别在这里重画：重画会用「还没换过来的主题」先刷一帧站点主题色
+      applyThemeMode(dec.mode, { keepPaint: true });
     } else if (dec.accent && S.themeMode && S.themeMode !== 'auto') {
       // 老数据只存了强调色：把本地模式补写回服务端，做一次性迁移
       saveThemeRemote(S.themeMode, dec.accent);
@@ -719,7 +747,7 @@ export function themeName(id) {
 (function initTheme() {
   let saved = '';
   try { saved = localStorage.getItem(LSK('theme')) || ''; } catch (e) { void e; }
-  applyThemeMode(saved || 'auto');
+  applyThemeMode(saved || 'auto', { keepPaint: true });
   if (MQ_DARK) {
     if (MQ_DARK.addEventListener) MQ_DARK.addEventListener('change', onSystemModeChange);
     else if (MQ_DARK.addListener) MQ_DARK.addListener(onSystemModeChange);

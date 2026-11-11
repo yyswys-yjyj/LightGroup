@@ -4,6 +4,12 @@ import { avatar } from './avatar.js';
 
 let listHost = null;
 
+// 当前页面属于哪个群：/g/<slug>/app 是子群，/g/app 是主群（slug 为空）
+function scopeSlug() {
+  const m = String(location.pathname || '').match(/^\/g\/([^/]+)\//);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 export function publicConv() {
   return (S.convs || []).find(function (c) { return c && (c.isPublic || c.kind === 'group'); }) || null;
 }
@@ -121,12 +127,14 @@ function item(c) {
 
   const av = h('span', 'conv-avatar');
   if (c.kind === 'dm' && c.member) av.appendChild(avatar(c.member, 44));
+  else if (c.scope) av.appendChild(avatar({ id: 'scope' + c.scope, name: convName(c) }, 44));
   else av.appendChild(siteMark('conv-mark'));
   b.appendChild(av);
 
   const meta = h('span', 'conv-meta');
   const top = h('span', 'conv-top');
   top.appendChild(h('span', 'conv-name', convName(c)));
+  if (c.scope && String(c.slug || '') !== scopeSlug()) top.appendChild(h('span', 'conv-cross', '其它群'));
   top.appendChild(h('span', 'conv-time', convTime(lastTs(c))));
   meta.appendChild(top);
   const sub = h('span', 'conv-sub');
@@ -141,6 +149,14 @@ function item(c) {
 
 export function openConv(c) {
   if (!c) return;
+  // 这个会话在别的群：换成那个群的地址再打开，本页继续切会话只会 404
+  const slug = String(c.slug || '');
+  if (c.scope && slug !== scopeSlug()) {
+    // 主群（slug 为空）挂在 /app 上，子群挂在 /g/<slug>/app 上
+    const base = slug ? '/g/' + encodeURIComponent(slug) + '/app' : '/app';
+    location.href = base + '#/c/' + c.id;
+    return;
+  }
   if (c.unread) { c.unread = 0; }
   S.listOpen = false;
   applyLayout();

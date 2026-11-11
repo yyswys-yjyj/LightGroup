@@ -25,6 +25,7 @@ try {
 <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
 <link rel="stylesheet" href="/assets/base.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/base.css") ?>">
 <link rel="stylesheet" href="/assets/admin.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/admin.css") ?>">
+<?= \LightGroup\Web\ThemePreset::style() ?>
 </head>
 <body class="page-admin">
 <div id="adm" class="adm">

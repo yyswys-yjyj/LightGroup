@@ -26,6 +26,16 @@ function emitUnread() {
   window.dispatchEvent(new CustomEvent('lg:notices', { detail: { unread: unread } }));
 }
 
+// 通知页就地读掉一条时，左侧「通知」上的数字红点跟着改，别去重拉整页
+function syncNoticeBadge() {
+  if (!sideEl || !sideEl.isConnected) return;
+  const b = sideEl.querySelector('.sp-nav[data-nav="notice"]');
+  if (!b) return;
+  const old = b.querySelector('.req-badge');
+  if (old) old.remove();
+  if (unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
+}
+
 let hostEl = null;
 let sideEl = null;
 
@@ -76,6 +86,7 @@ export function renderSideList(host) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sp-nav' + (on && (it[0] !== 'feed' || !mine) ? ' on' : '');
+    b.dataset.nav = it[0];
     b.appendChild(icon(it[1]));
     b.appendChild(h('span', '', it[2]));
     if (it[3] > 0) b.appendChild(h('span', 'req-badge', it[3] > 99 ? '99+' : String(it[3])));
@@ -543,16 +554,51 @@ async function paintNotices(box) {
   if (!j || !j.ok) { list.appendChild(h('div', 'sp-empty', (j && j.err) || '加载失败')); return; }
   unread = j.unread || 0;
   emitUnread();
-  if (j.items.length && unread > 0) {
+  syncNoticeBadge();
+  // 服务端 unread 可能是 0，但某几行还带着未读样式；这种时候也得能一键清掉
+  const anyUnread = j.items.some(function (n) { return !n.read; });
+  let bar = null;
+  if (j.items.length && (unread > 0 || anyUnread)) {
+    bar = h('div', 'sp-notice-bar');
     const read = btn('全部已读', 'btn-ghost btn-sm', async function () {
       const r = await api('api/notices', { op: 'readAll' });
       if (!r || !r.ok) { toast('失败了'); return; }
       unread = 0;
-      repaint();
+      emitUnread();
+      syncNoticeBadge();
+      list.querySelectorAll('.sp-note.unread').forEach(function (el) { el.classList.remove('unread'); });
+      list.querySelectorAll('[data-mark]').forEach(function (el) { el.remove(); });
+      if (bar && bar.parentNode) bar.remove();
     });
-    list.appendChild(h('div', 'sp-notice-bar')).appendChild(read);
+    bar.appendChild(read);
+    list.appendChild(bar);
   }
   if (!j.items.length) { list.appendChild(h('div', 'sp-empty', '还没有通知')); return; }
+
+  // 单条已读：只动本地状态和这一行，别重拉整页
+  function applyRead(n, row, mark) {
+    if (n.read) return;
+    n.read = true;
+    if (unread > 0) unread--;
+    emitUnread();
+    syncNoticeBadge();
+    row.classList.remove('unread');
+    if (mark) { mark.disabled = true; mark.textContent = '已读'; }
+    // 都读完了就把「全部已读」收掉
+    if (!unread && bar && bar.parentNode) bar.remove();
+  }
+
+  // 请求失败时把刚才那一下倒回去
+  function undoRead(n, row, mark) {
+    if (!n.read) return;
+    n.read = false;
+    unread++;
+    emitUnread();
+    syncNoticeBadge();
+    row.classList.add('unread');
+    if (mark) { mark.disabled = false; mark.textContent = '标为已读'; }
+    if (bar && !bar.parentNode) list.insertBefore(bar, list.firstChild);
+  }
 
   j.items.forEach(function (n) {
     const row = h('div', 'sp-note' + (n.read ? '' : ' unread'));
@@ -563,21 +609,31 @@ async function paintNotices(box) {
     if (n.body) row.appendChild(h('div', 'sp-note-body', n.body));
     const foot = h('div', 'sp-note-foot');
     if (n.from) foot.appendChild(h('span', 'sp-note-from', '来自 ' + n.from));
+    let mark = null;
     if (n.link) {
       const goBtn = btn('去看看', 'btn-ghost btn-sm', async function () {
-        await api('api/notices', { op: 'read', id: n.id });
-        if (n.link.charAt(0) === '#') go(n.link);
-        else location.href = n.link;
+        // 先本地生效，界面立刻有反应；再发请求，失败回滚
+        const wasUnread = !n.read;
+        goBtn.disabled = true;
+        if (wasUnread) applyRead(n, row, mark);
+        const r = await api('api/notices', { op: 'read', id: n.id });
+        goBtn.disabled = false;
+        if (wasUnread && (!r || !r.ok)) undoRead(n, row, mark);
+        if (n.link.charAt(0) !== '#') { location.href = n.link; return; }
+        // go() 遇到同一个 hash 只会发事件、不重绘，这里自己补一次
+        const same = location.hash === n.link;
+        go(n.link);
+        if (same) { repaint(); toast('已标为已读'); }
       });
       foot.appendChild(goBtn);
     }
     if (!n.read) {
-      const mark = btn('标为已读', 'btn-ghost btn-sm', async function () {
+      mark = btn('标为已读', 'btn-ghost btn-sm', async function () {
         const r = await api('api/notices', { op: 'read', id: n.id });
         if (!r || !r.ok) { toast('失败了'); return; }
-        row.classList.remove('unread');
-        mark.remove();
+        applyRead(n, row, mark);
       });
+      mark.dataset.mark = '1';
       foot.appendChild(mark);
     }
     if (foot.children.length) row.appendChild(foot);

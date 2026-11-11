@@ -302,6 +302,7 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .conv-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 8px;border:0;border-radius:10px;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background .15s}
 .conv-item:hover{background:var(--surface-2)}
 .conv-item.is-active{background:var(--accent-soft)}
+.conv-cross{flex:none;padding:1px 6px;border-radius:999px;background:var(--surface-2);color:var(--text-faint);font-size:10.5px;line-height:1.5}
 .conv-avatar{flex:none;line-height:0}
 .conv-mark{width:44px;height:44px;border-radius:13px;background:var(--accent);color:var(--accent-text);display:inline-flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden}
 .conv-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}

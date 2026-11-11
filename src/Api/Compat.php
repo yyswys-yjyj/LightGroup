@@ -122,6 +122,9 @@ final class Compat {
     private static function assertScope(PDO $pdo, array $m): void {
         $scope = self::$ctxScope;
         if ($scope === null) return;
+        // 超管是所有作用域的共同成员：他在每个群用的是同一行成员，scope_id 永远对不上，
+        // 这里直接放行，否则换群就被判「这里不是你的群」。
+        if (self::roleOf($pdo, $m) === "super") return;
         if ((int) ($m["scope_id"] ?? 0) === (int) $scope["id"]) return;
         $mine = self::scopeById($pdo, (int) ($m["scope_id"] ?? 0));
         $mineSlug = $mine === null ? "" : (string) ($mine["slug"] ?? "");
@@ -227,12 +230,14 @@ final class Compat {
     public static function adoptScope(PDO $pdo, ?array $scope): ?array {
         $m = Session::member($pdo);
         if ($m === null || $scope === null) return $m;
-        $alt = self::memberOfScope($pdo, $m, $scope);
-        // 超管是所有群的共同成员：任何一个群没有他的身份，就地补一个，
-        // 否则换个群就被判「不属于这个群」，还得手工去后台建人。
-        if ($alt === null && (int) ($m["scope_id"] ?? 0) !== (int) $scope["id"]) {
-            $alt = self::ensureSuperIn($pdo, $m, $scope);
+        // 超管是所有作用域的共同成员：他只有一行成员，换群不换身份。
+        // 这样头像颜色、点开的资料、站内信在所有群里都是同一份。
+        if (self::roleOf($pdo, $m) === "super") {
+            $main = self::superMember($pdo);
+            if ($main !== null && (int) $main["id"] !== (int) $m["id"]) Session::useMember($main);
+            return $main !== null ? $main : $m;
         }
+        $alt = self::memberOfScope($pdo, $m, $scope);
         if ($alt !== null) {
             Session::useMember($alt);
             return $alt;
@@ -240,27 +245,12 @@ final class Compat {
         return $m;
     }
 
-    /** 超管主账号在本群还没有成员时补一个；不是超管就返回 null */
-    private static function ensureSuperIn(PDO $pdo, array $m, array $scope): ?array {
-        $aid = (int) ($m["account_id"] ?? 0);
-        if ($aid <= 0) return null;
-        $st = $pdo->prepare("SELECT name, role FROM accounts WHERE id = ? LIMIT 1");
-        $st->execute([$aid]);
-        $a = $st->fetch();
-        if (!$a || (string) $a["role"] !== "super") return null;
-        $sid = (int) $scope["id"];
-        try {
-            $ins = $pdo->prepare(
-                "INSERT INTO members (scope_id, name, kind, account_id, created_at) VALUES (?, ?, 'human', ?, ?)"
-            );
-            $ins->execute([$sid, (string) $a["name"], $aid, lg_now()]);
-        } catch (\Throwable $e) {
-            // 并发下唯一索引会挡一次，下面重查即可
-        }
-        $st = $pdo->prepare(
-            "SELECT * FROM members WHERE scope_id = ? AND account_id = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1"
+    /** 超管那一行成员（所有群共用）；没有超管或没建成员时返回 null */
+    private static function superMember(PDO $pdo): ?array {
+        $st = $pdo->query(
+            "SELECT m.* FROM members m JOIN accounts a ON a.id = m.account_id
+             WHERE a.role = 'super' AND m.deleted_at IS NULL ORDER BY m.id ASC LIMIT 1"
         );
-        $st->execute([$sid, $aid]);
         $row = $st->fetch();
         return $row ?: null;
     }
@@ -353,6 +343,13 @@ final class Compat {
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY id ASC");
         $st->execute([$scopeId]);
         $rows = $st->fetchAll();
+        // 超管只有主群那一行成员，但它对每个群都算成员，成员列表/头像表都要带上
+        $sup = self::superMember($pdo);
+        if ($sup !== null) {
+            $has = false;
+            foreach ($rows as $r) { if ((int) $r["id"] === (int) $sup["id"]) { $has = true; break; } }
+            if (!$has) $rows[] = $sup;
+        }
         $names = [];
         foreach ($rows as $r) $names[(int) $r["id"]] = $r["name"];
         $roles = self::badgeMap($pdo);
@@ -1223,6 +1220,7 @@ final class Compat {
         $me    = self::requireMember($pdo);
         $pubId = self::publicConvId($pdo, $scope);
         $isAi  = (string) $me["kind"] === "ai";
+        $isSuper = self::roleOf($pdo, $me) === "super";
 
         $pubItem = null;
         $dmItems = [];
@@ -1256,6 +1254,37 @@ final class Compat {
             $dmItems[] = $item;
         }
         if ($pubItem === null) $pubItem = self::publicConvItem($pdo, $scope);
+        if ($isSuper) {
+            // 超管是所有群的共同成员：会话列表里给出每个群的公开大群，
+            // 当前群排最前（前端 publicConv() 拿第一条当默认会话）。
+            $scopes = $pdo->query("SELECT id, slug, title FROM scopes WHERE archived = 0 ORDER BY id ASC")->fetchAll();
+            $cur = (int) $scope["id"];
+            usort($scopes, function ($a, $b) use ($cur) {
+                $da = (int) $a["id"] === $cur ? 0 : 1;
+                $db = (int) $b["id"] === $cur ? 0 : 1;
+                return $da !== $db ? $da <=> $db : ((int) $a["id"] <=> (int) $b["id"]);
+            });
+            $pubs = [];
+            foreach ($scopes as $sp) {
+                $rows = Conv::mine($pdo, $sp, $me);
+                $first = $rows[0] ?? null;
+                if ($first === null) continue;
+                $pubs[] = [
+                    "id"       => (int) $first["id"],
+                    "kind"     => "group",
+                    "title"    => (string) $first["title"],
+                    "isPublic" => true,
+                    "last"     => self::lastOut($first["last"] ?? null),
+                    "unread"   => (int) $first["unread"],
+                    "members"  => (int) ($first["members"] ?? 0),
+                    "pin"      => true,
+                    "scope"    => (int) $sp["id"],
+                    "slug"     => (string) $sp["slug"],
+                ];
+            }
+            Json::ok(["convs" => [...$pubs, ...$dmItems]]);
+            return;
+        }
         Json::ok(["convs" => [$pubItem, ...$dmItems]]);
     }
 

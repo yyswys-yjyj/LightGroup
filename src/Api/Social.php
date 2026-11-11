@@ -97,6 +97,8 @@ final class Social {
             if (self::row($pdo, $mine, $targetId) === null) Json::fail("申请失败，稍后再试");
             Json::fail("已经申请过了");
         }
+
+        Notices::pushToMember($pdo, $targetId, "friend", $me["name"] . " 想加你为好友", "同意之后就能单独聊天", "#/friends", $mine);
         return self::row($pdo, $mine, $targetId) ?? [];
     }
 
@@ -112,6 +114,8 @@ final class Social {
 
         $up = $pdo->prepare("UPDATE friends SET status = 'accepted', accepted_at = ? WHERE a_id = ? AND b_id = ?");
         $up->execute([lg_now(), (int) $row["a_id"], (int) $row["b_id"]]);
+
+        Notices::pushToMember($pdo, (int) $row["requested_by"], "friend", $me["name"] . " 通过了你的好友申请", "现在可以单独聊天了", "#/friends", $mine);
         return self::row($pdo, $mine, $targetId) ?? [];
     }
 
@@ -122,8 +126,11 @@ final class Social {
         if ($row === null || (string) $row["status"] !== "pending" || (int) $row["requested_by"] === $mine) {
             Json::fail("没有待处理的申请");
         }
+        $requester = (int) $row["requested_by"];
         $del = $pdo->prepare("DELETE FROM friends WHERE a_id = ? AND b_id = ?");
         $del->execute([(int) $row["a_id"], (int) $row["b_id"]]);
+
+        Notices::pushToMember($pdo, $requester, "friend", $me["name"] . " 拒绝了你的好友申请", "", "#/friends", $mine);
     }
 
     /** 删好友：只删 accepted 行，不动私聊会话，历史消息留着 */
