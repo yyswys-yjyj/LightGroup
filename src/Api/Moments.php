@@ -144,9 +144,11 @@ final class Moments {
             ];
         }
 
+        $pmode = self::pushMode($pdo, (int) $scope["id"]);
         Json::ok([
             "items" => $items,
-            "push"  => self::pushOn($pdo, (int) $scope["id"]),
+            "push"  => $pmode > 0,
+            "push_mode" => $pmode,
             "me"    => Compat::memberBriefPublic($pdo, $me),
             "admin" => $isAdmin,
         ]);
