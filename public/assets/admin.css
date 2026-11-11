@@ -309,7 +309,9 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
 .conv-msg { padding: 8px 10px; border-radius: 9px; background: var(--surface-2); }
 .conv-msg.sys { background: transparent; border: 1px dashed var(--border); }
 .conv-msg-head { display: flex; align-items: center; gap: 7px; font-size: 12px; flex-wrap: wrap; }
-.conv-msg-head .muted { margin-left: auto; }
+.conv-msg-head .muted { margin-left: 6px; }
+.conv-info { align-items: center; }
+.conv-info-sp, .conv-msg-sp { flex: 1; }
 .conv-msg-text { font-size: 13px; line-height: 1.6; margin-top: 3px; word-break: break-word; }
 
 /* ---------------------------------------------------------------- 加载 / 错误 / 弹窗 */

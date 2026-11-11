@@ -1,0 +1,152 @@
+/* 空间（说说）：动态 + 站内信。颜色全走 base.css 的变量，深浅色都跟得上。 */
+
+/* ---------- 页面骨架 ---------- */
+.sp-page{width:100%;box-sizing:border-box;padding:0 0 44px;background:var(--bg)}
+.sp-inner{max-width:760px;margin:0 auto;padding:0 16px;box-sizing:border-box}
+
+/* 顶上那条渐变条：群的封面位 */
+.sp-hero{margin:14px 0 14px;padding:20px 20px 18px;border-radius:16px;color:#fff;
+  background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 62%,#7c3aed));
+  box-shadow:0 8px 22px color-mix(in srgb,var(--accent) 26%,transparent);
+  display:flex;align-items:flex-end;justify-content:space-between;gap:12px;overflow:hidden}
+.sp-hero-t b{display:block;font-size:19px;font-weight:700;letter-spacing:.3px}
+.sp-hero-t span{display:block;margin-top:5px;font-size:12.5px;opacity:.86}
+
+/* 手机上没有侧栏，导航放正文顶部；桌面用左边的侧栏 */
+.sp-tabs{display:none;gap:6px;margin:0 0 12px;overflow:auto;padding-bottom:2px}
+.sp-tab{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--text-dim);
+  font:inherit;font-size:13px;padding:7px 14px;border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:none}
+.sp-tab.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
+
+.sp-filter{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--accent);
+  background:var(--accent-soft);border-radius:10px;padding:7px 12px;margin:0 0 12px}
+.sp-filter .sp-gap{flex:1}
+
+/* ---------- 侧栏（#im-list 里的空间导航） ---------- */
+.sp-side{display:flex;flex-direction:column;gap:2px;padding:14px 10px 20px;height:100%;box-sizing:border-box;overflow:auto}
+.sp-side-head{padding:2px 10px 12px}
+.sp-side-head b{display:block;font-size:15.5px;color:var(--text)}
+.sp-side-head span{display:block;margin-top:3px;font-size:11.5px;color:var(--text-faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-navs{display:flex;flex-direction:column;gap:1px}
+.sp-nav{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;
+  appearance:none;border:0;background:transparent;color:var(--text-2);
+  font:inherit;font-size:13.5px;padding:9px 10px;border-radius:9px;cursor:pointer;text-align:left}
+.sp-nav i{width:16px;text-align:center;font-size:13px;opacity:.86}
+.sp-nav span:first-of-type{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-nav:hover{background:var(--chip-bg);color:var(--text)}
+.sp-nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.sp-side-label{font-size:11px;color:var(--text-faint);padding:16px 10px 6px}
+.sp-nav-tag{font-size:13px;color:var(--text-dim)}
+.sp-nav-tag.on{color:var(--accent)}
+
+/* ---------- 发布框 ---------- */
+.sp-card{background:var(--surface);border:0;border-radius:14px;padding:14px;margin-bottom:14px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.sp-compose{padding:14px 16px 12px}
+.sp-c-row{display:flex;gap:10px;align-items:flex-start}
+.sp-c-row .ava{flex:none;margin-top:2px}
+.sp-c-main{flex:1;min-width:0}
+.sp-ta{width:100%;box-sizing:border-box;border:0;border-radius:10px;background:var(--chip-bg);color:var(--text);
+  font:inherit;font-size:14px;line-height:1.7;resize:none;min-height:64px;padding:10px 12px;outline:none}
+.sp-ta::placeholder{color:var(--input-placeholder)}
+.sp-draft{display:flex;flex-wrap:wrap;gap:8px}
+.sp-draft:not(:empty){margin:10px 0 2px}
+.sp-draft-item{position:relative;width:78px;height:78px;border-radius:10px;overflow:hidden;background:var(--chip-bg)}
+.sp-draft-item img{width:100%;height:100%;object-fit:cover;display:block}
+.sp-draft-x{position:absolute;right:3px;top:3px;width:20px;height:20px;border:0;border-radius:50%;
+  background:rgba(9,12,18,.6);color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:11px;cursor:pointer;padding:0}
+.sp-bar{display:flex;align-items:center;gap:10px;padding-top:10px;margin-top:6px}
+.sp-gap{flex:1}
+.sp-count{font-size:12px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.sp-bar .btn-primary{min-width:76px;border-radius:9px}
+.sp-more{display:block;width:100%;box-sizing:border-box;margin:2px 0 16px;border-radius:12px}
+
+.sp-empty{color:var(--text-faint);font-size:13px;padding:22px 4px;text-align:center}
+
+/* ---------- 动态 ---------- */
+.sp-list{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
+.sp-item{background:var(--surface);border:0;border-radius:14px;padding:16px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.sp-head{display:flex;align-items:flex-start;gap:10px}
+.sp-head .ava{cursor:pointer;flex:none}
+.sp-who{min-width:0;flex:1}
+.sp-name{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text);flex-wrap:wrap}
+.sp-name b{font-weight:600}
+.sp-badge{font-size:10px;line-height:1;padding:3px 6px;border-radius:6px;
+  background:var(--chip-bg);color:var(--chip-text)}
+.sp-badge.admin{background:var(--accent-soft);color:var(--accent)}
+.sp-badge.super{background:var(--warn-soft);color:var(--warn)}
+.sp-badge.ai{background:var(--chip-bg);color:var(--text-dim)}
+.sp-time{font-size:11.5px;color:var(--text-faint);margin-top:3px}
+.sp-more-btn{appearance:none;border:0;background:transparent;color:var(--text-faint);
+  width:28px;height:28px;border-radius:8px;cursor:pointer;flex:none}
+.sp-more-btn:hover{background:var(--chip-bg);color:var(--text)}
+
+.sp-text{margin-top:10px;font-size:14.5px;line-height:1.78;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.sp-tag{color:var(--accent);cursor:pointer}
+.sp-tag:hover{text-decoration:underline}
+
+.sp-imgs{display:grid;gap:5px;margin-top:10px;max-width:520px}
+.sp-imgs img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;background:var(--chip-bg);
+  cursor:zoom-in;display:block}
+.sp-imgs.n1{grid-template-columns:minmax(0,1fr);max-width:330px}
+.sp-imgs.n1 img{aspect-ratio:4/3}
+.sp-imgs.n2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.sp-imgs.n3,.sp-imgs.n4,.sp-imgs.n5,.sp-imgs.n6,.sp-imgs.n7,.sp-imgs.n8,.sp-imgs.n9{
+  grid-template-columns:repeat(3,minmax(0,1fr))}
+
+.sp-acts{display:flex;gap:4px;margin-top:12px;padding-top:8px;border-top:1px solid var(--border)}
+.sp-act{appearance:none;border:0;background:transparent;color:var(--text-dim);font:inherit;font-size:13px;
+  display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px}
+.sp-act:hover{background:var(--chip-bg);color:var(--text)}
+.sp-act.on{color:var(--danger)}
+.sp-act.on:hover{background:color-mix(in srgb,var(--danger) 10%,transparent)}
+
+.sp-comments{margin-top:10px;padding:10px 12px;background:var(--chip-bg);border-radius:10px;
+  display:flex;flex-direction:column;gap:7px}
+.sp-comment{font-size:12.5px;line-height:1.6;color:var(--text-2,var(--text));display:flex;gap:6px;align-items:flex-start}
+.sp-comment b{color:var(--text);font-weight:600;flex:none}
+.sp-comment span{flex:1;word-break:break-word}
+.sp-comment .icon-btn{flex:none;opacity:.5}
+.sp-comment .icon-btn:hover{opacity:1}
+
+.sp-cbox{display:flex;gap:8px;margin-top:10px;align-items:center}
+.sp-cbox .tb{flex:1;min-width:0;border-radius:9px}
+
+.sp-menu{position:fixed;z-index:200;background:var(--sheet-bg);border:1px solid var(--border);
+  border-radius:10px;box-shadow:var(--shadow-pop);padding:4px;min-width:132px}
+.sp-menu button{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;
+  color:var(--text);font:inherit;font-size:13px;padding:8px 10px;border-radius:7px;cursor:pointer;text-align:left}
+.sp-menu button:hover{background:var(--chip-bg)}
+
+.sp-form{display:flex;flex-direction:column;gap:10px;padding:4px 2px 2px}
+.sp-form textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:96px}
+
+/* ---------- 通知 ---------- */
+.sp-sub b{font-size:14px}
+.sp-sub-tip{font-size:12.5px;color:var(--text-dim);margin:6px 0 10px;line-height:1.65}
+.sp-sub-line{font-size:13px;color:var(--text);margin:6px 0}
+.sp-note{background:var(--surface);border:0;border-radius:13px;padding:13px 15px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.sp-note.unread{box-shadow:0 1px 3px rgba(15,23,42,.06),inset 3px 0 0 var(--accent)}
+.sp-note-head{display:flex;align-items:baseline;gap:8px}
+.sp-note-head b{font-size:13.5px;color:var(--text);flex:1}
+.sp-note-body{font-size:13px;color:var(--text-dim);line-height:1.7;margin-top:6px;white-space:pre-wrap;word-break:break-word}
+.sp-note-foot{display:flex;align-items:center;gap:8px;margin-top:8px}
+.sp-note-from{font-size:11.5px;color:var(--text-faint);flex:1}
+.sp-notice-bar{display:flex;justify-content:flex-end;margin-bottom:10px}
+.sp-list .sp-note + .sp-note{margin-top:10px}
+
+@media (max-width:860px){
+  .sp-inner{padding:0 12px}
+  .sp-hero{margin:12px 0;padding:16px;border-radius:14px}
+  .sp-hero-t b{font-size:17px}
+  .sp-tabs{display:flex}
+  .sp-page{padding:0 0 84px}
+  .sp-imgs{max-width:100%}
+  .sp-compose{padding:12px}
+  .sp-item{padding:14px}
+  .sp-acts .sp-act{flex:1;justify-content:center}
+}

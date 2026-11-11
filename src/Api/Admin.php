@@ -39,8 +39,11 @@ final class Admin {
             case "settings":  self::settings($pdo, $role, $method); break;
             case "clusters":  self::clusters($pdo, $role, $method, $id, $sub); break;
             case "themes":    self::themes($pdo, $role, $myScope, $method, $id, $sub); break;
-            case "convs":     self::convs($pdo, $role, $myScope, $id); break;
+            case "convs":     self::convs($pdo, $role, $myScope, $method, $id, $sub); break;
+            case "messages":  self::messagesApi($pdo, $role, $myScope, $method, $id); break;
             case "update":    self::updateApi($pdo); break;
+            case "mail":      self::mailTest($pdo, $role, $method); break;
+            case "moments":   self::momentsSetting($pdo, $me, $method); break;
             default:          Json::fail("未知管理接口");
         }
     }
@@ -438,6 +441,16 @@ final class Admin {
             "auth.captcha.site_key"   => "text",
             "auth.captcha.secret"     => "secret",
             "auth.captcha.verify_url" => "url",
+            // 邮件订阅：只有超管能配，站内信通知用户时用它发信
+            "mail.enabled"            => "int",
+            "mail.notify"             => "int",
+            "mail.host"               => "text",
+            "mail.port"               => "mport",
+            "mail.secure"             => "mailsecure",
+            "mail.user"               => "text",
+            "mail.pass"               => "secret",
+            "mail.from"               => "email",
+            "mail.from_name"          => "text",
         ];
         if ($method === "GET") {
             $out = [];
@@ -448,12 +461,18 @@ final class Admin {
             // 人机验证的 Secret 同理：只回「是否配过」，不回明文
             $hasCaptchaSecret = trim($out["auth.captcha.secret"]) !== "";
             $out["auth.captcha.secret"] = "";
+            // 邮箱密码同理
+            $hasMailPass = trim($out["mail.pass"]) !== "";
+            $out["mail.pass"] = "";
             $callback = OAuth::callbackUrl($pdo);
             Json::ok([
                 "settings"      => $out,
                 "has_captcha_secret" => $hasCaptchaSecret,
                 "captcha_active"     => Captcha::active($pdo),
                 "captcha_warning"    => Captcha::warning($pdo),
+                "has_mail_pass"      => $hasMailPass,
+                "mail_configured"    => Mailer::configured($pdo),
+                "mail_ready"         => Mailer::notifyOn($pdo),
                 "callback_url"  => $callback,
                 "callback_path" => OAuth::CALLBACK_PATH,
                 "start_url"     => OAuth::origin() . OAuth::START_PATH,
@@ -506,6 +525,13 @@ final class Admin {
                 if (!in_array($v, ["oauth", "captcha", "none"], true)) Json::fail("登录方式只能是 oauth / captcha / none");
             } elseif ($kind === "captchaprovider") {
                 if (!in_array($v, ["builtin", "turnstile", "hcaptcha", "recaptcha", "geetest4"], true)) Json::fail("人机验证只能是 builtin / turnstile / hcaptcha / recaptcha / geetest4");
+            } elseif ($kind === "mport") {
+                if ($v === "") $v = "465";
+                if (!preg_match('/^\d{1,5}$/', $v) || (int) $v < 1 || (int) $v > 65535) Json::fail("邮箱端口要填 1-65535 之间的数字");
+            } elseif ($kind === "mailsecure") {
+                if (!in_array($v, ["", "ssl", "tls"], true)) Json::fail("加密方式只能是 ssl / tls / 不加密");
+            } elseif ($kind === "email") {
+                if ($v !== "" && !filter_var($v, FILTER_VALIDATE_EMAIL)) Json::fail("「" . $k . "」不是有效的邮箱地址");
             }
             if ($k === "site.name" && $v === "") Json::fail("站点名不能为空");
             if ($k === "oauth.scope" && $v === "") $v = "openid profile email";
@@ -529,6 +555,38 @@ final class Admin {
         if (!$changed) Json::fail("没有要改的内容");
         self::log($pdo, "settings.save", "更新设置 " . count($changed) . " 项：" . implode(", ", $changed));
         Json::ok(["changed" => $changed]);
+    }
+
+    /** 空间推流开关：按作用域存，本群管理员和超管都能改 */
+    private static function momentsSetting(PDO $pdo, array $me, string $method): void {
+        $sid = (int) $me["scope_id"];
+        $key = "moment.push." . $sid;
+        if ($method === "GET") {
+            Json::ok(["on" => self::setting($pdo, $key, "1") !== "0", "scope_id" => $sid]);
+            return;
+        }
+        $raw = Input::body()["on"] ?? null;
+        if ($raw === null) Json::fail("要告诉我是开还是关");
+        $on = in_array((string) $raw, ["1", "true", "on"], true);
+        self::putSetting($pdo, $key, $on ? "1" : "0");
+        self::log($pdo, "moment.push", ($on ? "打开" : "关闭") . "本群空间推流");
+        Json::ok(["on" => $on]);
+    }
+
+    /** 发一封测试邮件：只用来看 SMTP 配好没有，不给成员用 */
+    private static function mailTest(PDO $pdo, string $role, string $method): void {
+        if ($role !== "super") Json::fail("只有超级管理员能发测试邮件");
+        if ($method !== "POST") Json::fail("用 POST 发测试邮件");
+        if (!Mailer::configured($pdo)) Json::fail("先把 SMTP 服务器、发件地址和端口填好");
+        $to = trim((string) (Input::body()["to"] ?? ""));
+        if (!filter_var($to, FILTER_VALIDATE_EMAIL)) Json::fail("收件邮箱不对");
+        try {
+            Mailer::sendNow($pdo, $to, "测试邮件", "<p>如果你看到这封邮件，说明站点的邮件通知配好了。</p>");
+        } catch (\Throwable $e) {
+            Json::fail("发不出去：" . $e->getMessage());
+        }
+        self::log($pdo, "mail.test", "发送测试邮件到 " . $to);
+        Json::ok(["sent" => true, "to" => $to]);
     }
 
     /** 只允许 http(s) 的绝对地址，公网/内网交给发现接口自己判断 */
@@ -686,12 +744,68 @@ final class Admin {
      * 会话审计：管理员能回看本域的会话（含成员之间的私聊），超管能看任意域。
      * 每进一次会话，就在会话里留一条系统提示。
      */
-    private static function convs(PDO $pdo, string $role, int $myScope, int $id): void {
+    private static function convs(PDO $pdo, string $role, int $myScope, string $method, int $id, string $sub): void {
+        if ($method === "POST") {
+            self::convAction($pdo, $role, $myScope, $id, $sub);
+            return;
+        }
         if ($id > 0) {
             self::convDetail($pdo, $role, $myScope, $id);
             return;
         }
         self::convList($pdo, $role, $myScope);
+    }
+
+    /** 会话级操作：目前只有清空历史 */
+    private static function convAction(PDO $pdo, string $role, int $myScope, int $convId, string $sub): void {
+        $conv = Conv::convById($pdo, $convId);
+        if ($conv === null) Json::fail("会话不存在");
+        if ($role !== "super" && (int) $conv["scope_id"] !== $myScope) Json::fail("没有权限操作这个会话");
+
+        if ($sub === "clear") {
+            $now = lg_now();
+            $st = $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = 0 WHERE conv_id = ? AND deleted_at IS NULL");
+            $st->execute([$now, $convId]);
+            $n = $st->rowCount();
+            $pdo->prepare("UPDATE conversations SET last_msg_id = 0, last_msg_at = 0 WHERE id = ?")->execute([$convId]);
+            self::noteAdmin($pdo, (int) $conv["scope_id"], $convId, "清空了本会话的 " . $n . " 条历史消息");
+            self::log($pdo, "conv.clear", "清空会话 #" . $convId . "（" . $n . " 条）");
+            Json::ok(["cleared" => $n]);
+            return;
+        }
+        Json::fail("未知操作");
+    }
+
+    /** 单条消息操作：删除（软删，留痕） */
+    private static function messagesApi(PDO $pdo, string $role, int $myScope, string $method, int $id): void {
+        if ($method !== "POST") Json::fail("只支持 POST");
+        if ($id <= 0) Json::fail("缺少消息 id");
+
+        $st = $pdo->prepare("SELECT id, scope_id, conv_id, member_id, sys, deleted_at FROM messages WHERE id = ? LIMIT 1");
+        $st->execute([$id]);
+        $msg = $st->fetch();
+        if (!$msg) Json::fail("消息不存在");
+        if ($role !== "super" && (int) $msg["scope_id"] !== $myScope) Json::fail("没有权限操作这条消息");
+        if ((int) $msg["sys"] === 1) Json::fail("系统提示不能删");
+        if ($msg["deleted_at"] !== null) Json::fail("这条消息已经删过了");
+
+        $body = Input::body();
+        $op = (string) ($body["op"] ?? "");
+        if ($op !== "delete") Json::fail("未知操作");
+
+        $now = lg_now();
+        $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = 0 WHERE id = ?")->execute([$now, $id]);
+        self::noteAdmin($pdo, (int) $msg["scope_id"], (int) $msg["conv_id"], "删除了一条消息");
+        self::log($pdo, "message.delete", "删除消息 #" . $id);
+        Json::ok(["deleted" => $id]);
+    }
+
+    /** 管理员动作写进会话里的系统提示（和回看留痕同一个写法） */
+    private static function noteAdmin(PDO $pdo, int $scopeId, int $convId, string $what): int {
+        $me = Session::member($pdo);
+        if ($me === null) return 0;
+        $who = "管理员「" . (string) $me["name"] . "」";
+        return Compat::systemMessage($pdo, $scopeId, $convId, (int) $me["id"], $who . $what);
     }
 
     private static function convList(PDO $pdo, string $role, int $myScope): void {

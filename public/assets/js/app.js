@@ -9,6 +9,7 @@ import * as conv from './conv.js';
 import * as chat from './chat.js';
 import * as people from './people.js';
 import * as me from './me.js';
+import * as space from './space.js';
 
 const APP = document.getElementById('app');
 let convTimer = 0;
@@ -40,7 +41,20 @@ function buildShell() {
 
   fillRail();
   conv.mount(list);
+  list.dataset.pane = 'chat';
   layout();
+}
+
+/**
+ * 中间那一栏：聊天页是会话列表，空间页换成空间的导航。
+ * 两个页面共用同一个 #im-list，谁进来谁重画，切走时换回去。
+ */
+function ensureSidePane(pane) {
+  const list = document.getElementById('im-list');
+  if (!list || list.dataset.pane === pane) return;
+  list.dataset.pane = pane;
+  if (pane === 'space') space.renderSideList(list);
+  else conv.mount(list);
 }
 
 function layout() {
@@ -49,13 +63,16 @@ function layout() {
   if (!im) return;
   im.classList.toggle('list-open', !!S.listOpen);
   if (list) list.classList.toggle('is-open', !!S.listOpen);
+  // 手机上进了某个会话就不显示底栏（微信也是这样）；聊天列表页和别的页面都留着
+  im.classList.toggle('is-chat', S.page === 'chat' && !S.listOpen);
   refreshRailState();
 }
 
 function railTab(key, label, ic, on) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'rail-tab' + (on ? ' on' : '');
+  b.className = 'rail-tab' + (on ? ' on' : '') + (key === 'me' ? ' rail-tab-person' : '');
+  b.dataset.key = key;
   b.title = label;
   b.appendChild(icon(ic));
   b.appendChild(h('span', '', label));
@@ -63,10 +80,12 @@ function railTab(key, label, ic, on) {
     if (key === 'chat') {
       setListOpen(true);
       go('#/c/' + (S.curId || 0));
-    } else {
-      setListOpen(false);
-      go('#/friends');
+      return;
     }
+    setListOpen(false);
+    if (key === 'contacts') go('#/friends');
+    else if (key === 'space') go('#/space');
+    else go('#/me');
   });
   return b;
 }
@@ -86,6 +105,11 @@ function fillRail() {
   const ct = railTab('contacts', '联系人', 'fa-user-group', S.page === 'friends' || S.page === 'members');
   if (people.pendingCount() > 0) ct.appendChild(h('span', 'req-badge', String(people.pendingCount())));
   rail.appendChild(ct);
+  const st = railTab('space', '空间', 'fa-compass', S.page === 'space');
+  if (space.unreadCount() > 0) st.appendChild(h('span', 'req-badge', String(space.unreadCount())));
+  rail.appendChild(st);
+  // 「个人」只在手机上出现，桌面有左上角头像按钮
+  rail.appendChild(railTab('me', '个人', 'fa-user', S.page === 'me' || S.page === 'appearance'));
   rail.appendChild(h('div', 'rail-spacer'));
 }
 
@@ -93,16 +117,34 @@ function fillRail() {
 function refreshRailState() {
   const rail = document.getElementById('im-rail');
   if (!rail) return;
-  const tabs = rail.querySelectorAll('.rail-tab');
-  if (tabs.length < 2) return;
-  tabs[0].classList.toggle('on', S.page === 'chat');
-  tabs[1].classList.toggle('on', S.page === 'friends' || S.page === 'members');
-  const dot = tabs[1].querySelector('.req-badge');
-  if (people.pendingCount() > 0) {
-    if (!dot) tabs[1].appendChild(h('span', 'req-badge', String(people.pendingCount())));
-    else dot.textContent = String(people.pendingCount());
-  } else if (dot) {
-    dot.remove();
+  const on = {
+    chat: S.page === 'chat',
+    contacts: S.page === 'friends' || S.page === 'members',
+    space: S.page === 'space',
+    me: S.page === 'me' || S.page === 'appearance',
+  };
+  rail.querySelectorAll('.rail-tab').forEach(function (b) {
+    b.classList.toggle('on', !!on[b.dataset.key]);
+  });
+  const ct = rail.querySelector('.rail-tab[data-key="contacts"]');
+  const dot = ct && ct.querySelector('.req-badge');
+  if (ct) {
+    if (people.pendingCount() > 0) {
+      if (!dot) ct.appendChild(h('span', 'req-badge', String(people.pendingCount())));
+      else dot.textContent = String(people.pendingCount());
+    } else if (dot) {
+      dot.remove();
+    }
+  }
+  const st = rail.querySelector('.rail-tab[data-key="space"]');
+  if (st) {
+    const sd = st.querySelector('.req-badge');
+    if (space.unreadCount() > 0) {
+      if (!sd) st.appendChild(h('span', 'req-badge', String(space.unreadCount())));
+      else sd.textContent = String(space.unreadCount());
+    } else if (sd) {
+      sd.remove();
+    }
   }
 }
 
@@ -157,6 +199,7 @@ function renderRoute() {
   const innerEl = hostEl ? hostEl.querySelector('.page-body') : null;
   const keepInnerY = innerEl ? innerEl.scrollTop : 0;
   S.page = r.page;
+  ensureSidePane(r.page === 'space' ? 'space' : 'chat');
   closeSheet();
 
   if (r.page === 'chat') {
@@ -168,6 +211,7 @@ function renderRoute() {
     if (!host) return;
     if (r.page === 'friends') people.renderFriends(host);
     else if (r.page === 'members') people.renderMembers(host);
+    else if (r.page === 'space') space.renderSpace(host);
     else if (r.page === 'me') me.renderProfile(host);
     else me.renderAppearance(host);
   }
@@ -251,6 +295,8 @@ async function bootChat() {
   await conv.load();
   await people.loadFriends();
   startFriendPoll();
+  space.refreshUnread().then(function () { refreshRailState(); });
+  setInterval(function () { if (!document.hidden) space.refreshUnread().then(function () { refreshRailState(); }); }, 20000);
 
   // 默认落到公开大群；显式带了会话 id 就听 url 的
   // 但 #/u/<uid> 是用户资料页，profile.js 自己接管，这里不能把 hash 改回群聊，
@@ -281,6 +327,10 @@ function boot() {
   onLayout(layout);
   on('refresh', function () { if (S.convsReady) renderRoute(); });
   window.addEventListener('lg:friends', function () { refreshRailState(); });
+  window.addEventListener('lg:notices', function (ev) {
+    // 空间页里读了通知，rail 上的红点要跟着掉
+    if (ev && ev.detail && typeof ev.detail.unread === 'number') refreshRailState();
+  });
   window.addEventListener('hashchange', function () { /* startRouter 已接管 */ });
 
   // 登录态由服务端会话决定（未登录服务端已 302 到 /login），这里直接按 api/me 探活

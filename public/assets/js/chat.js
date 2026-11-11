@@ -460,7 +460,7 @@ function loadImg(src) {
  * 服务端又只收 5,200,000 字符以内的 dataURL（≈3.9MB 原图），
  * 所以正确做法是本地先按长边 1600 缩一遍、体积还大就降质量，实在压不下来才提示。
  */
-async function shrinkImage(file) {
+export async function shrinkImage(file) {
   let raw;
   try { raw = await readDataUrl(file); }
   catch (e) { throw new Error('这个文件读不出来，换一张图片试试'); }

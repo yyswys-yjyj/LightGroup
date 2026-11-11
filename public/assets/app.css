@@ -271,6 +271,8 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .rail-tab:hover{background:var(--surface-2);color:var(--text)}
 .rail-tab.on{background:var(--accent-soft);color:var(--accent)}
 .rail-spacer{flex:1}
+/* 「个人」只在手机上出现：桌面的个人入口是左上角头像按钮 */
+.rail-tab-person{display:none}
 .req-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 5px;border-radius:999px;background:var(--danger-solid);color:var(--on-danger);font-size:10.5px;font-weight:600;line-height:1}
 .req-badge.quiet{background:var(--chip);color:var(--text-2)}
 .rail-tab .req-badge{position:absolute;top:3px;right:5px}
@@ -334,6 +336,11 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
   .rail-spacer{display:none}
   .rail-me .ava{width:36px;height:36px;border-radius:10px}
   .rail-tab{width:64px;height:44px;border-radius:10px}
+  /* 手机底栏：聊天 / 联系人 / 空间 / 个人，头像让位给「个人」页 */
+  .im-rail .rail-me{display:none}
+  .rail-tab-person{display:flex}
+  /* 进了具体会话就不挡底部，退回列表页再出现 */
+  .im.is-chat .im-rail{display:none}
   .im-list{order:1;width:100%;border-right:0;display:none}
   .im-main{order:1;width:100%;display:flex}
   .im-list.is-open{display:flex}

@@ -34,6 +34,7 @@ foreach (@glob(PUBLIC_ROOT . "/assets/js/*.js") ?: [] as $jsFile) {
 <link rel="stylesheet" href="/assets/app.css?v=<?= $appVer ?>">
 <!-- 资料卡 / 资料页 / markdown 编辑器的样式；带 filemtime，改完不用手动改版本号 -->
 <link rel="stylesheet" data-lg-profile="1" href="/assets/profile.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/profile.css") ?>">
+<link rel="stylesheet" data-lg-space="1" href="/assets/space.css?v=<?= (int) @filemtime(PUBLIC_ROOT . "/assets/space.css") ?>">
 </head>
 <body class="page-app">
 <div id="app">

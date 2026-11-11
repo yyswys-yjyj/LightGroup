@@ -61,6 +61,14 @@ final class Compat {
             case "api/theme/set":       self::themeSet($pdo, $scope); break;
             case "api/theme/pack/save": self::themePackSave($pdo, $scope); break;
             case "api/theme/pack/del":  self::themePackDel($pdo, $scope); break;
+            case "api/moments":         Moments::handle($pdo, $scope, "moments"); break;
+            case "api/moment/like":     Moments::handle($pdo, $scope, "like"); break;
+            case "api/moment/comment":  Moments::handle($pdo, $scope, "comment"); break;
+            case "api/moment/report":   Moments::handle($pdo, $scope, "report"); break;
+            case "api/moment/settings": Moments::handle($pdo, $scope, "settings"); break;
+            case "api/notices":         Notices::handle($pdo, $scope, "notices"); break;
+            case "api/subscribe":       Notices::handle($pdo, $scope, "subscribe"); break;
+            case "api/subscribe/verify": Notices::handle($pdo, $scope, "subscribe/verify"); break;
             default:          Json::fail("未知接口"); break;
         }
     }
@@ -74,6 +82,30 @@ final class Compat {
 
     public static function scopeBySlugPublic(PDO $pdo, string $slug): ?array {
         return self::scopeBySlug($pdo, $slug);
+    }
+
+    /** 给 Moments / Notices 这类同层 API 用的只读工具，逻辑和主接口完全一致 */
+    public static function requireMemberPublic(PDO $pdo): array {
+        return self::requireMember($pdo);
+    }
+
+    public static function scopeIdsPublic(PDO $pdo, array $scope): array {
+        return self::scopeIds($pdo, $scope);
+    }
+
+    public static function memberBriefPublic(PDO $pdo, array $m): array {
+        $ownerName = null;
+        if ((string) $m["kind"] === "ai" && (int) ($m["owner_id"] ?? 0) > 0) {
+            $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $st->execute([(int) $m["owner_id"]]);
+            $ownerName = (string) ($st->fetchColumn() ?: "");
+        }
+        $roles = self::badgeMap($pdo);
+        return self::memberOut($m, $ownerName, $roles[(int) ($m["account_id"] ?? 0)] ?? "");
+    }
+
+    public static function roleOfPublic(PDO $pdo, array $m): string {
+        return self::roleOf($pdo, $m);
     }
 
     public static function memberByTokenPublic(PDO $pdo, string $token): ?array {

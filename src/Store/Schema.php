@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 8;
+    public const VERSION = 9;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -111,7 +111,7 @@ final class Schema {
 
     /** migrate() 只补建后来新增的表，避免把全部语句再跑一遍 */
     private static function isNewTable(string $sql): bool {
-        foreach (["api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails"] as $t) {
+        foreach (["api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs"] as $t) {
             if (stripos($sql, $t) !== false) return true;
         }
         return false;
@@ -256,6 +256,47 @@ final class Schema {
                 . " done_at BIGINT NOT NULL DEFAULT 0,"
                 . " PRIMARY KEY (todo_id, member_id)"
                 . ")$suffix",
+            // 空间（说说）：一条动态最多 300 字 + 9 张图。
+            // tags 存成 ",tag1,tag2," —— 前后都带逗号，LIKE 才拦得住子串误命中。
+            "CREATE TABLE IF NOT EXISTS moments ("
+                . "id $pk, scope_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
+                . " text $text, images $text NULL, tags VARCHAR(191) NULL,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, deleted_at BIGINT NULL, deleted_by BIGINT NULL"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_moments_scope ON moments(scope_id, id)",
+            "CREATE TABLE IF NOT EXISTS moment_likes ("
+                . "moment_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
+                . " created_at BIGINT NOT NULL DEFAULT 0,"
+                . " PRIMARY KEY (moment_id, member_id)"
+                . ")$suffix",
+            "CREATE TABLE IF NOT EXISTS moment_comments ("
+                . "id $pk, moment_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
+                . " text $text, reply_to BIGINT NULL, created_at BIGINT NOT NULL DEFAULT 0,"
+                . " deleted_at BIGINT NULL, deleted_by BIGINT NULL"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_mcomment ON moment_comments(moment_id, id)",
+            // 举报：动态与评论都走这张表，comment_id=0 表示举报的是动态本身
+            "CREATE TABLE IF NOT EXISTS moment_reports ("
+                . "id $pk, scope_id BIGINT NOT NULL, moment_id BIGINT NOT NULL,"
+                . " comment_id BIGINT NOT NULL DEFAULT 0, reporter_id BIGINT NOT NULL,"
+                . " reason $text, created_at BIGINT NOT NULL DEFAULT 0,"
+                . " handled_at BIGINT NULL, handled_by BIGINT NULL, result VARCHAR(16) NULL"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_mreport_scope ON moment_reports(scope_id, handled_at)",
+            // 站内信：member_id=0 表示发给整个作用域（管理员收举报用得到）
+            "CREATE TABLE IF NOT EXISTS notices ("
+                . "id $pk, scope_id BIGINT NOT NULL, member_id BIGINT NOT NULL DEFAULT 0,"
+                . " kind VARCHAR(16) NOT NULL DEFAULT 'system', title $short, body $text,"
+                . " link VARCHAR(191) NULL, from_id BIGINT NULL, meta $text NULL,"
+                . " read_at BIGINT NULL, created_at BIGINT NOT NULL DEFAULT 0"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_notice_member ON notices(member_id, id)",
+            // 邮箱订阅：激活式。code 是发到邮箱的验证码，verified_at 有值才算订阅成功。
+            "CREATE TABLE IF NOT EXISTS notice_subs ("
+                . "id $pk, member_id BIGINT NOT NULL, email $short NOT NULL, code VARCHAR(32) NOT NULL,"
+                . " verified_at BIGINT NULL, created_at BIGINT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL DEFAULT 0"
+                . ")$suffix",
+            "CREATE UNIQUE INDEX {$idx}idx_sub_member ON notice_subs(member_id)",
         ];
     }
 }

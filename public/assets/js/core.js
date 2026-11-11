@@ -652,7 +652,7 @@ export function emit(ev, data) {
 
 // ---------- 路由 ----------
 // #/c/<id>  #/friends  #/members  #/me  #/appearance
-const PAGES = ['chat', 'friends', 'members', 'me', 'appearance'];
+const PAGES = ['chat', 'friends', 'members', 'me', 'appearance', 'space'];
 
 export function parseRoute() {
   const raw = (location.hash || '').replace(/^#\/?/, '');

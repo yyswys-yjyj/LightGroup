@@ -229,10 +229,12 @@ const NAV = [
     { id: 'oauth', icon: 'fa-right-to-bracket', text: 'OAuth 登录', superOnly: true },
     { id: 'captcha', icon: 'fa-shield-halved', text: '人机验证', superOnly: true },
   ] },
+  { group: '内容', items: [ { id: 'moments', icon: 'fa-compass', text: '空间' } ] },
   { group: '主题', items: [ { id: 'themes', icon: 'fa-palette', text: '主题包' } ] },
   { group: '审计', items: [ { id: 'convs', icon: 'fa-magnifying-glass-chart', text: '会话审计' } ] },
   { group: '设置', items: [
     { id: 'settings', icon: 'fa-sliders', text: '站点设置', superOnly: true },
+    { id: 'mail', icon: 'fa-envelope-open-text', text: '邮件通知', superOnly: true },
     { id: 'update', icon: 'fa-cloud-arrow-down', text: '更新检查' },
   ] },
 ];
@@ -245,9 +247,11 @@ const TITLES = {
   accounts: '管理员账号',
   oauth: 'OAuth 登录',
   captcha: '人机验证',
+  moments: '空间',
   themes: '主题包',
   convs: '会话审计',
   settings: '站点设置',
+  mail: '邮件通知',
   update: '更新检查',
 };
 
@@ -345,9 +349,11 @@ const RENDERERS = {
   accounts: renderAccounts,
   oauth: renderOAuth,
   captcha: renderCaptcha,
+  moments: renderMoments,
   themes: renderThemes,
   convs: renderConvs,
   settings: renderSettings,
+  mail: renderMail,
   update: renderUpdate,
 };
 
@@ -1136,6 +1142,135 @@ async function renderCaptcha(box) {
   ], { icon: 'fa-shield-halved' }));
 }
 
+// ---------------------------------------------------------------- 邮件通知
+
+async function renderMail(box) {
+  box.append(loading());
+  const d = await api('settings');
+  const st = d.settings || {};
+  box.innerHTML = '';
+  box.append(pageHead('邮件通知', '站内信发出去的时候，顺带给订阅了邮箱的成员发一封；聊天消息永远不发邮件'));
+
+  const fOn = el('input', { type: 'checkbox', checked: st['mail.enabled'] === '1' });
+  const fNotify = el('input', { type: 'checkbox', checked: st['mail.notify'] === '1' });
+  const fHost = textInput('mail.host', st['mail.host'] || '', '例如 smtp.exmail.qq.com');
+  const fPort = textInput('mail.port', st['mail.port'] || '465', 'SSL 一般是 465，STARTTLS 一般是 587');
+  const fSecure = selectInput('mail.secure', [
+    { value: 'ssl', label: 'SSL（常用 465）' },
+    { value: 'tls', label: 'STARTTLS（常用 587）' },
+    { value: '', label: '不加密（内网自建才用）' },
+  ], !st['mail.host'] && !st['mail.secure'] ? 'ssl' : (st['mail.secure'] || ''));
+  const fUser = textInput('mail.user', st['mail.user'] || '', '登录 SMTP 的账号，通常是完整邮箱');
+  const fPass = textInput('mail.pass', '', d.has_mail_pass ? '已保存，留空不修改' : '邮箱密码或授权码', 'password');
+  const fFrom = textInput('mail.from', st['mail.from'] || '', '发件地址，例如 noreply@example.com');
+  const fName = textInput('mail.from_name', st['mail.from_name'] || '', '默认用站点名');
+
+  const stateLine = div('hint');
+  function paintState() {
+    stateLine.innerHTML = '';
+    if (!d.mail_configured) {
+      stateLine.append(el('p', { class: 'warn', text: '还没配好：服务器地址、发件地址、端口都填上才能发信' }));
+      return;
+    }
+    if (d.mail_ready) stateLine.append(el('p', { text: '现在会发信：成员订阅并验证过邮箱后，收到站内信就会收到一封邮件' }));
+    else if (st['mail.enabled'] === '1') stateLine.append(el('p', { text: '总开关开着，但「站内信邮件提醒」还没开，现在不会发' }));
+    else stateLine.append(el('p', { text: '配置齐了，但总开关关着，现在不会发' }));
+  }
+  paintState();
+
+  const testTo = textInput('', '', '发给哪个邮箱');
+  const testBtn = btn('发测试邮件', 'btn-ghost btn-sm', async function () {
+    const to = testTo.value.trim();
+    if (!to) { toast('先填一个收件邮箱'); return; }
+    testBtn.disabled = true;
+    try {
+      await api('mail', { to: to });
+      toast('测试邮件发出去了');
+    } catch (e) { toast(e.message, 'err'); }
+    testBtn.disabled = false;
+  }, 'fa-paper-plane');
+
+  const save = btn('保存邮件设置', 'btn-primary', async function () {
+    try {
+      await api('settings', {
+        'mail.enabled': fOn.checked ? '1' : '0',
+        'mail.notify': fNotify.checked ? '1' : '0',
+        'mail.host': fHost.value.trim(),
+        'mail.port': fPort.value.trim(),
+        'mail.secure': fSecure.value,
+        'mail.user': fUser.value.trim(),
+        'mail.pass': fPass.value,
+        'mail.from': fFrom.value.trim(),
+        'mail.from_name': fName.value.trim(),
+      });
+      toast('邮件设置已保存');
+      go('mail');
+    } catch (e) { toast(e.message, 'err'); }
+  }, 'fa-floppy-disk');
+
+  box.append(card('SMTP 服务器', [
+    el('form', { class: 'adm-form' }, [
+      div('form-grid', [
+        field('服务器地址', fHost, '发信用的 SMTP 服务器'),
+        field('端口', fPort),
+        field('加密方式', fSecure),
+        field('发件地址', fFrom, '收件人看到的发件人邮箱'),
+        field('发件人名字', fName, '留空用站点名'),
+      ]),
+      div('form-grid', [
+        field('账号', fUser, '多数邮箱要求填完整地址'),
+        field('密码 / 授权码', fPass, '留空就沿用已经存的那个'),
+      ]),
+      stateLine,
+    ]),
+    div('form-foot', [save]),
+  ], { icon: 'fa-server' }));
+
+  box.append(card('开关', [
+    el('form', { class: 'adm-form' }, [
+      div('oauth-switches', [
+        el('label', { class: 'switch' }, [fOn, el('span', { text: '总开关：允许发信' })]),
+        el('label', { class: 'switch' }, [fNotify, el('span', { text: '成员收到站内信时发邮件（成员要先在「空间 → 通知」里订阅并验证邮箱）' })]),
+      ]),
+      div('hint', [el('p', { text: '只对站内信发信。私聊、群消息、空间动态本身都不会发邮件。' })]),
+    ]),
+  ], { icon: 'fa-toggle-on' }));
+
+  box.append(card('试一试', [
+    div('field-inline', [testTo, testBtn]),
+    div('hint', [el('p', { text: '测试邮件直接发，不看开关；发不出去会显示原因。' })]),
+  ], { icon: 'fa-vial' }));
+}
+
+// ---------------------------------------------------------------- 空间
+
+async function renderMoments(box) {
+  box.append(loading());
+  const d = await api('moments').catch(function () { return null; });
+  box.innerHTML = '';
+  box.append(pageHead('空间', '群成员在这里发短动态（文字 300 字、最多 9 张图）；这里只管「有新动态要不要提醒大家」'));
+
+  const on = el('input', { type: 'checkbox', checked: !!(d && d.on) });
+
+  box.append(card('推流', [
+    el('form', { class: 'adm-form' }, [
+      el('label', { class: 'switch' }, [on, el('span', { text: '有新动态时给群成员发一条站内信' })]),
+      div('hint', [
+        el('p', { text: '关掉之后，成员照样能在「空间」里看到动态，只是不会再收到提醒。' }),
+        el('p', { text: '这个开关只管当前这个群；互通圈子里的其它群各自管各自的。' }),
+      ]),
+    ]),
+    div('form-foot', [
+      btn('保存', 'btn-primary', async function () {
+        try {
+          await api('moments', { on: on.checked ? 1 : 0 });
+          toast('已保存');
+        } catch (e) { toast(e.message, 'err'); }
+      }, 'fa-floppy-disk'),
+    ]),
+  ], { icon: 'fa-bullhorn' }));
+}
+
 // ---------------------------------------------------------------- 主题
 
 async function renderThemes(box) {
@@ -1288,7 +1423,7 @@ async function renderConvs(box) {
   box.append(loading());
   const d = await api('convs');
   box.innerHTML = '';
-  box.append(pageHead('会话审计', '管理员的查看会留下系统提示（同一会话一分钟内只记一次）'));
+  box.append(pageHead('会话审计', '可以看、可以删单条、可以清空整个会话；每次操作都会在会话里留一条系统提示，查看本身也留痕（同一会话一分钟内只记一次）'));
 
   const rows = (d.convs || []).map(function (c) {
     return [
@@ -1312,7 +1447,11 @@ async function renderConvs(box) {
 function adminMsgText(msg) {
   if (!msg) return '';
   if (msg.recalled) return '（已撤回）';
-  const t = String(msg.text || '').trim();
+  // 服务端为了老客户端会把媒体地址拼进 text，这里剥掉，看的是人话
+  let t = String(msg.text || '')
+    .replace(/\[(图片|语音|卡片)\]\(\s*https?:\/\/[^)\s]*\s*\)/g, '')
+    .replace(/\s*\d+"\s*$/, '')
+    .trim();
   if (t) return t;
   if (msg.img) return '[图片]';
   if (msg.voice) return msg.dur ? '[语音 ' + msg.dur + '"]' : '[语音]';
@@ -1323,31 +1462,55 @@ function adminMsgText(msg) {
 async function viewConv(c) {
   const body = div('conv-view', [loading()]);
   const m = modal((c.isPublic ? '群聊' : '私聊') + ' · ' + (c.title || ''), [body], [btn('关闭', 'btn-ghost', function () { m.close(); })]);
-  try {
-    const d = await api('convs/' + c.id);
-    body.innerHTML = '';
-    const info = div('conv-info', [
-      el('span', { class: 'muted', text: (d.conv.members || []).map(function (x) { return x.name; }).join(' · ') }),
-      el('span', { class: 'muted', text: '共 ' + (d.msgs || []).length + ' 条' }),
-    ]);
-    body.append(info);
-    const list = div('conv-msgs', []);
-    (d.msgs || []).forEach(function (msg) {
-      list.append(div('conv-msg' + (msg.sys ? ' sys' : ''), [
-        div('conv-msg-head', [
-          el('b', { text: msg.name || '?' }),
-          msg.kind === 'ai' ? badge('ai') : null,
-          el('span', { class: 'muted', text: fmtDT(msg.ts) }),
-        ]),
-        div('conv-msg-text', [document.createTextNode(adminMsgText(msg))]),
-      ]));
-    });
-    if (!(d.msgs || []).length) list.append(div('adm-empty', [icon('fa-comments'), el('div', { text: '这个会话还没有消息' })]));
-    body.append(list);
-  } catch (e) {
-    body.innerHTML = '';
-    body.append(div('adm-error', [icon('fa-triangle-exclamation'), el('div', { text: e.message })]));
+
+  // 每次操作后整块重画，省得自己去跟踪哪一条变了
+  async function paint() {
+    try {
+      const d = await api('convs/' + c.id);
+      body.innerHTML = '';
+      const info = div('conv-info', [
+        el('span', { class: 'muted', text: (d.conv.members || []).map(function (x) { return x.name; }).join(' · ') }),
+        el('span', { class: 'muted', text: '共 ' + (d.msgs || []).length + ' 条' }),
+        div('conv-info-sp'),
+        btn('清空历史', 'btn-danger btn-sm', async function () {
+          if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。这个动作会留下系统提示。', true))) return;
+          try {
+            const r = await api('convs/' + c.id + '/clear', {});
+            toast('已清空 ' + r.cleared + ' 条');
+            paint();
+          } catch (e) { toast(e.message, 'err'); }
+        }, 'fa-broom'),
+      ]);
+      body.append(info);
+      const list = div('conv-msgs', []);
+      (d.msgs || []).forEach(function (msg) {
+        const canDel = !msg.sys && !msg.recalled;
+        list.append(div('conv-msg' + (msg.sys ? ' sys' : ''), [
+          div('conv-msg-head', [
+            el('b', { text: msg.name || '?' }),
+            msg.kind === 'ai' ? badge('ai') : null,
+            el('span', { class: 'muted', text: fmtDT(msg.ts) }),
+            div('conv-msg-sp'),
+            canDel ? btn('删除', 'btn-ghost btn-sm', async function () {
+              if (!(await confirmBox('删除消息', '这条消息会从这个会话里消失，之后会留下一条系统提示。', true))) return;
+              try {
+                await api('messages/' + msg.id, { op: 'delete' });
+                toast('已删除');
+                paint();
+              } catch (e) { toast(e.message, 'err'); }
+            }, 'fa-trash-can') : null,
+          ]),
+          div('conv-msg-text', [document.createTextNode(adminMsgText(msg))]),
+        ]));
+      });
+      if (!(d.msgs || []).length) list.append(div('adm-empty', [icon('fa-comments'), el('div', { text: '这个会话还没有消息' })]));
+      body.append(list);
+    } catch (e) {
+      body.innerHTML = '';
+      body.append(div('adm-error', [icon('fa-triangle-exclamation'), el('div', { text: e.message })]));
+    }
   }
+  paint();
 }
 
 // ---------------------------------------------------------------- 站点设置

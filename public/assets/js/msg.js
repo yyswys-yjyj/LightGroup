@@ -186,7 +186,9 @@ function voiceNode(m) {
       setIcon('fa-spinner', true);
       play.disabled = true;
       play.title = '正在加载';
+      loadTimer = setTimeout(function () { loadTimer = 0; setLoading(false); }, 8000);
     } else {
+      if (loadTimer) { clearTimeout(loadTimer); loadTimer = 0; }
       play.disabled = false;
       play.title = '播放';
       setIcon(au.paused ? 'fa-play' : 'fa-pause');
@@ -223,15 +225,24 @@ function voiceNode(m) {
     }
   });
 
+  // 兜底：有的浏览器 waiting 之后不再发 canplay，靠计时和 timeupdate 收尾，
+  // 不然按钮会一直转圈。
+  let loadTimer = 0;
+  const stopSpin = function () {
+    if (loadTimer) { clearTimeout(loadTimer); loadTimer = 0; }
+    setLoading(false);
+  };
   au.addEventListener('loadedmetadata', function () {
     if (pending >= 0) { const r = pending; pending = -1; seekTo(r); }
-    setLoading(false);
     paint();
   });
-  au.addEventListener('canplay', function () { setLoading(false); });
-  au.addEventListener('playing', function () { setLoading(false); setIcon('fa-pause'); });
-  au.addEventListener('waiting', function () { setLoading(true); });
-  au.addEventListener('timeupdate', function () { if (!dragging) paint(); });
+  au.addEventListener('canplay', function () { if (!au.paused) stopSpin(); });
+  au.addEventListener('playing', function () { stopSpin(); setIcon('fa-pause'); });
+  au.addEventListener('waiting', function () { if (!au.paused) setLoading(true); });
+  au.addEventListener('timeupdate', function () {
+    if (loading && !au.paused && au.readyState >= 2) stopSpin();
+    if (!dragging) paint();
+  });
   au.addEventListener('pause', function () { if (!loading) setIcon('fa-play'); });
   au.addEventListener('ended', function () { setIcon('fa-play'); paint(0); });
 
