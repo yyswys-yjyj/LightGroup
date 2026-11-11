@@ -1,7 +1,7 @@
 {
   "name": "LightGroup",
-  "version": "0.1.1",
-  "released_at": "2026-11-08",
-  "notes": "修复多个漏洞",
+  "version": "0.1.2",
+  "released_at": "2026-11-11",
+  "notes": "后台可一键从 GitHub 更新站点（只换代码，config.php、data、上传的图片、favicon 都保留）；空间推流默认关闭，可按群选三档；个人主页改成头图加页签的版式",
   "url": "https://github.com/yyswys-yjyj/LightGroup/releases"
 }

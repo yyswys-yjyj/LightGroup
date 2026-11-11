@@ -1610,9 +1610,28 @@ function updateStateBadge(d) {
   return el('span', { class: 'adm-update-badge ok', text: '已是最新' });
 }
 
+/** 真正执行更新：拉 GitHub 最新 release 的源码包覆盖代码（服务端只放行超管） */
+async function doUpdate(ver) {
+  const yes = await confirmBox(
+    '立即更新到 v' + ver,
+    '会从 GitHub 拉源码包覆盖本站代码。config.php、data、上传的图片、favicon 都不会被覆盖；被替换的旧文件先备份到 data/backup/。更新完成后页面自动重载。',
+    false
+  );
+  if (!yes) return;
+  toast('正在下载并覆盖，别关页面…');
+  try {
+    const r = await api('update', {});
+    if (!r.updated) { toast('已经是最新版本'); return; }
+    toast('已更新到 ' + r.version);
+    setTimeout(function () { location.reload(); }, 800);
+  } catch (e) {
+    toast('更新失败：' + (e.message || '网络错误'), 'err');
+  }
+}
+
 async function renderUpdate(box) {
   box.append(pageHead('更新检查',
-    '清单是仓库里的 api/manifest.json，从 GitHub 取；取不到会自动改用 jsDelivr。当前版本取自安装时写入的 .lock',
+    '清单是仓库里的 api/manifest.json，从 GitHub 取；取不到会自动改用 jsDelivr。当前版本取仓库清单 api/manifest.json，读不到才回退到 .lock',
     [btn('检查更新', 'btn-primary', function () { go('update'); }, 'fa-rotate')]));
 
   const wrap = div('adm-update-page');
@@ -1654,8 +1673,11 @@ async function renderUpdate(box) {
   }
 
   const acts = [];
+  if (d.has_update && latest) {
+    acts.push(btn('立即更新到 ' + latest.version, 'btn-primary', function () { doUpdate(latest.version); }, 'fa-cloud-arrow-down'));
+  }
   if (latest && latest.url) {
-    acts.push(btn('查看详情', 'btn-primary', function () { window.open(latest.url, '_blank', 'noopener'); }, 'fa-arrow-up-right-from-square'));
+    acts.push(btn('查看详情', d.has_update ? 'btn-ghost' : 'btn-primary', function () { window.open(latest.url, '_blank', 'noopener'); }, 'fa-arrow-up-right-from-square'));
   }
   if (d.error) {
     acts.push(btn('重试', 'btn-ghost', function () { go('update'); }, 'fa-rotate'));
@@ -1706,7 +1728,8 @@ function showUpdatePop(d) {
     v.notes ? el('div', { class: 'adm-update-notes', text: v.notes }) : null,
   ]));
   pop.append(div('adm-update-pop-foot', [
-    btn('查看详情', 'btn-primary', function () {
+    btn('立即更新', 'btn-primary', function () { close(); doUpdate(v.version); }, 'fa-cloud-arrow-down'),
+    btn('查看详情', 'btn-ghost', function () {
       if (v.url) window.open(v.url, '_blank', 'noopener');
       else go('update');
     }, 'fa-arrow-up-right-from-square'),

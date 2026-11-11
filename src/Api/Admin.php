@@ -41,7 +41,7 @@ final class Admin {
             case "themes":    self::themes($pdo, $role, $myScope, $method, $id, $sub); break;
             case "convs":     self::convs($pdo, $role, $myScope, $method, $id, $sub); break;
             case "messages":  self::messagesApi($pdo, $role, $myScope, $method, $id); break;
-            case "update":    self::updateApi($pdo); break;
+            case "update":    $method === "POST" ? self::updateApply($pdo, $role) : self::updateApi($pdo); break;
             case "mail":      self::mailTest($pdo, $role, $method); break;
             case "moments":   self::momentsSetting($pdo, $me, $method); break;
             default:          Json::fail("未知管理接口");
@@ -1418,6 +1418,33 @@ final class Admin {
             "latest"       => $latest,
             "has_update"   => $latest !== null && version_compare($latest["version"], $current, ">"),
             "error"        => $error,
+        ]);
+    }
+
+    /**
+     * POST update：拉 GitHub 最新 release 的源码包覆盖安装。
+     * 只超管能点；config.php / data / uploads / favicon 这些由 Updater 自己跳过。
+     */
+    private static function updateApply(PDO $pdo, string $role): void {
+        if ($role !== "super") Json::fail("只有超级管理员能更新站点");
+        $cur = self::currentVersion();
+        $rel = \LightGroup\Web\Updater::latest();
+        if (!$rel["ok"]) Json::fail((string) $rel["err"]);
+        $to = (string) $rel["version"];
+        if (!version_compare($to, $cur, ">")) {
+            Json::ok(["updated" => false, "current" => $cur, "version" => $to]);
+        }
+        $root = defined("APP_ROOT") ? (string) APP_ROOT : dirname(__DIR__, 2);
+        $r = \LightGroup\Web\Updater::apply($root, $rel);
+        if (!$r["ok"]) Json::fail((string) $r["err"]);
+        self::log($pdo, "site.update", "站点更新 " . $cur . " -> " . $to . "（" . $r["files"] . " 个文件）");
+        Json::ok([
+            "updated" => true,
+            "from"    => $cur,
+            "version" => $to,
+            "files"   => $r["files"],
+            "failed"  => $r["failed"],
+            "backup"  => $r["backup"],
         ]);
     }
 
