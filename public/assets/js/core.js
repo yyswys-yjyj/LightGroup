@@ -153,6 +153,44 @@ function isAuthErr(j) {
   return e.indexOf('登录') >= 0 || e.indexOf('注销') >= 0 || e.indexOf('封禁') >= 0;
 }
 
+// 会话越界：登录身份属于别的群。这里绝不能跳登录页——已经登录的人跳过去，
+// /login 看他已登录又按 next 弹回来，来回跳就成了死循环（用户报的「软封禁」）。
+// 改成一次性提示，让人自己选回哪边。
+let scopeWarned = false;
+function showScopeMismatch(j) {
+  if (scopeWarned) return;
+  scopeWarned = true;
+  const home = String(j.home || '/g/');
+  const homeName = String(j.home_name || '我的群');
+  const hereName = String(j.here_name || '这个群');
+  const here = String(j.here || '');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sm-wrap';
+  const card = document.createElement('div');
+  card.className = 'sm-card';
+
+  const ic = icon('fa-door-closed');
+  ic.className = 'fa-solid fa-door-closed sm-ic';
+  card.appendChild(ic);
+  card.appendChild(h('h3', 'sm-title', '这里不是你的群'));
+  card.appendChild(h('p', 'sm-text',
+    '你现在是「' + homeName + '」的成员，这里是「' + hereName + '」。两个群的成员和消息各自分开，所以这个地址用不了。'));
+
+  const acts = h('div', 'sm-acts');
+  const a1 = h('a', 'btn btn-primary', '回到「' + homeName + '」');
+  a1.href = home;
+  acts.appendChild(a1);
+  if (here) {
+    const a2 = h('a', 'btn', '用这个群的邀请码进来');
+    a2.href = '/login?switch=1&next=' + encodeURIComponent(here);
+    acts.appendChild(a2);
+  }
+  card.appendChild(acts);
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+}
+
 export async function api(path, body) {
   const url = BASE + path;
   const opt = { method: body === undefined ? 'GET' : 'POST', headers: {}, credentials: 'same-origin' };
@@ -169,6 +207,7 @@ export async function api(path, body) {
   let j;
   try { j = JSON.parse(text); }
   catch (e) { return { ok: false, err: '服务器返回异常（' + res.status + '）', status: res.status }; }
+  if (j && j.scope_mismatch) { showScopeMismatch(j); return j; }
   if (isAuthErr(j)) toLogin();
   return j;
 }

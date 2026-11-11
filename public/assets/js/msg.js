@@ -621,6 +621,8 @@ async function doTranslate(m) {
   let tr = row.querySelector('.trans');
   if (!tr) { tr = h('div', 'trans'); row.querySelector('.bub').appendChild(tr); }
   tr.textContent = j.text;
+  // 出处要写在译文下面，微信也是这么标的；后端没给名字就不写，别自己猜是哪个服务
+  if (j.provider_name) tr.appendChild(h('span', 'trans-by', '翻译服务由 ' + j.provider_name + ' 提供'));
 }
 
 /**

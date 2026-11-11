@@ -21,7 +21,12 @@ final class Translator {
 
     private static ?array $mem = null;
 
-    /** 返回 ['text' => 译文, 'from' => 识别语言, 'to' => 目标语言] */
+    /**
+     * 返回 ['text' => 译文, 'from' => 识别语言, 'to' => 目标语言,
+     *       'provider' => 通道代号, 'provider_name' => 给人看的名字]
+     * 界面要像微信那样在译文下面写「翻译服务由 … 提供」，所以这条信息必须从后端带出来：
+     * 主通道 Bing，兜底通道 Google，两条路走哪条不能在前端猜。
+     */
     public static function translate(string $text, string $to): array {
         $text = trim($text);
         if ($text === '') throw new \RuntimeException('没有要翻译的内容');
@@ -32,13 +37,13 @@ final class Translator {
             $s = self::session($attempt === 1);
             if ($s === null) continue;
             $r = self::call($s, $text, $to);
-            if ($r['ok']) return $r['data'];
+            if ($r['ok']) return self::named($r['data']);
             $lastErr = $r['err'];
         }
         // Bing 页面改版、限流、机房网络都可能让上面这条路不通，
         // 兜底换成 Google 的公开端点，用户那边不该因为一边挂了就翻不了。
         try {
-            return self::google($text, $to);
+            return self::named(self::google($text, $to));
         } catch (\RuntimeException $e) {
             $lastErr = $e->getMessage();
         }
@@ -128,6 +133,7 @@ final class Translator {
             'text' => (string) $j[0]['translations'][0]['text'],
             'from' => (string) ($j[0]['detectedLanguage']['language'] ?? ''),
             'to'   => (string) ($j[0]['translations'][0]['to'] ?? $to),
+            'provider' => 'bing',
         ]];
     }
 
@@ -156,7 +162,16 @@ final class Translator {
         }
         if ($buf === '') throw new \RuntimeException('翻译服务暂时不可用，稍后再试');
 
-        return ['text' => $buf, 'from' => (string) ($j[2] ?? ''), 'to' => $tl];
+        return ['text' => $buf, 'from' => (string) ($j[2] ?? ''), 'to' => $tl, 'provider' => 'google'];
+    }
+
+    /** 给译文补上「谁翻的」，前端照着显示在译文下面 */
+    private static function named(array $d): array {
+        $names = ['bing' => '微软 Bing', 'google' => 'Google'];
+        $p = (string) ($d['provider'] ?? '');
+        $d['provider'] = $p;
+        $d['provider_name'] = $names[$p] ?? '第三方服务';
+        return $d;
     }
 
     /** 目标语言写法统一：界面传的是 zh-Hans 这种，Google 要 zh-CN */

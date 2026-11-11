@@ -8,6 +8,7 @@ use LightGroup\Store\Db;
 use LightGroup\Web\Site;
 use LightGroup\Web\Url;
 use LightGroup\Web\View;
+use PDO;
 
 /**
  * Operit 兼容层的入口。
@@ -66,10 +67,28 @@ final class Entry
                 View::render("notfound", ["site" => $site, "path" => $basePath], 404);
                 exit;
             }
-            $bootMe = null;
-            if ((int) $me["scope_id"] === (int) $scope["id"]) {
-                $bootMe = ["id" => (int) $me["id"], "name" => $me["name"], "kind" => $me["kind"]];
+            // 登录身份属于别的群：不能拿这个身份开这个群的页面。
+            // 早先这里只把 bootMe 置空、照样渲染外壳，前端按这个群跑起来后每个接口都判成
+            // 「会话失效」→ 跳 /login → 已登录又被 next 弹回来 → 来回跳，浏览器报重定向过多。
+            if ((int) $me["scope_id"] !== (int) $scope["id"]) {
+                $mine = self::scopeById($pdo, (int) $me["scope_id"]);
+                if ($mine === null) {
+                    // 我原来那个群没了（归档或删除），换个身份从头来
+                    Session::logout();
+                    header("Location: " . Url::to("/login"), true, 302);
+                    exit;
+                }
+                $mineSlug = (string) ($mine["slug"] ?? "");
+                View::render("misscope", [
+                    "site" => $site,
+                    "path" => $basePath,
+                    "mineName" => (string) ($mine["title"] ?? "我的群"),
+                    "mineHref" => "/g/" . ($mineSlug !== "" ? $mineSlug . "/" : ""),
+                    "thisName" => (string) ($scope["title"] ?? ""),
+                ], 409);
+                exit;
             }
+            $bootMe = ["id" => (int) $me["id"], "name" => $me["name"], "kind" => $me["kind"]];
             View::render("app-shell", ["site" => $site, "base" => $basePath, "bootMe" => $bootMe]);
             exit;
         }
@@ -79,6 +98,14 @@ final class Entry
     }
 
     /** /g/ 后面那一段，去掉首尾斜杠 */
+    /** 按 id 取群，只读；用来告诉越界的人「你本来在哪个群」 */
+    private static function scopeById(PDO $pdo, int $id): ?array {
+        $st = $pdo->prepare("SELECT id, slug, title FROM scopes WHERE id = ? AND archived = 0 LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ?: null;
+    }
+
     private static function rest(): string
     {
         $uri = rawurldecode((string) parse_url($_SERVER["REQUEST_URI"] ?? "/", PHP_URL_PATH));

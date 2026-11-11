@@ -43,8 +43,9 @@ final class Login {
         $isPost = strtoupper((string) ($_SERVER["REQUEST_METHOD"] ?? "GET")) === "POST";
 
         if (!$isPost) {
-            // 已经登录了就别再让填一次
-            if (Session::member($pdo) !== null) self::redirect(self::target($next, $mode));
+            // 已经登录了就别再让填一次。switch=1 是例外：在别的群的地址上被拦下来的
+            // 人得能用这个群的邀请码换个身份，不然只能先去退出。
+            if (Session::member($pdo) !== null && self::field("switch") !== "1") self::redirect(self::target($next, $mode));
             // 门禁登录到一半：第三方已经认过主账号，还差挑业务账号
             if ($mode !== "admin" && Session::account($pdo) !== null) self::redirect("/oauth/accounts");
             self::render($site, $pdo, $mode, $next, "", "");

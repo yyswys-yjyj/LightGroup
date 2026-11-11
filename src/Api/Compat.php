@@ -13,6 +13,8 @@ final class Compat {
         $pdo = Db::connect();
         $scope = self::scopeBySlug($pdo, $slug);
         if ($scope === null) Json::fail("群不存在");
+        // 记下这次请求是哪个群，requireMember 拿它校验身份有没有跑到别的群去
+        self::$ctxScope = $scope;
 
         $path = trim($path, "/");
 
@@ -36,6 +38,7 @@ final class Compat {
      * 认证、校验、落库、互通逻辑只有一份。
      */
     public static function dispatch(PDO $pdo, array $scope, string $path): void {
+        self::$ctxScope = $scope;
         switch ($path) {
             case "join":      self::join($pdo, $scope); break;
             case "api/link":  self::link($pdo, $scope); break;
@@ -97,6 +100,42 @@ final class Compat {
         return self::scopeBySlug($pdo, $slug);
     }
 
+    /** 这次请求是哪个群（handle / dispatch 进来时写） */
+    private static ?array $ctxScope = null;
+
+    private static function scopeById(PDO $pdo, int $id): ?array {
+        $st = $pdo->prepare("SELECT id, slug, title FROM scopes WHERE id = ? AND archived = 0 LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ?: null;
+    }
+
+    /**
+     * 成员必须属于当前请求的群。
+     *
+     * 网页会话只按 $_SESSION["mid"] 认人、token 只按 token_hash 认人，两处都不看 scope，
+     * 于是「登录在 A 群、地址切到 B 群」会拿 A 的身份操作 B 的数据。
+     * 这里统一挡掉：报错文案故意避开「登录 / 注销 / 封禁」，
+     * 因为前端 core.js 的 isAuthErr 一见到这几个词就跳登录页，已登录的人又被打回来，
+     * 来回跳就是用户看到的「软封禁」。改成带 scope_mismatch 的结构，前端弹提示。
+     */
+    private static function assertScope(PDO $pdo, array $m): void {
+        $scope = self::$ctxScope;
+        if ($scope === null) return;
+        if ((int) ($m["scope_id"] ?? 0) === (int) $scope["id"]) return;
+        $mine = self::scopeById($pdo, (int) ($m["scope_id"] ?? 0));
+        $mineSlug = $mine === null ? "" : (string) ($mine["slug"] ?? "");
+        Json::out([
+            "ok" => false,
+            "err" => "当前身份属于「" . (string) ($mine["title"] ?? "别的群") . "」，这里是「" . (string) ($scope["title"] ?? "") . "」",
+            "scope_mismatch" => 1,
+            "home" => "/g/" . ($mineSlug !== "" ? $mineSlug . "/" : ""),
+            "home_name" => (string) ($mine["title"] ?? ""),
+            "here" => "/g/" . ((string) ($scope["slug"] ?? "") !== "" ? (string) $scope["slug"] . "/" : ""),
+            "here_name" => (string) ($scope["title"] ?? ""),
+        ], 409);
+    }
+
     /** 给 Moments / Notices 这类同层 API 用的只读工具，逻辑和主接口完全一致 */
     public static function requireMemberPublic(PDO $pdo): array {
         return self::requireMember($pdo);
@@ -149,6 +188,7 @@ final class Compat {
             $m = self::$acting;
             if (!empty($m["deleted_at"])) Json::fail("账号已注销");
             if ((int) $m["banned"] === 1) Json::fail("该账号已被封禁");
+            self::assertScope($pdo, $m);
             return $m;
         }
         $token = (string) Input::get("token");
@@ -157,6 +197,7 @@ final class Compat {
         if ($m === null) Json::fail("登录已失效，请重新进群");
         if (!empty($m["deleted_at"])) Json::fail("账号已注销");
         if ((int) $m["banned"] === 1) Json::fail("该账号已被封禁");
+        self::assertScope($pdo, $m);
         return $m;
     }
 
