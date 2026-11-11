@@ -52,6 +52,11 @@ final class Moments {
     // ---------- 读 ----------
 
     private static function timeline(PDO $pdo, array $scope, array $me): void {
+        $cu = Input::int("cu", 0);
+        if ($cu > 0) {
+            self::commentsBy($pdo, $scope, $me, $cu);
+            return;
+        }
         $ids = Compat::scopeIdsPublic($pdo, $scope);
         $in = implode(",", array_fill(0, count($ids), "?"));
         $params = $ids;
@@ -70,6 +75,12 @@ final class Moments {
         if (Input::int("mine", 0) === 1) {
             $where[] = "m.member_id = ?";
             $params[] = (int) $me["id"];
+        }
+        // 看别人的资料页：按成员过滤（仍受本作用域可见范围限制）
+        $u = Input::int("u", 0);
+        if ($u > 0) {
+            $where[] = "m.member_id = ?";
+            $params[] = $u;
         }
 
         $sql = "SELECT m.* FROM moments m WHERE " . implode(" AND ", $where) . " ORDER BY m.id DESC LIMIT " . self::PAGE;
@@ -141,6 +152,40 @@ final class Moments {
         ]);
     }
 
+    /** 某个人发过的评论（资料页「评论」页签），带上是哪条动态下面的 */
+    private static function commentsBy(PDO $pdo, array $scope, array $me, int $memberId): void {
+        $ids = Compat::scopeIdsPublic($pdo, $scope);
+        $in = implode(",", array_fill(0, count($ids), "?"));
+        $sql = "SELECT c.*, m.text AS m_text, m.images AS m_images, m.member_id AS m_member_id, m.created_at AS m_created_at
+                FROM moment_comments c JOIN moments m ON m.id = c.moment_id
+                WHERE c.member_id = ? AND c.deleted_at IS NULL AND m.deleted_at IS NULL AND m.scope_id IN ($in)
+                ORDER BY c.id DESC LIMIT " . self::PAGE;
+        $st = $pdo->prepare($sql);
+        $st->execute(array_merge([$memberId], $ids));
+        $rows = $st->fetchAll();
+
+        $authorIds = [];
+        foreach ($rows as $r) $authorIds[(int) $r["m_member_id"]] = true;
+        $members = self::members($pdo, array_keys($authorIds));
+
+        $items = [];
+        foreach ($rows as $r) {
+            $items[] = [
+                "id"   => (int) $r["id"],
+                "text" => (string) $r["text"],
+                "ts"   => (int) $r["created_at"],
+                "moment" => [
+                    "id"     => (int) $r["moment_id"],
+                    "text"   => mb_substr((string) $r["m_text"], 0, 120),
+                    "images" => self::decodeImages((string) ($r["m_images"] ?? "")),
+                    "ts"     => (int) $r["m_created_at"],
+                    "member" => $members[(int) $r["m_member_id"]] ?? null,
+                ],
+            ];
+        }
+        Json::ok(["items" => $items, "me" => Compat::memberBriefPublic($pdo, $me)]);
+    }
+
     private static function members(PDO $pdo, array $ids): array {
         $ids = array_values(array_filter(array_map("intval", $ids)));
         if (!$ids) return [];
@@ -177,19 +222,29 @@ final class Moments {
         ]);
         $id = (int) $pdo->lastInsertId();
 
-        if (self::pushOn($pdo, (int) $scope["id"])) {
-            self::pushTimeline($pdo, $scope, $me, $id, $text, (bool) $images);
+        $pmode = self::pushMode($pdo, (int) $scope["id"]);
+        if ($pmode > 0) {
+            self::pushTimeline($pdo, $scope, $me, $id, $text, (bool) $images, $pmode);
         }
 
         Json::ok(["id" => $id, "ts" => $now]);
     }
 
     /** 推流：给同群（含圈子）其他成员发一条站内信，人多也不至于刷爆收件箱 */
-    private static function pushTimeline(PDO $pdo, array $scope, array $me, int $id, string $text, bool $hasImage): void {
+    private static function pushTimeline(PDO $pdo, array $scope, array $me, int $id, string $text, bool $hasImage, int $mode = 1): void {
         $ids = Compat::scopeIdsPublic($pdo, $scope);
         $in = implode(",", array_fill(0, count($ids), "?"));
-        $st = $pdo->prepare("SELECT id FROM members WHERE scope_id IN ($in) AND deleted_at IS NULL AND id <> ? LIMIT 200");
-        $st->execute(array_merge($ids, [(int) $me["id"]]));
+        $sql = "SELECT id FROM members WHERE scope_id IN ($in) AND deleted_at IS NULL AND id <> ?";
+        $params = array_merge($ids, [(int) $me["id"]]);
+        if ($mode === 2) {
+            // 只找最近 30 天在这个圈子范围内说过话的人，冷清成员不再被打扰
+            $since = lg_now() - 30 * 86400;
+            $sql .= " AND id IN (SELECT DISTINCT member_id FROM messages WHERE scope_id IN ($in) AND created_at >= ? AND deleted_at IS NULL)";
+            $params = array_merge($params, $ids, [$since]);
+        }
+        $sql .= " LIMIT 200";
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
 
         $title = (string) $me["name"] . " 发了一条动态";
         $body = $text !== "" ? mb_substr($text, 0, 80) : "（图片）";
@@ -324,17 +379,23 @@ final class Moments {
             $on = Input::int("on", 1) === 1;
             self::setPush($pdo, (int) $scope["id"], $on);
         }
-        Json::ok(["on" => self::pushOn($pdo, (int) $scope["id"]), "admin" => $isAdmin]);
+        Json::ok(["on" => self::pushMode($pdo, (int) $scope["id"]) > 0, "mode" => self::pushMode($pdo, (int) $scope["id"]), "admin" => $isAdmin]);
     }
 
-    private static function pushOn(PDO $pdo, int $scopeId): bool {
+    /**
+     * 推流档位（默认关闭）：0 关闭 / 1 推给同群（含圈子）所有人 / 2 只推给最近活跃的人。
+     * 人多的时候全推等于刷屏，"只推活跃"给管理员一个省心的折中。
+     */
+    private static function pushMode(PDO $pdo, int $scopeId): int {
         try {
             $st = $pdo->prepare("SELECT v FROM settings WHERE k = ? LIMIT 1");
             $st->execute(["moment.push." . $scopeId]);
             $v = $st->fetchColumn();
-            return $v === false || (string) $v === "1";
+            if ($v === false) return 0;
+            $n = (int) $v;
+            return ($n === 1 || $n === 2) ? $n : 0;
         } catch (\Throwable $e) {
-            return true;
+            return 0;
         }
     }
 

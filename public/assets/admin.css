@@ -476,3 +476,11 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
   .adm-update-hero { grid-template-columns: 1fr; }
 }
 
+
+/* 空间推流：三个档位并排成一组可点卡片 */
+.push-opt{display:block;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:border-color .12s,background .12s}
+.push-opt:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.push-opt:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.push-opt-top{display:flex;align-items:center;gap:8px}
+.push-opt-top b{font-size:14px}
+.push-opt .hint{margin:6px 0 0 22px;font-size:12px;color:var(--text-dim);line-height:1.6}

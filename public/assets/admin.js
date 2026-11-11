@@ -1248,22 +1248,33 @@ async function renderMoments(box) {
   box.append(loading());
   const d = await api('moments').catch(function () { return null; });
   box.innerHTML = '';
-  box.append(pageHead('空间', '群成员在这里发短动态（文字 300 字、最多 9 张图）；这里只管「有新动态要不要提醒大家」'));
+  box.append(pageHead('空间', '群成员在这里发短动态（文字 300 字、最多 9 张图）；推流默认关闭，需要提醒再打开'));
 
-  const on = el('input', { type: 'checkbox', checked: !!(d && d.on) });
+  const cur = d && typeof d.mode === 'number' ? d.mode : (d && d.on ? 1 : 0);
+  const opts = [
+    { v: 0, t: '关闭（默认）', s: '成员照样能在「空间」看到动态，只是不会收到提醒。人少、圈子小的时候这样就够了。' },
+    { v: 1, t: '推给全群', s: '同群和互通圈子里的每个成员都收一条站内信。圈子一大就是刷屏，慎用。' },
+    { v: 2, t: '只推给最近活跃的人', s: '只提醒最近 30 天在圈子里说过话的成员：冷清的人不被打扰，活跃的人不错过。' },
+  ];
+  const radios = opts.map(function (o) {
+    const r = el('input', { type: 'radio', name: 'pushmode', value: String(o.v), checked: cur === o.v });
+    return el('label', { class: 'push-opt' }, [
+      el('div', { class: 'push-opt-top' }, [r, el('b', { text: o.t })]),
+      el('p', { class: 'hint', text: o.s }),
+    ]);
+  });
 
-  box.append(card('推流', [
-    el('form', { class: 'adm-form' }, [
-      el('label', { class: 'switch' }, [on, el('span', { text: '有新动态时给群成员发一条站内信' })]),
+  box.append(card('推流算法', [
+    el('form', { class: 'adm-form' }, radios.concat([
       div('hint', [
-        el('p', { text: '关掉之后，成员照样能在「空间」里看到动态，只是不会再收到提醒。' }),
         el('p', { text: '这个开关只管当前这个群；互通圈子里的其它群各自管各自的。' }),
       ]),
-    ]),
+    ])),
     div('form-foot', [
       btn('保存', 'btn-primary', async function () {
+        const picked = radios.map(function (l) { return l.querySelector('input'); }).find(function (i) { return i.checked; });
         try {
-          await api('moments', { on: on.checked ? 1 : 0 });
+          await api('moments', { mode: picked ? Number(picked.value) : 0 });
           toast('已保存');
         } catch (e) { toast(e.message, 'err'); }
       }, 'fa-floppy-disk'),
@@ -1625,7 +1636,7 @@ async function renderUpdate(box) {
   const cur = el('div', { class: 'adm-update-ver' }, [
     el('div', { class: 'adm-update-k', text: '当前版本' }),
     el('div', { class: 'adm-update-v', text: d.current || '-' }),
-    el('div', { class: 'adm-update-t', text: '站点 .lock 里记录的版本' }),
+    el('div', { class: 'adm-update-t', text: '仓库清单 api/manifest.json 里的版本' }),
   ]);
   const nv = el('div', { class: 'adm-update-ver' }, [
     el('div', { class: 'adm-update-k', text: '最新版本' }),

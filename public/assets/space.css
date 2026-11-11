@@ -7,7 +7,7 @@
 /* ---------- 封面 + 资料行 ---------- */
 .sp-cover-wrap{position:relative;margin:14px 0 12px}
 .sp-cover{height:142px;border-radius:12px;overflow:hidden;
-  background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 58%,#7c3aed))}
+  background:var(--cover-grad)}
 /* 名字落在封面下面的底色上，不要压在深色封面上（深浅主题都读得清） */
 .sp-profile{display:flex;align-items:flex-end;gap:14px;padding:8px 6px 0;position:relative}
 .sp-profile .ava{flex:none;margin-top:-38px;box-shadow:0 0 0 4px var(--bg);border-radius:50%}

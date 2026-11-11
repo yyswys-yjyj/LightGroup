@@ -566,15 +566,24 @@ final class Admin {
         $sid = (int) $me["scope_id"];
         $key = "moment.push." . $sid;
         if ($method === "GET") {
-            Json::ok(["on" => self::setting($pdo, $key, "1") !== "0", "scope_id" => $sid]);
+            $mode = (int) self::setting($pdo, $key, "0");
+            if ($mode !== 1 && $mode !== 2) $mode = 0;
+            Json::ok(["on" => $mode > 0, "mode" => $mode, "scope_id" => $sid]);
             return;
         }
-        $raw = Input::body()["on"] ?? null;
-        if ($raw === null) Json::fail("要告诉我是开还是关");
-        $on = in_array((string) $raw, ["1", "true", "on"], true);
-        self::putSetting($pdo, $key, $on ? "1" : "0");
-        self::log($pdo, "moment.push", ($on ? "打开" : "关闭") . "本群空间推流");
-        Json::ok(["on" => $on]);
+        $raw = Input::body()["mode"] ?? null;
+        if ($raw === null) {
+            // 兼容旧前端：on=true 当作「全群」
+            $on = Input::body()["on"] ?? null;
+            if ($on === null) Json::fail("要告诉我是哪一种推流");
+            $raw = in_array((string) $on, ["1", "true", "on"], true) ? 1 : 0;
+        }
+        $mode = (int) $raw;
+        if ($mode !== 1 && $mode !== 2) $mode = 0;
+        self::putSetting($pdo, $key, (string) $mode);
+        $label = [0 => "关闭", 1 => "推给全群", 2 => "只推给最近活跃的人"][$mode];
+        self::log($pdo, "moment.push", "本群空间推流改为「" . $label . "」");
+        Json::ok(["on" => $mode > 0, "mode" => $mode]);
     }
 
     /** 发一封测试邮件：只用来看 SMTP 配好没有，不给成员用 */

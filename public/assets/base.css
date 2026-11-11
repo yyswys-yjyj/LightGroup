@@ -35,6 +35,8 @@
   --accent-soft:#e8efff;
   --accent-line:#c6d6f8;
   --accent-2:#7c3aed;
+  /* 圈子/个人页共用的头图底色：改主题包时两边一起变，不用各写一份渐变 */
+  --cover-grad:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 58%,var(--accent-2)));
   /* ---- 语义色 ---- */
   --ok:#16a34a;
   --warn:#d97706;

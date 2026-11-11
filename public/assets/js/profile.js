@@ -529,6 +529,18 @@ function recheck(n) {
   setTimeout(function () { checkRoute(); recheck(n - 1); }, 120);
 }
 
+// 相对时间：动态列表里「3 小时前」比日期好读
+function whenText(ts) {
+  const n = Number(ts) || 0;
+  if (!n) return '';
+  const diff = Math.floor(Date.now() / 1000) - n;
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+  if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' 天前';
+  return fmtDay(n);
+}
+
 function paintUserPage(uid, p) {
   const host = hostEl();
   if (!host) return;
@@ -542,56 +554,204 @@ function paintUserPage(uid, p) {
   head.appendChild(h('div', 'pf-page-title', '用户资料'));
   page.appendChild(head);
 
-  const card = h('div', 'pf-card');
+  // ---------- 头图 + 身份 ----------
+  // 头图和空间页同一套底色（同一个 --accent 渐变），改了圈子主题这里跟着变
+  const hero = h('div', 'pf-hero');
+  hero.appendChild(h('div', 'pf-hero-cover'));
 
-  const top = h('div', 'pf-card-top');
+  const inner = h('div', 'pf-hero-inner');
   const seed = Object.assign({}, d || {}, { id: uid });
-  const av = avatar(seed, 76);
+  const av = avatar(seed, 92);
   av.classList.remove('ava-click');
   av.removeAttribute('data-uid');
   av.removeAttribute('title');
-  top.appendChild(av);
+  const avWrap = h('div', 'pf-hero-ava');
+  avWrap.appendChild(av);
+  inner.appendChild(avWrap);
 
-  const who = h('div', 'pf-card-who');
-  const nm = h('div', 'pf-card-n');
+  const info = h('div', 'pf-hero-info');
+  const nm = h('div', 'pf-hero-name');
   nm.appendChild(h('b', '', (d && d.name) || '匿名'));
   if (d) badges(nm, d);
-  who.appendChild(nm);
-  who.appendChild(h('div', 'pf-card-s', d ? subtitle(d) : '加载中…'));
-  top.appendChild(who);
-  card.appendChild(top);
-
+  info.appendChild(nm);
+  info.appendChild(h('div', 'pf-hero-handle',
+    d ? '@' + String(d.name || 'member').replace(/\s+/g, '') : '加载中…'));
   if (d) {
-    const acts = h('div', 'pf-card-acts');
+    const bits = [];
+    if (d.kind === 'ai') bits.push(d.owner ? 'AI · ' + d.owner + ' 的' : 'AI 成员');
+    else bits.push(roleText(d));
+    if (d.joined) bits.push('自 ' + fmtDay(d.joined) + ' 成为成员');
+    if (d.scope === 'cluster') bits.push('不在这个群');
+    else if (d.scope === 'other') bits.push('不在同一圈子');
+    info.appendChild(h('div', 'pf-hero-sub', bits.join(' · ')));
+
+    const bio = h('div', 'pf-hero-bio md-body');
+    if (!String(d.bio || '').trim()) bio.appendChild(h('div', 'pf-pop-empty', '这个人还没写介绍。'));
+    else bio.innerHTML = mdHtml(d.bio);
+    info.appendChild(bio);
+
+    const acts = h('div', 'pf-hero-acts');
     cardActions(acts, d, d);
-    if (acts.childNodes.length) card.appendChild(acts);
+    if (acts.childNodes.length) info.appendChild(acts);
+  }
+  inner.appendChild(info);
+  hero.appendChild(inner);
+
+  const tabs = h('div', 'pf-tabs');
+  const tabDefs = [['moments', '动态'], ['comments', '评论'], ['about', '资料']];
+  const tabBtns = {};
+  tabDefs.forEach(function (t) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pf-tab' + (t[0] === 'moments' ? ' on' : '');
+    b.setAttribute('data-tab', t[0]);
+    b.textContent = t[1];
+    b.addEventListener('click', function () { showTab(t[0]); });
+    tabBtns[t[0]] = b;
+    tabs.appendChild(b);
+  });
+  hero.appendChild(tabs);
+  page.appendChild(hero);
+
+  const body = h('div', 'pf-tab-body');
+  page.appendChild(body);
+
+  let curTab = 'moments';
+  const loaded = {};
+  const counts = { moments: 0, comments: 0 };
+
+  function setTabLabel(name) {
+    const base = name === 'moments' ? '动态' : '评论';
+    tabBtns[name].textContent = counts[name] > 0 ? base + ' ' + counts[name] : base;
   }
 
-  if (d) {
+  function showTab(name) {
+    curTab = name;
+    Object.keys(tabBtns).forEach(function (k) { tabBtns[k].classList.toggle('on', k === name); });
+    body.textContent = '';
+    if (name === 'about') { paintAbout(); return; }
+    paintList(name);
+  }
+
+  function paintAbout() {
+    const card = h('div', 'pf-card pf-card-main');
+    card.appendChild(h('div', 'pf-card-title', '资料'));
     const meta = h('div', 'pf-card-meta');
     meta.appendChild(h('span', 'pf-card-tag', '成员 ID：' + uid));
-    if (d.joined) meta.appendChild(h('span', 'pf-card-tag', '加入于 ' + fmtDay(d.joined)));
+    if (d && d.joined) meta.appendChild(h('span', 'pf-card-tag', '加入于 ' + fmtDay(d.joined)));
+    if (d && d.kind === 'ai') meta.appendChild(h('span', 'pf-card-tag', 'AI 成员'));
     card.appendChild(meta);
+    const stat = h('div', 'pf-stat-row');
+    stat.appendChild(statCell('动态', counts.moments));
+    stat.appendChild(statCell('评论', counts.comments));
+    card.appendChild(stat);
+    body.appendChild(card);
   }
 
-  // 宽屏两栏：左边身份卡，右边简介，省得一块窄条贴在中间、两侧全是空白
-  const body = h('div', 'pf-page-body');
-  body.appendChild(card);
-
-  const bioCard = h('div', 'pf-card pf-card-main');
-  bioCard.appendChild(h('div', 'pf-card-title', '简介'));
-  const bio = h('div', 'pf-card-bio md-body');
-  if (!d) {
-    bio.appendChild(h('div', 'pf-pop-empty', '简介加载中…'));
-  } else if (!String(d.bio || '').trim()) {
-    bio.appendChild(h('div', 'pf-pop-empty', '还没有写简介'));
-  } else {
-    bio.innerHTML = mdHtml(d.bio);
+  function statCell(label, n) {
+    const c = h('div', 'pf-stat');
+    c.appendChild(h('b', '', String(n)));
+    c.appendChild(h('span', '', label));
+    return c;
   }
-  bioCard.appendChild(bio);
-  body.appendChild(bioCard);
 
-  page.appendChild(body);
+  async function paintList(name) {
+    body.textContent = '';
+    body.appendChild(h('div', 'pf-empty', '正在加载…'));
+    const q = name === 'moments'
+      ? 'api/moments?u=' + encodeURIComponent(uid)
+      : 'api/moments?cu=' + encodeURIComponent(uid);
+    let j = null;
+    try { j = await api(q); } catch (e) { void e; }
+    if (curTab !== name) return;
+    body.textContent = '';
+    if (!j || !j.ok) {
+      body.appendChild(h('div', 'pf-empty', '看不到他的动态：' + ((j && j.err) || '网络断了')));
+      return;
+    }
+    const items = j.items || [];
+    counts[name] = items.length;
+    setTabLabel(name);
+    loaded[name] = items;
+    if (!items.length) {
+      body.appendChild(h('div', 'pf-empty', name === 'moments' ? '还没发过动态' : '还没评论过别人'));
+      return;
+    }
+    const list = h('div', 'pf-feed');
+    items.forEach(function (it) {
+      list.appendChild(name === 'moments' ? momentRow(it) : commentRow(it));
+    });
+    body.appendChild(list);
+  }
+
+  function momentRow(it) {
+    const row = h('div', 'pf-item');
+    const who = it.member || seed;
+    const a = avatar(who, 40);
+    a.removeAttribute('data-uid');
+    a.classList.remove('ava-click');
+    row.appendChild(wrapAva(a));
+    const main = h('div', 'pf-item-main');
+    const line = h('div', 'pf-item-head');
+    line.appendChild(h('b', '', (who && who.name) || '匿名'));
+    line.appendChild(h('span', 'pf-item-time', whenText(it.ts)));
+    if (it.tags && it.tags.length) {
+      it.tags.slice(0, 3).forEach(function (t) {
+        line.appendChild(h('span', 'pf-item-tag', '#' + t));
+      });
+    }
+    main.appendChild(line);
+    const text = String(it.text || '');
+    main.appendChild(h('div', 'pf-item-text', text));
+    if (it.images && it.images.length) {
+      const grid = h('div', 'pf-item-imgs');
+      it.images.slice(0, 9).forEach(function (src) {
+        const im = document.createElement('img');
+        im.src = src;
+        im.alt = '';
+        im.loading = 'lazy';
+        grid.appendChild(im);
+      });
+      main.appendChild(grid);
+    }
+    const foot = h('div', 'pf-item-foot');
+    foot.appendChild(h('span', '', '♡ ' + (it.likes || 0)));
+    foot.appendChild(h('span', '', '💬 ' + ((it.comments && it.comments.length) || 0)));
+    const go2 = document.createElement('button');
+    go2.type = 'button';
+    go2.className = 'btn btn-sm btn-ghost';
+    go2.textContent = '去空间看';
+    go2.addEventListener('click', function (ev) { ev.stopPropagation(); go('#/space'); });
+    foot.appendChild(go2);
+    main.appendChild(foot);
+    row.appendChild(main);
+    return row;
+  }
+
+  function commentRow(it) {
+    const row = h('div', 'pf-item');
+    row.appendChild(wrapAva(avatar({ id: uid, name: (d && d.name) || '他' }, 40)));
+    const main = h('div', 'pf-item-main');
+    const line = h('div', 'pf-item-head');
+    line.appendChild(h('b', '', (d && d.name) || '匿名'));
+    line.appendChild(h('span', 'pf-item-time', whenText(it.ts)));
+    line.appendChild(h('span', 'pf-item-time', '回复了 ' + ((it.moment && it.moment.member && it.moment.member.name) || '一条动态')));
+    main.appendChild(line);
+    main.appendChild(h('div', 'pf-item-quote', String(it.moment && it.moment.text || '（图片）').slice(0, 80)));
+    main.appendChild(h('div', 'pf-item-text', String(it.text || '')));
+    row.appendChild(main);
+    return row;
+  }
+
+  function wrapAva(a) {
+    a.removeAttribute('data-uid');
+    a.classList.remove('ava-click');
+    const w = h('div', 'pf-item-ava');
+    w.appendChild(a);
+    return w;
+  }
+
+  showTab('moments');
 }
 
 // 成员不存在 / 接口挂了：别一直停在「加载中」
