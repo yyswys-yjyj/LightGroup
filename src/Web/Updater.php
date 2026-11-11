@@ -36,8 +36,16 @@ final class Updater
             return ['ok' => false, 'err' => '拉不到 GitHub 上的版本号（仓库清单和 release 都没读到）'];
         }
 
-        $tarball = (string) ($release['tarball_url'] ?? '');
-        $zipball = (string) ($release['zipball_url'] ?? '');
+        // 只有 release 的 tag 版本和清单版本一致时才用 release 的包：
+        // 仓库里可能挂着旧 tag（比如 release011），拿它覆盖会把代码退回旧版。
+        $relVer = '';
+        if ($release !== null && preg_match('/(\d+(?:\.\d+){1,3})/', (string) ($release['tag_name'] ?? ''), $tm)) {
+            $relVer = $tm[1];
+        }
+        $useRelease = $relVer !== '' && version_compare($relVer, $ver, '==');
+
+        $tarball = $useRelease ? (string) ($release['tarball_url'] ?? '') : '';
+        $zipball = $useRelease ? (string) ($release['zipball_url'] ?? '') : '';
         if ($tarball === '' && $zipball === '') {
             $tarball = 'https://codeload.github.com/' . self::REPO . '/tar.gz/refs/heads/main';
         }
@@ -63,13 +71,38 @@ final class Updater
         return is_array($j) && isset($j['tag_name']) ? $j : null;
     }
 
-    /** 仓库 main 上 api/manifest.json 的 version */
+    /**
+     * 仓库 main 上 api/manifest.json 的 version。
+     * 先走 contents API（不经过 CDN，刚推上去的提交立刻可见），
+     * 再退 raw.githubusercontent，最后 jsDelivr。
+     */
     private static function manifestVersion(): string
     {
-        $raw = self::get('https://raw.githubusercontent.com/' . self::REPO . '/main/api/manifest.json', 8);
-        if ($raw === null) return '';
-        $j = json_decode($raw, true);
-        return is_array($j) ? trim((string) ($j['version'] ?? '')) : '';
+        $api = self::get('https://api.github.com/repos/' . self::REPO . '/contents/api/manifest.json?ref=main', 8);
+        if ($api !== null) {
+            $j = json_decode($api, true);
+            if (is_array($j) && !empty($j['content'])) {
+                $txt = base64_decode((string) $j['content'], true);
+                if (is_string($txt)) {
+                    $m = json_decode($txt, true);
+                    $v = is_array($m) ? trim((string) ($m['version'] ?? '')) : '';
+                    if ($v !== '') return $v;
+                }
+            }
+        }
+
+        $sources = [
+            'https://raw.githubusercontent.com/' . self::REPO . '/main/api/manifest.json',
+            'https://cdn.jsdelivr.net/gh/' . self::REPO . '@main/api/manifest.json',
+        ];
+        foreach ($sources as $url) {
+            $raw = self::get($url, 8);
+            if ($raw === null) continue;
+            $j = json_decode($raw, true);
+            $v = is_array($j) ? trim((string) ($j['version'] ?? '')) : '';
+            if ($v !== '') return $v;
+        }
+        return '';
     }
 
     /**

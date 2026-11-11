@@ -1374,50 +1374,33 @@ final class Admin {
 
     private static function updateApi(PDO $pdo): void {
         $current = self::currentVersion();
-        $sources = [
-            "github"   => "https://raw.githubusercontent.com/" . self::UPDATE_REPO . "/" . self::UPDATE_BRANCH . "/api/manifest.json",
-            "jsdelivr" => "https://cdn.jsdelivr.net/gh/" . self::UPDATE_REPO . "@" . self::UPDATE_BRANCH . "/api/manifest.json",
+        $manifestUrl = "https://raw.githubusercontent.com/" . self::UPDATE_REPO . "/" . self::UPDATE_BRANCH . "/api/manifest.json";
+        $rel = \LightGroup\Web\Updater::latest();
+
+        if (!$rel["ok"]) {
+            Json::ok([
+                "current"      => $current,
+                "manifest_url" => $manifestUrl,
+                "source"       => "",
+                "latest"       => null,
+                "has_update"   => false,
+                "error"        => (string) $rel["err"],
+            ]);
+        }
+
+        $latest = [
+            "version"     => (string) $rel["version"],
+            "released_at" => (string) $rel["published_at"],
+            "notes"       => (string) $rel["notes"],
+            "url"         => "https://github.com/" . self::UPDATE_REPO . "/releases",
         ];
-
-        $latest = null;
-        $error  = "";
-        $raw    = null;
-        $used   = "";
-        $from   = "";
-        foreach ($sources as $name => $url) {
-            $body = self::httpText($url);
-            if ($body === null) continue;
-            $raw  = $body;
-            $used = $url;
-            $from = $name;
-            break;
-        }
-
-        if ($raw === null) {
-            $error = "拉不到更新清单（GitHub 和 jsDelivr 都试过了，可能是服务器不能出网）";
-        } else {
-            $j = json_decode($raw, true);
-            if (!is_array($j)) {
-                $error = "更新清单不是合法 JSON（" . $used . "）";
-            } elseif (!isset($j["version"]) || (string) $j["version"] === "") {
-                $error = "更新清单里没有 version 字段（" . $used . "）";
-            } else {
-                $latest = [
-                    "version"     => (string) $j["version"],
-                    "released_at" => (string) ($j["released_at"] ?? ""),
-                    "notes"       => (string) ($j["notes"] ?? ""),
-                    "url"         => (string) ($j["url"] ?? ""),
-                ];
-            }
-        }
-
         Json::ok([
             "current"      => $current,
-            "manifest_url" => $used,
-            "source"       => $from,
+            "manifest_url" => $manifestUrl,
+            "source"       => (string) $rel["source"],
             "latest"       => $latest,
-            "has_update"   => $latest !== null && version_compare($latest["version"], $current, ">"),
-            "error"        => $error,
+            "has_update"   => version_compare($latest["version"], $current, ">"),
+            "error"        => "",
         ]);
     }
 
