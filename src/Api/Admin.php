@@ -1384,33 +1384,28 @@ final class Admin {
 
     private static function updateApi(PDO $pdo): void {
         $current = self::currentVersion();
-        $manifestUrl = "https://raw.githubusercontent.com/" . self::UPDATE_REPO . "/" . self::UPDATE_BRANCH . "/api/manifest.json";
         $rel = \LightGroup\Web\Updater::latest();
 
         if (!$rel["ok"]) {
             Json::ok([
-                "current"      => $current,
-                "manifest_url" => $manifestUrl,
-                "source"       => "",
-                "latest"       => null,
-                "has_update"   => false,
-                "error"        => (string) $rel["err"],
+                "current"    => $current,
+                "latest"     => null,
+                "has_update" => false,
+                "error"      => (string) $rel["err"],
             ]);
         }
 
         $latest = [
             "version"     => (string) $rel["version"],
-            "released_at" => (string) $rel["published_at"],
+            "released_at" => (string) $rel["released_at"],
             "notes"       => (string) $rel["notes"],
-            "url"         => "https://github.com/" . self::UPDATE_REPO . "/releases",
+            "url"         => (string) $rel["html_url"],
         ];
         Json::ok([
-            "current"      => $current,
-            "manifest_url" => $manifestUrl,
-            "source"       => (string) $rel["source"],
-            "latest"       => $latest,
-            "has_update"   => version_compare($latest["version"], $current, ">"),
-            "error"        => "",
+            "current"    => $current,
+            "latest"     => $latest,
+            "has_update" => version_compare($latest["version"], $current, ">"),
+            "error"      => "",
         ]);
     }
 

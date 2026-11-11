@@ -21,44 +21,23 @@ final class Updater
         'favicon.ico', 'favicon.svg', 'vendor', 'publish', 'opmbuild',
     ];
 
-    /** GitHub 最新 release：没有 release 就退化成 main 分支的源码包 */
+    /**
+     * 版本、更新说明、发布日期都取自仓库里的 api/manifest.json。
+     * 源码包不在这里取：真正下载时才去对 latest release。
+     */
     public static function latest(): array
     {
-        $release = self::releaseInfo();
-        // 版本号以仓库清单为准：release 的 tag 可能是 release011 这种非语义版本，
-        // 直接拿去和 0.1.1 比大小会误判成「有新版本」。
-        $ver = self::manifestVersion();
-        if ($ver === '' && $release !== null) {
-            $tag = (string) ($release['tag_name'] ?? '');
-            if (preg_match('/(\d+(?:\.\d+){1,3})/', $tag, $m)) $ver = $m[1];
+        $m = self::manifest();
+        if ($m['version'] === '') {
+            return ['ok' => false, 'err' => '拉不到 GitHub 上的版本信息'];
         }
-        if ($ver === '') {
-            return ['ok' => false, 'err' => '拉不到 GitHub 上的版本号（仓库清单和 release 都没读到）'];
-        }
-
-        // 只有 release 的 tag 版本和清单版本一致时才用 release 的包：
-        // 仓库里可能挂着旧 tag（比如 release011），拿它覆盖会把代码退回旧版。
-        $relVer = '';
-        if ($release !== null && preg_match('/(\d+(?:\.\d+){1,3})/', (string) ($release['tag_name'] ?? ''), $tm)) {
-            $relVer = $tm[1];
-        }
-        $useRelease = $relVer !== '' && version_compare($relVer, $ver, '==');
-
-        $tarball = $useRelease ? (string) ($release['tarball_url'] ?? '') : '';
-        $zipball = $useRelease ? (string) ($release['zipball_url'] ?? '') : '';
-        if ($tarball === '' && $zipball === '') {
-            $tarball = 'https://codeload.github.com/' . self::REPO . '/tar.gz/refs/heads/main';
-        }
-
         return [
-            'ok'           => true,
-            'version'      => $ver,
-            'name'         => (string) ($release['name'] ?? ''),
-            'notes'        => mb_substr((string) ($release['body'] ?? ''), 0, 4000),
-            'published_at' => (string) ($release['published_at'] ?? ''),
-            'tarball'      => $tarball,
-            'zipball'      => $zipball,
-            'source'       => $tarball !== '' && $zipball !== '' ? 'release' : 'main',
+            'ok'          => true,
+            'version'     => $m['version'],
+            'notes'       => $m['notes'],
+            'released_at' => $m['released_at'],
+            'html_url'    => $m['url'] !== '' ? $m['url'] : 'https://github.com/' . self::REPO . '/releases',
+            'source'      => $m['source'],
         ];
     }
 
@@ -71,12 +50,23 @@ final class Updater
         return is_array($j) && isset($j['tag_name']) ? $j : null;
     }
 
+    /** release 的版本号：标题里的 v0.1.1 优先，其次 tag，最后认 release011 这种老格式 */
+    private static function releaseVersion(array $rel): string
+    {
+        foreach (['name', 'tag_name'] as $k) {
+            if (preg_match('/v?(\d+\.\d+(?:\.\d+)?)/i', (string) ($rel[$k] ?? ''), $m)) return $m[1];
+        }
+        $tag = (string) ($rel['tag_name'] ?? '');
+        if (preg_match('/^release(\d)(\d)(\d)$/i', $tag, $m)) return $m[1] . '.' . $m[2] . '.' . $m[3];
+        return '';
+    }
+
     /**
-     * 仓库 main 上 api/manifest.json 的 version。
+     * 仓库 main 上 api/manifest.json 的版本、说明、发布日期。
      * 先走 contents API（不经过 CDN，刚推上去的提交立刻可见），
      * 再退 raw.githubusercontent，最后 jsDelivr。
      */
-    private static function manifestVersion(): string
+    private static function manifest(): array
     {
         $api = self::get('https://api.github.com/repos/' . self::REPO . '/contents/api/manifest.json?ref=main', 8);
         if ($api !== null) {
@@ -85,24 +75,37 @@ final class Updater
                 $txt = base64_decode((string) $j['content'], true);
                 if (is_string($txt)) {
                     $m = json_decode($txt, true);
-                    $v = is_array($m) ? trim((string) ($m['version'] ?? '')) : '';
-                    if ($v !== '') return $v;
+                    $r = is_array($m) ? self::manifestOut($m, 'manifest') : null;
+                    if ($r !== null) return $r;
                 }
             }
         }
 
         $sources = [
-            'https://raw.githubusercontent.com/' . self::REPO . '/main/api/manifest.json',
-            'https://cdn.jsdelivr.net/gh/' . self::REPO . '@main/api/manifest.json',
+            'https://raw.githubusercontent.com/' . self::REPO . '/main/api/manifest.json' => 'raw',
+            'https://cdn.jsdelivr.net/gh/' . self::REPO . '@main/api/manifest.json'      => 'jsdelivr',
         ];
-        foreach ($sources as $url) {
+        foreach ($sources as $url => $src) {
             $raw = self::get($url, 8);
             if ($raw === null) continue;
             $j = json_decode($raw, true);
-            $v = is_array($j) ? trim((string) ($j['version'] ?? '')) : '';
-            if ($v !== '') return $v;
+            $r = is_array($j) ? self::manifestOut($j, $src) : null;
+            if ($r !== null) return $r;
         }
-        return '';
+        return ['version' => '', 'notes' => '', 'released_at' => '', 'url' => '', 'source' => ''];
+    }
+
+    private static function manifestOut(array $m, string $src): ?array
+    {
+        $v = trim((string) ($m['version'] ?? ''));
+        if ($v === '') return null;
+        return [
+            'version'     => $v,
+            'notes'       => mb_substr((string) ($m['notes'] ?? ''), 0, 4000),
+            'released_at' => (string) ($m['released_at'] ?? ''),
+            'url'         => (string) ($m['url'] ?? ''),
+            'source'      => $src,
+        ];
     }
 
     /**
@@ -117,15 +120,32 @@ final class Updater
             return ['ok' => false, 'err' => '建不了临时目录 data/tmp'];
         }
 
+        // 包放在 latest release 上，地址下载这一刻才取。
+        // 若这个 release 比清单里的版本旧，就别拿它覆盖（会把站点降级），改用 main 的源码包。
+        $want    = (string) ($rel['version'] ?? '');
+        $tarball = '';
+        $zipball = '';
+        $fresh   = self::releaseInfo();
+        if ($fresh !== null) {
+            $rv = self::releaseVersion($fresh);
+            if ($rv === '' || $want === '' || version_compare($rv, $want, '>=')) {
+                $tarball = (string) ($fresh['tarball_url'] ?? '');
+                $zipball = (string) ($fresh['zipball_url'] ?? '');
+            }
+        }
+        if ($tarball === '' && $zipball === '') {
+            $tarball = 'https://codeload.github.com/' . self::REPO . '/tar.gz/refs/heads/main';
+        }
+
         $src = '';
         $tgz = $tmp . '/update-' . $stamp . '.tar.gz';
-        if (($rel['tarball'] ?? '') !== '' && self::download((string) $rel['tarball'], $tgz)) {
+        if ($tarball !== '' && self::download($tarball, $tgz)) {
             $src = self::untar($tgz, $tmp . '/x-' . $stamp);
         }
 
-        if ($src === '' && ($rel['zipball'] ?? '') !== '') {
+        if ($src === '' && $zipball !== '') {
             $zip = $tmp . '/update-' . $stamp . '.zip';
-            if (self::download((string) $rel['zipball'], $zip)) {
+            if (self::download($zipball, $zip)) {
                 $src = self::unzip($zip, $tmp . '/x-' . $stamp);
             }
             @unlink($zip);

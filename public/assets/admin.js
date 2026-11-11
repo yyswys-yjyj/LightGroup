@@ -1668,7 +1668,7 @@ async function doUpdate(ver) {
 
 async function renderUpdate(box) {
   box.append(pageHead('更新检查',
-    '清单是仓库里的 api/manifest.json，从 GitHub 取；取不到会自动改用 jsDelivr。当前版本取仓库清单 api/manifest.json，读不到才回退到 .lock',
+    '有新版本就能一键升级，站点的配置、数据和上传的文件都会留着',
     [btn('检查更新', 'btn-primary', function () { go('update'); }, 'fa-rotate')]));
 
   const wrap = div('adm-update-page');
@@ -1692,12 +1692,12 @@ async function renderUpdate(box) {
   const cur = el('div', { class: 'adm-update-ver' }, [
     el('div', { class: 'adm-update-k', text: '当前版本' }),
     el('div', { class: 'adm-update-v', text: d.current || '-' }),
-    el('div', { class: 'adm-update-t', text: '仓库清单 api/manifest.json 里的版本' }),
+    el('div', { class: 'adm-update-t', text: '站上正在跑的版本' }),
   ]);
   const nv = el('div', { class: 'adm-update-ver' }, [
     el('div', { class: 'adm-update-k', text: '最新版本' }),
     el('div', { class: 'adm-update-v', text: latest ? latest.version : '—' }),
-    el('div', { class: 'adm-update-t', text: latest && latest.released_at ? '发布于 ' + latest.released_at : (d.error || '还没读到清单') }),
+    el('div', { class: 'adm-update-t', text: latest && latest.released_at ? '发布于 ' + latest.released_at : (d.error || '暂时读不到') }),
   ]);
   wrap.append(div('adm-update-hero', [cur, nv, div('adm-update-ver adm-update-state', [
     el('div', { class: 'adm-update-k', text: '状态' }),
@@ -1705,25 +1705,25 @@ async function renderUpdate(box) {
     el('div', { class: 'adm-update-t', text: d.has_update ? '可以升级了' : '不需要升级' }),
   ])]));
 
-  if (latest && latest.notes) {
-    wrap.append(card('更新说明', [el('p', { class: 'adm-update-notes', text: latest.notes })], { icon: 'fa-file-lines' }));
-  }
-
   const acts = [];
   if (d.has_update && latest) {
     acts.push(btn('立即更新到 ' + latest.version, 'btn-primary', function () { doUpdate(latest.version); }, 'fa-cloud-arrow-down'));
   }
   if (latest && latest.url) {
-    acts.push(btn('查看详情', d.has_update ? 'btn-ghost' : 'btn-primary', function () { window.open(latest.url, '_blank', 'noopener'); }, 'fa-arrow-up-right-from-square'));
+    acts.push(btn('查看更新记录', d.has_update ? 'btn-ghost' : 'btn-primary', function () { window.open(latest.url, '_blank', 'noopener'); }, 'fa-arrow-up-right-from-square'));
   }
   if (d.error) {
     acts.push(btn('重试', 'btn-ghost', function () { go('update'); }, 'fa-rotate'));
   }
-  wrap.append(card('清单地址', [
-    el('p', { class: 'adm-update-url', text: d.manifest_url || '' }),
-    el('p', { class: 'field-hint', text: d.source === 'jsdelivr' ? 'GitHub 没取到，这次用的是 jsDelivr 的镜像。' : '取自 GitHub 仓库（raw.githubusercontent.com）。' }),
-    acts.length ? div('adm-update-acts', acts) : null,
-  ], { icon: 'fa-link' }));
+
+  if (latest && latest.notes) {
+    wrap.append(card('更新说明', [
+      el('p', { class: 'adm-update-notes', text: latest.notes }),
+      acts.length ? div('adm-update-acts', acts) : null,
+    ], { icon: 'fa-file-lines' }));
+  } else if (acts.length) {
+    wrap.append(card('更新', [div('adm-update-acts', acts)], { icon: 'fa-cloud-arrow-down' }));
+  }
 
   if (d.error) {
     wrap.append(div('adm-error', [icon('fa-circle-exclamation'), el('div', { text: d.error })]));
