@@ -63,7 +63,6 @@ final class Compat {
             case "api/conversations": self::conversations($pdo, $scope); break;
             case "api/conv":          self::convGet($pdo, $scope); break;
             case "api/conv/send":     self::convSend($pdo, $scope); break;
-            case "api/scopes":        self::scopesList($pdo, $scope); break;
             case "api/friends":       self::friendsList($pdo, $scope); break;
             case "api/friends/poll":  self::friendsPoll($pdo, $scope); break;
             case "api/friends/request": self::friendRequest($pdo, $scope); break;
@@ -1302,41 +1301,6 @@ final class Compat {
         ]);
     }
 
-    /**
-     * GET api/scopes：能进的群列表。
-     * 超级管理员给全部（每个群都有成员身份，切过去就能用），普通成员只给有身份的群。
-     * 前端左上角头像菜单里的「切换群」用。
-     */
-    private static function scopesList(PDO $pdo, array $scope): void {
-        $me = self::requireMember($pdo);
-        $rows = [];
-        if (self::roleOf($pdo, $me) === "super") {
-            $rows = $pdo->query("SELECT id, slug, title FROM scopes WHERE archived = 0 ORDER BY id ASC")->fetchAll();
-        } else {
-            $aid = (int) ($me["account_id"] ?? 0);
-            if ($aid > 0) {
-                $st = $pdo->prepare(
-                    "SELECT DISTINCT s.id, s.slug, s.title FROM scopes s"
-                    . " JOIN members m ON m.scope_id = s.id"
-                    . " WHERE m.account_id = ? AND m.deleted_at IS NULL AND s.archived = 0"
-                    . " ORDER BY s.id ASC"
-                );
-                $st->execute([$aid]);
-                $rows = $st->fetchAll();
-            }
-        }
-        $out = [];
-        foreach ($rows as $r) {
-            $slug = (string) $r["slug"];
-            $out[] = [
-                "slug"    => $slug,
-                "name"    => (string) $r["title"],
-                "current" => (int) $r["id"] === (int) $scope["id"],
-                "url"     => "/g/" . ($slug !== "" ? $slug . "/" : ""),
-            ];
-        }
-        Json::ok(["scopes" => $out]);
-    }
 
     /** GET api/friends：好友 + 收到的申请 + 我发出的申请 */
     private static function friendsList(PDO $pdo, array $scope): void {

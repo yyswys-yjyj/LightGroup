@@ -406,6 +406,7 @@ export function applyThemeMode(mode) {
   else el.setAttribute('data-theme', m);
   el.setAttribute('data-theme-mode', m);      // auto 时也能从 DOM 看出在跟随系统
   syncMetaColor();
+  repaintAccent();                            // 主题色跟着深浅重算（页面底、浅底块都变）
 }
 
 // 浏览器状态栏 / 地址栏颜色跟随当前底色
@@ -459,7 +460,69 @@ function onSystemModeChange() {
   applyThemeMode('auto');
   emit('theme');
 }
-export const THEME_INDEX = (() => { const m = {}; THEMES.forEach(t => { m[t.id] = t; }); return m; })();
+// 开放平台的纯色主题一个主题给 5 个颜色：顶栏 / 侧栏底 / 侧栏字 / 悬停 / 内容区底。
+// 这里的 accent 就是顶栏色、THEMES 里的 soft 是悬停色，另外补两列：
+//   ink —— 浅底上的强调文字（选中菜单、链接、标签），比 accent 压深一档才看得清
+//   bg  —— 内容区底色，整站会跟着泛一层主色调，不再只有按钮变色
+const THEME_EXTRA = {
+  dadi: ['#7f1d1d', '#fbeceb'],
+  zhuanhong: ['#7c2d12', '#fdeee6'],
+  shuguang: ['#7c2d22', '#fcf2f0'],
+  daoxiang: ['#9a3412', '#fdefe2'],
+  nuanyangcheng: ['#7d4a06', '#fdf5e6'],
+  kafei: ['#422006', '#f6efe3'],
+  naicha: ['#6b4a2a', '#f8f3ec'],
+  xingse: ['#7a4a1f', '#fbf4ec'],
+  shechijin: ['#6b4f0a', '#fbf5e4'],
+  luori: ['#713f12', '#fdf6da'],
+  dianjihuang: ['#5b4306', '#faf7ec'],
+  mocha: ['#3f6212', '#f3f9e0'],
+  xiaocao: ['#14532d', '#e9f8ed'],
+  songlv: ['#14532d', '#edf8e4'],
+  danbohe: ['#0f5c4a', '#ecfbf5'],
+  qingbi: ['#134e4a', '#e5f7f4'],
+  yunqing: ['#155e75', '#e5f6fa'],
+  minghuanqing: ['#0e5c6b', '#f1fbfd'],
+  dailan: ['#334867', '#f7faff'],
+  tianqing: ['#0c4a6e', '#e6f1fb'],
+  wumailan: ['#3f4f5e', '#f3f7f9'],
+  hulan: ['#1e3a8a', '#e8f0fd'],
+  xuanfenglan: ['#1e3a8a', '#eff4ff'],
+  menghuanlan: ['#33407a', '#f5f8ff'],
+  beijixing: ['#22307a', '#f1f4fb'],
+  shenkongming: ['#28305a', '#f4f6fc'],
+  ziluolan: ['#4c1d95', '#f1ebfd'],
+  dingxiangzi: ['#55409b', '#f7f4ff'],
+  huopo: ['#701a75', '#fcf0fd'],
+  mengdong: ['#831843', '#fdebf5'],
+  daifen: ['#6b3b52', '#fff7fb'],
+  caixiafen: ['#9d174d', '#fff5fa'],
+  yinghuafen: ['#7a3352', '#fffafd'],
+  mitao: ['#7c3b2e', '#fffaf8'],
+  naihuang: ['#78530a', '#fffefa'],
+  bohenai: ['#14543f', '#f9fffc'],
+  yunduolan: ['#1d4f66', '#fafdff'],
+  yuni: ['#4c3a86', '#fcfbff'],
+  oufen: ['#6b4451', '#fffbfc'],
+  tongtou: ['#334155', '#f6f7f9'],
+  mibai: ['#4a453c', '#f9f6ef'],
+  yuebai: ['#455468', '#fcfdff'],
+  shiban: ['#1e293b', '#edf1f6'],
+  yanhui: ['#334155', '#eff1f4'],
+  menglonghui: ['#3d4451', '#f5f7f9'],
+  didiao: ['#18181b', '#f2f3f4'],
+  gaoyahei: ['#3a3a42', '#f6f6f8'],
+  wuye: ['#39445e', '#f4f7fb'],
+};
+
+export const THEME_INDEX = (() => {
+  const m = {};
+  THEMES.forEach((t) => {
+    const e = THEME_EXTRA[t.id] || [];
+    m[t.id] = { id: t.id, name: t.name, accent: t.accent, soft: t.soft, ink: e[0] || '', bg: e[1] || '' };
+  });
+  return m;
+})();
 
 // 主题 id => { 维度: 分组键 }，只收内建表里存在的 id
 export const TAG_INDEX = (() => {
@@ -491,33 +554,119 @@ export function contrastText(hex) {
   return l > 0.45 ? "#111827" : "#ffffff";
 }
 
-// 强调色只写这 4 个变量：底色 / 文字 / 边框一律交给模式决定，
-// 这样主题包在深色下再也不会把浅底深字盖回来（「字体颜色不跟主题」的真正原因）
-const ACCENT_VARS = ['--accent', '--accent-text', '--self-bubble', '--self-bubble-text'];
+// 强调色这一系全交给这里写：主色 / 字色 / 浅底 / 浅底文字 / 描边 / 页面底。
+// 深浅两套由 mode 决定，主题包在深色下再也不会把浅底深字盖回来。
+const ACCENT_VARS = ['--accent', '--accent-text', '--self-bubble', '--self-bubble-text',
+  '--accent-soft', '--accent-ink', '--accent-line', '--page-bg'];
 
-function paintAccent(accent, accentText) {
-  if (!accent) return;
+function hexRgb(hex) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+  if (!m) return null;
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+function rgbHex(c) {
+  return '#' + c.map(function (x) {
+    const s = Math.round(Math.max(0, Math.min(255, x))).toString(16);
+    return s.length < 2 ? '0' + s : s;
+  }).join('');
+}
+
+function lumOf(hex) {
+  const c = hexRgb(hex);
+  if (!c) return 0;
+  const lin = function (x) { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+}
+
+function contrastRatio(a, b) {
+  const x = lumOf(a) + 0.05, y = lumOf(b) + 0.05;
+  return x > y ? x / y : y / x;
+}
+
+// a 占 t，b 占 1-t
+function mixHex(a, b, t) {
+  const x = hexRgb(a), y = hexRgb(b);
+  if (!x || !y) return a;
+  return rgbHex([x[0] * t + y[0] * (1 - t), x[1] * t + y[1] * (1 - t), x[2] * t + y[2] * (1 - t)]);
+}
+
+// 把颜色往黑或白推，直到亮度贴近 target（二分，够用就行）
+function lumTo(hex, target) {
+  const l = lumOf(hex);
+  if (Math.abs(l - target) < 0.015) return hex;
+  const other = target > l ? '#ffffff' : '#000000';
+  let lo = 1, hi = 0;
+  for (let i = 0; i < 18; i += 1) {
+    const t = (lo + hi) / 2;
+    const v = lumOf(mixHex(hex, other, t));
+    if ((target > l && v < target) || (target < l && v > target)) lo = t; else hi = t;
+  }
+  return mixHex(hex, other, (lo + hi) / 2);
+}
+
+// base 是内建主题那一行（带 soft / ink / bg），主题包传 null 走现算
+function paintAccent(accent, accentText, base) {
   const el = document.documentElement;
-  const tc = accentText || contrastText(accent);
-  el.style.setProperty('--accent', accent);
+  if (!accent) { ACCENT_VARS.forEach(function (k) { el.style.removeProperty(k); }); return; }
+  const src = hexRgb(accent) ? String(accent) : '#2563eb';
+  const dark = effectiveMode() === 'dark';
+  let main, soft, ink, line, pageBg = '';
+  if (dark) {
+    // 深色底上过暗的主色要提亮一档才看得清（0.30 差不多就是原 #4f8cff）
+    main = lumTo(src, 0.30);
+    soft = mixHex(main, '#1b222b', 0.18);
+    ink = lumTo(src, 0.72);
+    line = mixHex(main, '#1b222b', 0.5);
+  } else {
+    main = src;
+    soft = (base && base.soft) ? base.soft : mixHex(src, '#ffffff', 0.13);
+    const want = (base && base.ink) ? base.ink : '';
+    // ink 只会往深里走：主色本身够暗就别再提亮，浅色主色按亮度压下去
+    ink = want && lumOf(want) < 0.40 ? want : lumTo(src, Math.min(lumOf(src) * 0.55, 0.20));
+    line = (base && base.soft) ? mixHex(src, base.soft, 0.35) : mixHex(src, '#ffffff', 0.32);
+    pageBg = (base && base.bg) ? base.bg : mixHex(src, '#ffffff', 0.07);
+  }
+  // 主题包给的字色只在对比够用时采纳，否则按主色重算（浅主题配白字就是这么看不见的）
+  const given = accentText ? String(accentText) : '';
+  const tc = given && contrastRatio(given, main) >= 3 ? given : contrastText(main);
+  el.style.setProperty('--accent', main);
   el.style.setProperty('--accent-text', tc);
-  el.style.setProperty('--self-bubble', accent);
+  el.style.setProperty('--self-bubble', main);
   el.style.setProperty('--self-bubble-text', tc);
+  el.style.setProperty('--accent-soft', soft);
+  el.style.setProperty('--accent-ink', ink);
+  el.style.setProperty('--accent-line', line);
+  if (pageBg) el.style.setProperty('--page-bg', pageBg); else el.style.removeProperty('--page-bg');
+  syncMetaColor();
+}
+
+function clearAccent() {
+  const el = document.documentElement;
+  ACCENT_VARS.forEach(function (k) { el.style.removeProperty(k); });
+}
+
+function paintById(id) {
+  if (!id) { clearAccent(); return; }
+  const t = THEME_INDEX[id];
+  if (t) { paintAccent(t.accent, '', t); return; }
+  const pack = (S.themePacks || []).find(function (x) { return x.id === id; });
+  if (!pack) { clearAccent(); return; }
+  const v = pack.vars || {};
+  // 主题包里的 bg/surface/text/border 一律忽略，只认 accent 系
+  paintAccent(v.accent || v.bubble || '', v.accentText || v.bubbleText || '', null);
+}
+
+/** 换浅/深后重画：页面底与浅底块都跟模式相关，不重画就会留上一套 */
+export function repaintAccent() {
+  paintById(resolveThemeId());
 }
 
 /** 应用强调色：传内建 id 或主题包 p_N；空串 = 跟随本群 */
 export function applyThemeChoice(id) {
-  const el = document.documentElement;
-  ACCENT_VARS.forEach(function (k) { el.style.removeProperty(k); });
   S.themeChoice = id || '';
-  if (!id) return;
-  const t = THEME_INDEX[id];
-  if (t) { paintAccent(t.accent, ''); return; }
-  const pack = (S.themePacks || []).find(function (x) { return x.id === id; });
-  if (!pack) return;
-  const v = pack.vars || {};
-  // 主题包里的 bg/surface/text/border 一律忽略，只认 accent 系
-  paintAccent(v.accent || v.bubble || '', v.accentText || v.bubbleText || '');
+  paintById(id);
 }
 
 function themeExists(id) {

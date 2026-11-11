@@ -18,7 +18,9 @@
 
 :root{
   /* ---- 底色 / 表面 ---- */
-  --bg:#f7f8fa;
+  /* 页面底：跟随主题换色（JS 写内联变量），没主题时就是这块灰白 */
+  --page-bg:#f7f8fa;
+  --bg:var(--page-bg);
   --surface:#ffffff;
   --surface-2:#f1f3f6;
   --surface-3:#e9edf3;
@@ -32,11 +34,14 @@
   /* ---- 强调色（主题包覆盖这一系） ---- */
   --accent:#2563eb;
   --accent-text:#ffffff;
+  /* 浅底上的强调文字（选中菜单 / 链接 / 标签）：不能直接用 --accent，
+     浅主题（月白、通透白）会浅到看不见，换成同色系压深的那一支 */
+  --accent-ink:#1e3a8a;
   --accent-soft:#e8efff;
   --accent-line:#c6d6f8;
   --accent-2:#7c3aed;
-  /* 圈子/个人页共用的头图底色：改主题包时两边一起变，不用各写一份渐变 */
-  --cover-grad:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 58%,var(--accent-2)));
+  /* 圈子/个人页共用的头图底色：改主题时两边一起变；只用纯色 */
+  --cover-grad:var(--accent);
   /* ---- 语义色 ---- */
   --ok:#16a34a;
   --warn:#d97706;
@@ -158,6 +163,7 @@
     --accent:var(--dk-accent);
     --accent-text:var(--dk-accent-text);
     --accent-2:var(--dk-accent-2);
+    --accent-ink:var(--dk-accent);
     --ok:var(--dk-ok);
     --warn:var(--dk-warn);
     --danger:var(--dk-danger);
@@ -209,6 +215,7 @@
   --accent:var(--dk-accent);
   --accent-text:var(--dk-accent-text);
   --accent-2:var(--dk-accent-2);
+  --accent-ink:var(--dk-accent);
   --ok:var(--dk-ok);
   --warn:var(--dk-warn);
   --danger:var(--dk-danger);
@@ -293,6 +300,9 @@ input,textarea,select{color-scheme:inherit}
 .btn:active{opacity:.86}
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn-primary{background:var(--accent);color:var(--accent-text)}
+/* 极浅主色（月白、通透白）下实心块和白底几乎糊在一起，补一圈细边兜底；
+   深色模式用 --hairline 自动换成浅边 */
+.auth-mark,.rail-mark,.conv-mark,.head-mark,.about-mark,.boot-mark,.login-logo,.btn-primary,.send-btn{border:1px solid var(--hairline)}
 .btn-primary:hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
 .btn-ghost{background:var(--surface-2);color:var(--text)}
 .btn-ghost:hover{background:color-mix(in srgb,var(--surface-2) 82%,var(--text))}
@@ -321,7 +331,7 @@ input,textarea,select{color-scheme:inherit}
 .site-foot{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12.5px;color:var(--text-dim);line-height:1.6}
 .site-foot b{font-weight:600;color:var(--text)}
 .site-foot .foot-dot{opacity:.5}
-.site-foot .foot-link{font:inherit;color:var(--accent);background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:none;appearance:none;-webkit-appearance:none;box-shadow:none;outline-offset:2px}
+.site-foot .foot-link{font:inherit;color:var(--accent-ink);background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:none;appearance:none;-webkit-appearance:none;box-shadow:none;outline-offset:2px}
 .site-foot .foot-link:hover{text-decoration:underline}
 
 /* ---- 关于弹层 ---- */
@@ -343,7 +353,7 @@ input,textarea,select{color-scheme:inherit}
 .about-proj{margin-top:16px;padding-top:14px;border-top:1px solid var(--border);font-size:13px;color:var(--text-dim);line-height:1.65}
 .about-proj p{margin:0 0 6px}
 .about-proj-name{font-size:15px;font-weight:700;color:var(--text)}
-.about-license a{color:var(--accent);text-decoration:none}
+.about-license a{color:var(--accent-ink);text-decoration:none}
 .about-license a:hover{text-decoration:underline}
 html.about-open{overflow:hidden}
 

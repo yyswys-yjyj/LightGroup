@@ -50,7 +50,7 @@ main{position:relative;z-index:1;flex:1}
 .feature{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow-sm)}
 .feature-icon{
   width:36px;height:36px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
-  background:var(--accent-soft);color:var(--accent);font-size:15px;margin-bottom:14px;
+  background:var(--accent-soft);color:var(--accent-ink);font-size:15px;margin-bottom:14px;
 }
 .feature h3{font-size:15px;font-weight:640;letter-spacing:-.01em}
 .feature p{margin-top:6px;font-size:13.5px;color:var(--text-dim);line-height:1.65}

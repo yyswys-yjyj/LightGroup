@@ -122,14 +122,95 @@ final class ThemePreset
         return $l > 0.45 ? "#111827" : "#ffffff";
     }
 
-    /** 直接可输出的 <style>：门面页面在 base.css 之后插入即可 */
+    /** @return array{int,int,int} */
+    private static function rgb(string $hex): array
+    {
+        if (!preg_match('/^#?([0-9a-fA-F]{6})$/', $hex, $m)) return [37, 99, 235];
+        $v = (int) hexdec($m[1]);
+        return [($v >> 16) & 255, ($v >> 8) & 255, $v & 255];
+    }
+
+    /** @param array{float,float,float} $c */
+    private static function hex(array $c): string
+    {
+        return sprintf(
+            '#%02x%02x%02x',
+            (int) max(0, min(255, round($c[0]))),
+            (int) max(0, min(255, round($c[1]))),
+            (int) max(0, min(255, round($c[2])))
+        );
+    }
+
+    /** 相对亮度（与 core.js 的 lumOf 同口径） */
+    public static function lum(string $hex): float
+    {
+        [$r, $g, $b] = self::rgb($hex);
+        $lin = static function (float $c): float {
+            $c /= 255;
+            return $c <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * $lin((float) $r) + 0.7152 * $lin((float) $g) + 0.0722 * $lin((float) $b);
+    }
+
+    /** a 占 $t、b 占 1-$t */
+    public static function mix(string $a, string $b, float $t): string
+    {
+        [$r1, $g1, $b1] = self::rgb($a);
+        [$r2, $g2, $b2] = self::rgb($b);
+        return self::hex([
+            $r1 * $t + $r2 * (1 - $t),
+            $g1 * $t + $g2 * (1 - $t),
+            $b1 * $t + $b2 * (1 - $t),
+        ]);
+    }
+
+    /** 往黑或白推，直到亮度贴近目标 */
+    public static function lumTo(string $hex, float $target): string
+    {
+        $l = self::lum($hex);
+        if (abs($l - $target) < 0.015) return $hex;
+        $other = $target > $l ? '#ffffff' : '#000000';
+        $lo = 1.0;
+        $hi = 0.0;
+        for ($i = 0; $i < 18; $i++) {
+            $t = ($lo + $hi) / 2;
+            $v = self::lum(self::mix($hex, $other, $t));
+            if (($target > $l && $v < $target) || ($target < $l && $v > $target)) $lo = $t;
+            else $hi = $t;
+        }
+        return self::mix($hex, $other, ($lo + $hi) / 2);
+    }
+
+    /**
+     * 直接可输出的 <style>：门面页面在 base.css 之后插入即可。
+     * 门面页不加载前端模块，所以浅色 / 深色两套都在这儿算好，
+     * 变量口径与 public/assets/js/core.js 的 paintAccent 保持一致。
+     */
     public static function style(): string
     {
-        $id = self::presetId();
-        $accent = self::accentOf($id);
+        $accent = self::accentOf(self::presetId());
         $text = self::textOn($accent);
-        $a = htmlspecialchars($accent, ENT_QUOTES, "UTF-8");
-        $t = htmlspecialchars($text, ENT_QUOTES, "UTF-8");
-        return '<style>:root{--accent:' . $a . ';--accent-text:' . $t . ';--self-bubble:' . $a . ';--self-bubble-text:' . $t . '}</style>';
+        $soft = self::mix($accent, '#ffffff', 0.13);
+        // ink 只会往深里走：主色本身够暗就别提亮，浅色主色按亮度压下去
+        $ink = self::lumTo($accent, min(self::lum($accent) * 0.55, 0.20));
+        $line = self::mix($accent, $soft, 0.35);
+        $page = self::mix($accent, '#ffffff', 0.07);
+
+        $dAccent = self::lumTo($accent, 0.30);
+        $dText = self::textOn($dAccent);
+        $dSoft = self::mix($dAccent, '#1b222b', 0.18);
+        $dInk = self::lumTo($accent, 0.72);
+        $dLine = self::mix($dAccent, '#1b222b', 0.5);
+
+        $vars = static function (string $a, string $t, string $i, string $s, string $l) : string {
+            return '--accent:' . $a . ';--accent-text:' . $t . ';--accent-ink:' . $i
+                . ';--accent-soft:' . $s . ';--accent-line:' . $l
+                . ';--self-bubble:' . $a . ';--self-bubble-text:' . $t;
+        };
+        $light = $vars($accent, $text, $ink, $soft, $line) . ';--page-bg:' . $page;
+        $dark = $vars($dAccent, $dText, $dInk, $dSoft, $dLine);
+        return '<style>:root{' . $light . '}'
+            . '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){' . $dark . '}}'
+            . ':root[data-theme="dark"]{' . $dark . '}</style>';
     }
 }

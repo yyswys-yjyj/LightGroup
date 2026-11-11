@@ -29,7 +29,7 @@
   display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:9px 10px;
   border-radius:8px;cursor:pointer;text-align:left}
 .sp-nav:hover{background:var(--chip-bg)}
-.sp-nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.sp-nav.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
 .sp-nav i{width:16px;text-align:center;flex:none;font-size:13px}
 .sp-nav span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sp-side-label{padding:4px 10px 0;font-size:11.5px;color:var(--text-faint)}
@@ -40,10 +40,10 @@
   font:inherit;font-size:13.5px;padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;
   flex:none;position:relative;border-bottom:2px solid transparent;border-radius:0}
 .sp-tab:hover{color:var(--text)}
-.sp-tab.on{color:var(--accent);font-weight:600;border-bottom-color:var(--accent)}
+.sp-tab.on{color:var(--accent-ink);font-weight:600;border-bottom-color:var(--accent)}
 .sp-tab .req-badge{margin-left:2px}
 
-.sp-filter{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--accent);
+.sp-filter{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--accent-ink);
   background:var(--accent-soft);border-radius:8px;padding:7px 12px;margin:12px 0 0}
 .sp-filter .sp-gap{flex:1}
 
@@ -82,7 +82,7 @@
 .sp-name b{font-weight:600}
 .sp-badge{font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;
   background:var(--chip-bg);color:var(--chip-text);font-weight:600}
-.sp-badge.admin{background:var(--accent-soft);color:var(--accent)}
+.sp-badge.admin{background:var(--accent-soft);color:var(--accent-ink)}
 .sp-badge.super{background:var(--warn-soft);color:var(--warn)}
 .sp-badge.ai{background:var(--chip-bg);color:var(--text-dim)}
 .sp-time{font-size:11.5px;color:var(--text-faint);margin-top:3px}
@@ -91,7 +91,7 @@
 .sp-more-btn:hover{background:var(--chip-bg);color:var(--text)}
 
 .sp-text{margin-top:8px;font-size:14.5px;line-height:1.75;color:var(--text);white-space:pre-wrap;word-break:break-word}
-.sp-tag{color:var(--accent);cursor:pointer}
+.sp-tag{color:var(--accent-ink);cursor:pointer}
 .sp-tag:hover{text-decoration:underline}
 
 .sp-imgs{display:grid;gap:5px;margin-top:10px;max-width:520px}

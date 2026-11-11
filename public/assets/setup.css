@@ -69,7 +69,7 @@ body.page-setup::before{
 .steps li.done>span::before{
   content:'\f00c';font-family:'Font Awesome 6 Free';font-weight:900;font-size:11px;
 }
-.steps li.on>b{color:var(--accent);font-weight:600}
+.steps li.on>b{color:var(--accent-ink);font-weight:600}
 .steps li.done>b{color:var(--text-dim)}
 
 /* ---- 面板 ---- */
@@ -145,7 +145,7 @@ body.page-setup::before{
   display:flex;align-items:center;gap:7px;
   padding:0 8px;margin-left:-4px;font-weight:650;font-size:13.5px;color:var(--text);
 }
-.grp>legend i{color:var(--accent);font-size:12px}
+.grp>legend i{color:var(--accent-ink);font-size:12px}
 .grp .lead{margin:2px 0 4px;font-size:12.5px}
 .grp>.fld:last-child{margin-bottom:2px}
 
@@ -166,7 +166,7 @@ body.page-setup::before{
   border-color:var(--accent);
   box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent);
 }
-.radio-card.on strong i{color:var(--accent)}
+.radio-card.on strong i{color:var(--accent-ink)}
 .radio-card.on::after{
   content:'\f00c';font-family:'Font Awesome 6 Free';font-weight:900;
   position:absolute;top:11px;right:12px;font-size:10px;
@@ -225,7 +225,7 @@ body.page-setup::before{
   display:flex;align-items:center;gap:8px;
   font-size:13.5px;font-weight:650;color:var(--text);
 }
-.oauth-head i{color:var(--accent)}
+.oauth-head i{color:var(--accent-ink)}
 .oauth-box>.lead{margin-top:5px}
 
 /* ---- 回调地址：站长要抄到提供方后台的那段 ---- */

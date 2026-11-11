@@ -149,27 +149,6 @@ function refreshRailState() {
   }
 }
 
-// 超级管理员在每个群都有身份，但网页一次只认一个群，这里给他一个入口换过去。
-// 普通成员只会看到自己有身份的那几个群。
-async function switchScope() {
-  let j;
-  try { j = await api('api/scopes'); } catch (e) { toast('群列表加载失败'); return; }
-  const list = (j && j.scopes) || [];
-  const box = h('div', 'scope-switch');
-  if (!list.length) box.appendChild(h('div', 'empty-hint', '没有能切换的群'));
-  list.forEach(function (it) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'scope-row' + (it.current ? ' is-on' : '');
-    b.appendChild(icon(it.current ? 'fa-circle-check' : 'fa-circle'));
-    b.appendChild(h('span', 'scope-name', it.name));
-    b.appendChild(h('span', 'scope-slug', it.slug || '/'));
-    if (it.current) b.disabled = true;
-    else b.addEventListener('click', function () { location.href = it.url; });
-    box.appendChild(b);
-  });
-  openSheet('切换群', box, { size: 'md' });
-}
 
 function openRailMenu(anchor) {
   const old = document.querySelector('.rail-menu');
@@ -177,7 +156,6 @@ function openRailMenu(anchor) {
   const menu = h('div', 'rail-menu');
   const items = [
     ['我的资料', 'fa-user', function () { go('#/me'); }],
-    ['切换群', 'fa-shuffle', function () { switchScope(); }],
     ['气泡与外观', 'fa-paintbrush', function () { go('#/appearance'); }]
   ];
   // 管理后台只对管理员开：普通成员和 AI 不该看到这个入口

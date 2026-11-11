@@ -51,7 +51,7 @@
 
 .login-foot{margin:16px 0 0;text-align:center;font-size:12.5px;color:var(--text-faint)}
 .login-foot a{color:var(--text-dim)}
-.login-foot a:hover{color:var(--accent)}
+.login-foot a:hover{color:var(--accent-ink)}
 .login-dot{margin:0 7px;opacity:.5}
 
 .page-login .site-foot{position:relative;z-index:1;margin:0;padding:0 18px 26px;justify-content:center;gap:8px}
@@ -68,10 +68,10 @@
 /* 登录页滑块验证 */
 .captcha{margin:2px 0 2px}
 .captcha-tip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);margin-bottom:8px}
-.captcha-tip i{color:var(--accent)}
+.captcha-tip i{color:var(--accent-ink)}
 .captcha-track{position:relative;height:44px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;touch-action:none;user-select:none}
 .captcha-hole{position:absolute;top:6px;left:70%;width:32px;height:32px;margin-left:-16px;border-radius:8px;background:color-mix(in srgb, var(--accent) 14%, transparent);border:1px dashed color-mix(in srgb, var(--accent) 55%, transparent)}
-.captcha-knob{position:absolute;top:0;left:0;width:44px;height:42px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-radius:9px;box-shadow:var(--shadow-sm);color:var(--accent);cursor:grab;transition:background .15s}
+.captcha-knob{position:absolute;top:0;left:0;width:44px;height:42px;display:flex;align-items:center;justify-content:center;background:var(--surface);border-radius:9px;box-shadow:var(--shadow-sm);color:var(--accent-ink);cursor:grab;transition:background .15s}
 .captcha-knob:active{cursor:grabbing}
 .captcha.done .captcha-knob{background:var(--ok);color:var(--surface)}
 .captcha.done .captcha-track{border-color:var(--ok)}
