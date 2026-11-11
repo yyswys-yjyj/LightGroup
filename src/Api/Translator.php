@@ -30,12 +30,21 @@ final class Translator {
         $lastErr = '';
         for ($attempt = 0; $attempt < 2; $attempt++) {
             $s = self::session($attempt === 1);
-            if ($s === null) { $lastErr = '拿不到翻译凭据'; continue; }
+            if ($s === null) continue;
             $r = self::call($s, $text, $to);
             if ($r['ok']) return $r['data'];
             $lastErr = $r['err'];
         }
-        throw new \RuntimeException($lastErr !== '' ? $lastErr : '翻译服务暂时不可用');
+        // Bing 页面改版、限流、机房网络都可能让上面这条路不通，
+        // 兜底换成 Google 的公开端点，用户那边不该因为一边挂了就翻不了。
+        try {
+            return self::google($text, $to);
+        } catch (\RuntimeException $e) {
+            $lastErr = $e->getMessage();
+        }
+        // 两条路都不通才留一行记录，方便下次在 error log 里看是哪边挂了
+        error_log('[translate] 全部通道失败：' . $lastErr);
+        throw new \RuntimeException($lastErr !== '' ? $lastErr : '翻译服务暂时不可用，稍后再试');
     }
 
     private static function session(bool $force = false): ?array {
@@ -120,5 +129,44 @@ final class Translator {
             'from' => (string) ($j[0]['detectedLanguage']['language'] ?? ''),
             'to'   => (string) ($j[0]['translations'][0]['to'] ?? $to),
         ]];
+    }
+
+    /**
+     * 兜底通道：Google 那个不需要 key 的公开端点，返回的是一个嵌套数组，
+     * 每个分句的译文在第一列，拼起来就是整段。
+     */
+    private static function google(string $text, string $to): array {
+        $tl = self::googleLang($to);
+        $url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t'
+             . '&tl=' . rawurlencode($tl) . '&q=' . rawurlencode($text);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_USERAGENT => 'Mozilla/5.0', CURLOPT_FOLLOWLOCATION => true,
+        ]);
+        $out = (string) curl_exec($ch);
+        $err = curl_error($ch);
+        if ($err !== '') throw new \RuntimeException('翻译服务连不上，稍后再试');
+
+        $j = json_decode($out, true);
+        if (!is_array($j) || !isset($j[0]) || !is_array($j[0])) throw new \RuntimeException('翻译服务暂时不可用，稍后再试');
+        $buf = '';
+        foreach ($j[0] as $seg) {
+            if (is_array($seg) && isset($seg[0])) $buf .= (string) $seg[0];
+        }
+        if ($buf === '') throw new \RuntimeException('翻译服务暂时不可用，稍后再试');
+
+        return ['text' => $buf, 'from' => (string) ($j[2] ?? ''), 'to' => $tl];
+    }
+
+    /** 目标语言写法统一：界面传的是 zh-Hans 这种，Google 要 zh-CN */
+    private static function googleLang(string $to): string {
+        $map = [
+            'zh-hans' => 'zh-CN', 'zh-hant' => 'zh-TW', 'zh' => 'zh-CN',
+            'en' => 'en', 'ja' => 'ja', 'ko' => 'ko', 'fr' => 'fr',
+            'de' => 'de', 'ru' => 'ru', 'es' => 'es', 'pt' => 'pt', 'it' => 'it',
+        ];
+        $k = strtolower($to);
+        return $map[$k] ?? $to;
     }
 }

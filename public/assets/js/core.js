@@ -76,7 +76,10 @@ export function iconBtn(ic, title, fn) {
 export function btn(text, cls, fn) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = cls || 'btn';
+  // 调用方只传了 btn-primary / btn-sm 这类修饰类时也要带上基类，
+  // 否则按钮拿到的是浏览器默认样式（凸起的那一套）
+  const c = String(cls || '').trim();
+  b.className = c === '' ? 'btn' : (/(^|\s)btn(\s|$)/.test(c) ? c : 'btn ' + c);
   b.textContent = text;
   if (fn) b.addEventListener('click', fn);
   return b;

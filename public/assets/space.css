@@ -2,7 +2,7 @@
 
 /* ---------- 页面骨架 ---------- */
 .sp-page{width:100%;box-sizing:border-box;padding:0 0 44px;background:var(--bg)}
-.sp-inner{width:100%;max-width:680px;margin:0 auto;padding:0 16px 8px;box-sizing:border-box}
+.sp-inner{width:100%;max-width:none;margin:0 auto;padding:0 clamp(16px,2.4vw,32px) 8px;box-sizing:border-box}
 
 /* ---------- 封面 + 资料行 ---------- */
 .sp-cover-wrap{position:relative;margin:14px 0 12px}
@@ -17,7 +17,23 @@
 .sp-profile-acts{flex:none}
 .sp-profile-acts .btn i{margin-right:2px}
 
-/* ---------- 页签（常显） ---------- */
+/* ---------- 中间栏：空间导航（桌面用这个，手机上才用页签） ---------- */
+.sp-side{display:flex;flex-direction:column;gap:14px;padding:14px 12px 18px}
+.sp-side-head{padding:2px 8px 0}
+.sp-side-head b{display:block;font-size:15px;color:var(--text)}
+.sp-side-head span{display:block;margin-top:3px;font-size:12px;color:var(--text-faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-navs{display:flex;flex-direction:column;gap:2px}
+.sp-nav{appearance:none;border:0;background:transparent;color:var(--text);font:inherit;font-size:13.5px;
+  display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:9px 10px;
+  border-radius:8px;cursor:pointer;text-align:left}
+.sp-nav:hover{background:var(--chip-bg)}
+.sp-nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.sp-nav i{width:16px;text-align:center;flex:none;font-size:13px}
+.sp-nav span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-side-label{padding:4px 10px 0;font-size:11.5px;color:var(--text-faint)}
+
+/* ---------- 页签（只有手机上显示） ---------- */
 .sp-tabs{display:flex;gap:2px;margin:14px 0 0;overflow-x:auto;border-bottom:1px solid var(--border)}
 .sp-tab{appearance:none;border:0;background:transparent;color:var(--text-dim);
   font:inherit;font-size:13.5px;padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;
@@ -126,6 +142,10 @@
 .sp-note-from{font-size:11.5px;color:var(--text-faint);flex:1}
 .sp-notice-bar{display:flex;justify-content:flex-end;margin-bottom:10px}
 .sp-list .sp-note + .sp-note{margin-top:10px}
+
+@media (min-width:861px){
+  .sp-tabs{display:none}
+}
 
 @media (max-width:860px){
   .sp-inner{padding:0 10px 8px}

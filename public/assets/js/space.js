@@ -25,6 +25,7 @@ function emitUnread() {
 }
 
 let hostEl = null;
+let sideEl = null;
 
 export function renderSpace(host) {
   hostEl = host;
@@ -50,9 +51,10 @@ export function renderSpace(host) {
   else paintFeed(box);
 }
 
-/** 旧的侧栏导航：空间页已经不占中间那一栏了，留着给需要的时候用 */
+/** 中间那一栏：空间自己的导航（广场 / 我的动态 / 通知 + 标签） */
 export function renderSideList(host) {
   if (!host) return;
+  sideEl = host;
   host.textContent = '';
   host.dataset.pane = 'space';
   const side = h('div', 'sp-side');
@@ -110,6 +112,8 @@ export function renderSideList(host) {
 /** 只重画业务区，别碰别的东西 */
 function repaint() {
   if (hostEl) renderSpace(hostEl);
+  // 中间的导航是同一份状态，选中态和红点要跟着一起变
+  if (sideEl && sideEl.isConnected) renderSideList(sideEl);
 }
 
 /** 顶上的封面 + 头像 + 发动态入口，朋友圈那一路 */
