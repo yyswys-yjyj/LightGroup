@@ -52,6 +52,11 @@ final class Json {
      * MCP 要跟网页聊天用同一套逻辑（认证、校验、落库、互通），靠的就是这个：
      * 同一个函数原样跑，只是不往响应里写，而是把结果交回给调用方。
      */
+    /** 当前是不是在 capture 里跑（MCP 用），决定失败要不要带扩展字段 */
+    public static function capturing(): bool {
+        return self::$capturing;
+    }
+
     public static function capture(callable $fn): array {
         $prev = self::$capturing;
         self::$capturing = true;

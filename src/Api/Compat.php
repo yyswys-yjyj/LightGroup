@@ -125,6 +125,10 @@ final class Compat {
         if ((int) ($m["scope_id"] ?? 0) === (int) $scope["id"]) return;
         $mine = self::scopeById($pdo, (int) ($m["scope_id"] ?? 0));
         $mineSlug = $mine === null ? "" : (string) ($mine["slug"] ?? "");
+        // MCP 是 capture 模式，那边没有页面可跳，回一条干净的失败即可
+        if (Json::capturing()) {
+            Json::fail("当前身份属于「" . (string) ($mine["title"] ?? "别的群") . "」，这里是「" . (string) ($scope["title"] ?? "") . "」");
+        }
         Json::out([
             "ok" => false,
             "err" => "当前身份属于「" . (string) ($mine["title"] ?? "别的群") . "」，这里是「" . (string) ($scope["title"] ?? "") . "」",
