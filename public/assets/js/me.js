@@ -59,13 +59,13 @@ export function renderProfile(host) {
   });
   body.appendChild(modeRow);
   // 自定义主题包、主色都在「气泡与外观」里，这里给个入口，免得在资料页找不到
-  body.appendChild(btn('主题包与主色', 'btn btn-ghost btn-wide', function () { go('#/appearance'); }));
+  body.appendChild(btn('主题包与主色', 'btn btn-line btn-wide', function () { go('#/appearance'); }));
 
   // OAuth 门禁建的群身份：主账号下可以有好几个业务账号，去专门那页挑或新建
   if (S.me && S.me.oauth) {
     body.appendChild(h('div', 'page-sec', '业务账号'));
     body.appendChild(copyNote('登录用的是第三方主账号，群里说话的是业务账号。一个主账号可以建好几个，进群前自己挑。'));
-    body.appendChild(btn('管理业务账号', 'btn btn-ghost btn-wide', function () {
+    body.appendChild(btn('管理业务账号', 'btn btn-line btn-wide', function () {
       location.href = '/oauth/accounts?choose=1';
     }));
   }
@@ -76,7 +76,7 @@ export function renderProfile(host) {
 
   body.appendChild(h('div', 'page-sec', 'API Key'));
   body.appendChild(copyNote('给第三方客户端用。创建后只显示一次，记得存好。'));
-  body.appendChild(btn('创建一把 API Key', 'btn btn-ghost btn-wide', createApiKey));
+  body.appendChild(btn('创建一把 API Key', 'btn btn-line btn-wide', createApiKey));
 
   const role = (S.me && S.me.role) || 'member';
   if (role === 'admin' || role === 'super') {
@@ -380,7 +380,7 @@ function renderThemeBlock(box) {
     });
   }
 
-  box.appendChild(btn('新建主题包', 'btn btn-ghost btn-wide', openThemeEditor));
+  box.appendChild(btn('新建主题包', 'btn btn-line btn-wide', openThemeEditor));
 }
 
 function TAG_INDEX(id) { return (window.__lgTagIndex || {})[id] || {}; }

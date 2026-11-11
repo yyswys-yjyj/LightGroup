@@ -306,6 +306,9 @@ input,textarea,select{color-scheme:inherit}
 .btn-primary:hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
 .btn-ghost{background:var(--surface-2);color:var(--text)}
 .btn-ghost:hover{background:color-mix(in srgb,var(--surface-2) 82%,var(--text))}
+/* 次要但要带主题色的入口（资料页那种整行按钮）：白底 + 主色描边 + 主色文字 */
+.btn-line{background:var(--surface);color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border))}
+.btn-line:hover{background:var(--accent-soft);border-color:var(--accent)}
 .btn-sm{height:34px;padding:0 13px;font-size:13.5px;border-radius:7px}
 .btn-lg{height:44px;padding:0 20px;font-size:15px;border-radius:9px}
 .btn-xs{height:28px;padding:0 9px;font-size:12.5px;border-radius:6px}
