@@ -201,6 +201,17 @@ final class Compat {
         if ($m === null) Json::fail("登录已失效，请重新进群");
         if (!empty($m["deleted_at"])) Json::fail("账号已注销");
         if ((int) $m["banned"] === 1) Json::fail("该账号已被封禁");
+
+        // 同一个主账号在这个群里也有身份时换过去：超管、被拉进多个群的账号都属这类。
+        // 不换的话，在主群登录后打开别的群只会看到「这里不是你的群」。
+        if ($token === "" && self::$ctxScope !== null) {
+            $alt = self::memberOfScope($pdo, $m, self::$ctxScope);
+            if ($alt !== null) {
+                Session::useMember($alt);
+                $m = $alt;
+            }
+        }
+
         self::assertScope($pdo, $m);
         return $m;
     }
@@ -210,6 +221,22 @@ final class Compat {
         $st->execute([$key]);
         $row = $st->fetch();
         return $row ? (string) $row["v"] : $default;
+    }
+
+    /**
+     * 这个主账号在本群的身份；已经在群里或没有主账号时返回 null。
+     * 只按 account_id 找，AI / 邀请码成员没有主账号，天然不会被切走。
+     */
+    private static function memberOfScope(PDO $pdo, array $m, array $scope): ?array {
+        $aid = (int) ($m["account_id"] ?? 0);
+        if ($aid <= 0) return null;
+        if ((int) ($m["scope_id"] ?? 0) === (int) $scope["id"]) return null;
+        $st = $pdo->prepare(
+            "SELECT * FROM members WHERE scope_id = ? AND account_id = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1"
+        );
+        $st->execute([(int) $scope["id"], $aid]);
+        $alt = $st->fetch();
+        return $alt ?: null;
     }
 
     /**

@@ -59,6 +59,19 @@ final class Session {
         if ($aid > 0) $_SESSION["aid"] = $aid;
     }
 
+    /**
+     * 同一个主账号在另一个群里也有身份时，切到那个身份。
+     * 只动 mid/sid，不 regenerate session id：同一浏览器的多个标签页会并发请求，
+     * 换 id 会让另一个标签带着旧 id 过来、把会话顶掉。
+     */
+    public static function useMember(array $member): void {
+        if (session_status() !== PHP_SESSION_ACTIVE) return;
+        $_SESSION["mid"] = (int) $member["id"];
+        $_SESSION["sid"] = (int) $member["scope_id"];
+        $aid = (int) ($member["account_id"] ?? 0);
+        if ($aid > 0) $_SESSION["aid"] = $aid;
+    }
+
     public static function logout(): void {
         if (session_status() !== PHP_SESSION_ACTIVE) return;
         $_SESSION = [];
