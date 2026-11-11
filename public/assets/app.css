@@ -240,7 +240,10 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .voice-box{display:flex;align-items:center;gap:9px;min-width:160px}
 .voice-play{width:28px;height:28px;border-radius:50%;border:0;background:var(--bubble-btn);color:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none}
 .row:not(.me) .voice-play{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
-.voice-bar{flex:1;height:3px;border-radius:2px;background:currentColor;opacity:.35;min-width:56px}
+.voice-bar{position:relative;flex:1;height:16px;min-width:56px;cursor:pointer;touch-action:none}
+.voice-bar::before{content:"";position:absolute;left:0;right:0;top:50%;height:3px;margin-top:-1.5px;border-radius:2px;background:currentColor;opacity:.3}
+.voice-fill{position:absolute;left:0;top:50%;height:3px;margin-top:-1.5px;width:0;border-radius:2px;background:currentColor;opacity:.9}
+.voice-box.loading .voice-play{opacity:.72;cursor:default}
 .voice-dur{font-size:12px;opacity:.85;flex:none}
 .sheet{position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:24px;z-index:70}
 .sheet-card{background:var(--sheet-bg);color:var(--text);border:1px solid var(--border);border-radius:16px;width:100%;max-width:460px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}

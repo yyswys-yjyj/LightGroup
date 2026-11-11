@@ -12,6 +12,13 @@ final class Translator {
     private const CACHE = '/cache/bing.json';
     private const TTL = 420; // 7 分钟，比 Bing 的 token 有效期短一点
 
+    /**
+     * 依次尝试的入口。cn.bing.com 在海外机房会被 302 到 www.bing.com，
+     * 不跟随就会拿到一个空 body，正则匹配不到 IG / token —— 以前报的
+     * 「凭据获取失败」就是这个。两个都试，解析成功后记住落地域名。
+     */
+    private const HOSTS = ['https://www.bing.com', 'https://cn.bing.com'];
+
     private static ?array $mem = null;
 
     /** 返回 ['text' => 译文, 'from' => 识别语言, 'to' => 目标语言] */
@@ -38,45 +45,58 @@ final class Translator {
             if (is_file($file)) {
                 $j = json_decode((string) @file_get_contents($file), true);
                 if (is_array($j) && isset($j['at'], $j['ig'], $j['key'], $j['token'], $j['cookie'])) {
+                    if (!isset($j['base'])) $j['base'] = 'https://cn.bing.com';
                     if ((time() - (int) $j['at']) < self::TTL) { self::$mem = $j; return $j; }
                 }
             }
         }
 
         $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-        $jar = tempnam(sys_get_temp_dir(), 'lgbing');
-        if ($jar === false) return null;
-        $ch = curl_init('https://cn.bing.com/translator');
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_USERAGENT => $ua, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
-        ]);
-        $html = (string) curl_exec($ch);
 
-        $ig = $key = $token = '';
-        if (preg_match('/IG:"([A-Fa-f0-9]+)"/', $html, $m)) $ig = $m[1];
-        if (preg_match('/params_AbusePreventionHelper\s*=\s*\[(\d+),"([^"]+)",(\d+)\]/', $html, $m)) { $key = $m[1]; $token = $m[2]; }
+        foreach (self::HOSTS as $host) {
+            $jar = tempnam(sys_get_temp_dir(), 'lgbing');
+            if ($jar === false) return null;
+            $ch = curl_init($host . '/translator');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_CONNECTTIMEOUT => 8,
+                CURLOPT_USERAGENT => $ua, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+                CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 4,
+            ]);
+            $html = (string) curl_exec($ch);
+            // 落地域名可能和入口不同（cn.bing.com -> www.bing.com），cookie 只对它有效
+            $landed = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            $base = $host;
+            if (preg_match('#^(https?://[^/]+)#', $landed, $hm)) $base = $hm[1];
 
-        $cookies = [];
-        foreach (file($jar, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            if ($line === '' || $line[0] === '#') continue;
-            $p = explode("\t", $line);
-            if (count($p) >= 7) $cookies[] = $p[5] . '=' . $p[6];
+            $ig = $key = $token = '';
+            if (preg_match('/IG:"([A-Fa-f0-9]+)"/', $html, $m)) $ig = $m[1];
+            if (preg_match('/params_AbusePreventionHelper\s*=\s*\[(\d+),"([^"]+)",(\d+)\]/', $html, $m)) { $key = $m[1]; $token = $m[2]; }
+
+            $cookies = [];
+            foreach (file($jar, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+                if ($line === '' || $line[0] === '#') continue;
+                $p = explode("\t", $line);
+                if (count($p) >= 7) $cookies[] = $p[5] . '=' . $p[6];
+            }
+            @unlink($jar);
+
+            if ($ig === '' || $key === '' || $token === '') continue;
+
+            $s = ['at' => time(), 'ig' => $ig, 'key' => $key, 'token' => $token, 'cookie' => implode('; ', $cookies), 'ua' => $ua, 'base' => $base];
+            self::$mem = $s;
+            $dir = APP_ROOT . '/data/cache';
+            if (!is_dir($dir)) @mkdir($dir, 0775, true);
+            @file_put_contents($dir . '/bing.json', json_encode($s));
+            return $s;
         }
-        @unlink($jar);
 
-        if ($ig === '' || $key === '' || $token === '') return null;
-
-        $s = ['at' => time(), 'ig' => $ig, 'key' => $key, 'token' => $token, 'cookie' => implode('; ', $cookies), 'ua' => $ua];
-        self::$mem = $s;
-        $dir = APP_ROOT . '/data/cache';
-        if (!is_dir($dir)) @mkdir($dir, 0775, true);
-        @file_put_contents($dir . '/bing.json', json_encode($s));
-        return $s;
+        return null;
     }
 
     private static function call(array $s, string $text, string $to): array {
-        $url = 'https://cn.bing.com/ttranslatev3?isVertical=1&IG=' . rawurlencode($s['ig']) . '&IID=translator.5023.1';
+        // 用拿凭据时落地的域名，cookie 只在那个域下有效
+        $base = (string) ($s['base'] ?? 'https://cn.bing.com');
+        $url = $base . '/ttranslatev3?isVertical=1&IG=' . rawurlencode($s['ig']) . '&IID=translator.5023.1';
         $body = http_build_query(['fromLang' => 'auto-detect', 'to' => $to, 'text' => $text, 'token' => $s['token'], 'key' => $s['key']]);
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -84,7 +104,7 @@ final class Translator {
             CURLOPT_USERAGENT => $s['ua'],
             CURLOPT_COOKIE => $s['cookie'],
             CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Referer: https://cn.bing.com/translator', 'Origin: https://cn.bing.com'],
+            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Referer: ' . $base . '/translator', 'Origin: ' . $base],
         ]);
         $out = (string) curl_exec($ch);
         $err = curl_error($ch);

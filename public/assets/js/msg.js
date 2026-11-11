@@ -143,6 +143,7 @@ export function msgNode(m, prev) {
 }
 
 // 语音：原生播放器在不同主题下太丑，自己画一个胶囊
+// 进度条可以点、可以拖；真正开始出声之前按钮转圈，转圈期间点不动。
 function voiceNode(m) {
   const box = h('div', 'voice-box');
   const au = document.createElement('audio');
@@ -152,26 +153,119 @@ function voiceNode(m) {
   play.type = 'button';
   play.className = 'voice-play';
   play.title = '播放';
-  play.appendChild(icon('fa-play'));
-  const setIcon = function (name) {
+  const setIcon = function (name, spin) {
     play.textContent = '';
-    play.appendChild(icon(name));
+    const i = icon(name);
+    if (spin) i.classList.add('fa-spin');
+    play.appendChild(i);
   };
+  setIcon('fa-play');
+
+  const bar = h('div', 'voice-bar');
+  const fill = h('span', 'voice-fill');
+  bar.appendChild(fill);
+  const dur = h('span', 'voice-dur', (m.dur ? m.dur + '"' : '语音'));
+
+  let loading = false;
+  let dragging = false;
+  let pending = -1; // 还没拿到时长时先记住要跳的比例
+
+  const paint = function (ratio) {
+    let r = ratio;
+    if (typeof r !== 'number') {
+      const d = au.duration || 0;
+      r = d > 0 ? Math.min(1, (au.currentTime || 0) / d) : 0;
+    }
+    fill.style.width = (Math.max(0, Math.min(1, r)) * 100) + '%';
+  };
+  const setLoading = function (on) {
+    if (loading === on) return;
+    loading = on;
+    box.classList.toggle('loading', on);
+    if (on) {
+      setIcon('fa-spinner', true);
+      play.disabled = true;
+      play.title = '正在加载';
+    } else {
+      play.disabled = false;
+      play.title = '播放';
+      setIcon(au.paused ? 'fa-play' : 'fa-pause');
+    }
+  };
+  const ratioAt = function (clientX) {
+    const r = bar.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - r.left) / (r.width || 1)));
+  };
+  const seekTo = function (ratio) {
+    if (au.duration) {
+      au.currentTime = ratio * au.duration;
+      paint(ratio);
+    } else {
+      pending = ratio;
+      paint(ratio);
+    }
+  };
+
   play.addEventListener('click', function () {
+    if (loading) return;
     if (au.paused) {
+      if (au.readyState < 3) setLoading(true);
+      else setIcon('fa-pause');
       const p = au.play();
-      if (p && p.catch) p.catch(function () { toast('这条语音放不了'); });
-      setIcon('fa-pause');
+      if (p && p.then) {
+        p.then(function () { setLoading(false); setIcon('fa-pause'); })
+          .catch(function () { setLoading(false); toast('这条语音放不了'); });
+      } else {
+        setIcon('fa-pause');
+      }
     } else {
       au.pause();
-      setIcon('fa-play');
     }
   });
-  au.addEventListener('ended', function () { setIcon('fa-play'); });
-  au.addEventListener('pause', function () { setIcon('fa-play'); });
+
+  au.addEventListener('loadedmetadata', function () {
+    if (pending >= 0) { const r = pending; pending = -1; seekTo(r); }
+    setLoading(false);
+    paint();
+  });
+  au.addEventListener('canplay', function () { setLoading(false); });
+  au.addEventListener('playing', function () { setLoading(false); setIcon('fa-pause'); });
+  au.addEventListener('waiting', function () { setLoading(true); });
+  au.addEventListener('timeupdate', function () { if (!dragging) paint(); });
+  au.addEventListener('pause', function () { if (!loading) setIcon('fa-play'); });
+  au.addEventListener('ended', function () { setIcon('fa-play'); paint(0); });
+
+  bar.addEventListener('pointerdown', function (e) {
+    dragging = true;
+    try { bar.setPointerCapture(e.pointerId); } catch (_) {}
+    const r = ratioAt(e.clientX);
+    if (!au.duration) {
+      setLoading(true);
+      if (au.readyState === 0) au.load();
+      pending = r;
+      paint(r);
+    } else {
+      paint(r);
+    }
+    e.preventDefault();
+  });
+  bar.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    paint(ratioAt(e.clientX));
+  });
+  const endDrag = function (e) {
+    if (!dragging) return;
+    dragging = false;
+    seekTo(ratioAt(e.clientX));
+  };
+  bar.addEventListener('pointerup', endDrag);
+  bar.addEventListener('pointercancel', endDrag);
+
+  au.hidden = true;
+  box.appendChild(au);
   box.appendChild(play);
-  box.appendChild(h('span', 'voice-bar'));
-  box.appendChild(h('span', 'voice-dur', (m.dur ? m.dur + '"' : '语音')));
+  box.appendChild(bar);
+  box.appendChild(dur);
   return box;
 }
 
