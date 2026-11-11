@@ -273,6 +273,8 @@ function subtitle(p, m) {
   const mm = p || m || {};
   if (mm.kind === 'ai') return mm.owner ? 'AI · ' + mm.owner + ' 的' : 'AI 成员';
   const bits = [roleText(mm)];
+  if (mm.scope === 'cluster') bits.push('别的群');
+  else if (mm.scope === 'other') bits.push('不在同一圈子');
   if (mm.joined) bits.push('加入于 ' + fmtDay(mm.joined));
   return bits.join(' · ');
 }
@@ -396,6 +398,14 @@ function cardActions(box, data, p) {
   const uid = uidOfMember(d);
   const isMe = !!(p && p.isMe) || !!(S.me && keyOf(S.me.id) === uid);
   const st = (p && p.friends) || (HOST && HOST.friendState ? HOST.friendState(uid) : 'none');
+  // 圈子互通时能点到别的群的成员：加好友、私聊都只在本群内成立，这里只留一句说明
+  const cross = p && p.scope && p.scope !== 'same';
+  if (!isMe && cross) {
+    box.appendChild(h('span', 'pf-cross', p.scope === 'cluster'
+      ? '不在这个群，只能看看资料'
+      : '不在同一个圈子，加不了好友'));
+    return;
+  }
   if (isMe) {
     box.appendChild(btn('编辑简介', 'btn btn-sm btn-ghost', function () {
       openBioEditor((p && p.bio) || (S.me && S.me.bio) || '', function () {
@@ -596,7 +606,7 @@ function paintMissingUser(uid) {
   head.appendChild(h('div', 'pf-page-title', '用户资料'));
   page.appendChild(head);
   const card = h('div', 'pf-card');
-  card.appendChild(h('div', 'pf-pop-empty', '没有找到这个成员，可能已经注销或被移出群'));
+  card.appendChild(h('div', 'pf-pop-empty', '没有找到这个成员：可能不在当前的群，也可能已经注销了'));
   page.appendChild(card);
 }
 

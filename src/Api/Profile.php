@@ -75,17 +75,49 @@ final class Profile {
         Json::ok(["profile" => self::out($pdo, $m), "me" => self::meOut($pdo, $scope, $m)]);
     }
 
-    /** 单个成员资料：必须同 scope，注销的不给看 */
+    /**
+     * 单个成员资料。本群的正常给；圈子互通时消息流里会出现别的群的成员，
+     * 那种头像还能点开看一眼，但加好友、私聊只在本群内成立，所以带一个 scope 标记，
+     * 前端据此把按钮换掉。注销的不给看。
+     */
     private static function show(PDO $pdo, array $scope, string $raw): void {
         $me = self::requireMember($pdo);
         $id = self::parseMid($raw);
         $target = $id > 0 ? Social::scopeMember($pdo, $scope, $id) : null;
-        if ($target === null) Json::fail("成员不存在");
+
+        if ($target === null) {
+            // deleted_at 老数据是 NULL、新数据写 0，两种都要认
+            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND (deleted_at IS NULL OR deleted_at = 0) LIMIT 1");
+            $st->execute([$id]);
+            $other = $id > 0 ? $st->fetch() : null;
+            if (!$other) Json::fail("成员不存在");
+            $out = self::out($pdo, $other);
+            $out["isMe"] = false;
+            $out["friends"] = "none";
+            $out["scope"] = self::sameCluster($pdo, $scope, (int) $other["scope_id"]) ? "cluster" : "other";
+            Json::ok(["profile" => $out]);
+            return;
+        }
 
         $out = self::out($pdo, $target);
         $out["isMe"] = (int) $target["id"] === (int) $me["id"];
         $out["friends"] = self::friendState($pdo, (int) $me["id"], (int) $target["id"]);
+        $out["scope"] = "same";
         Json::ok(["profile" => $out]);
+    }
+
+    /** 两个人所在的群是不是在同一个互通圈子里 */
+    private static function sameCluster(PDO $pdo, array $scope, int $otherScope): bool {
+        if ($otherScope <= 0) return false;
+        if ($otherScope === (int) $scope["id"]) return true;
+        $st = $pdo->prepare("SELECT cluster_id FROM scopes WHERE id IN (?, ?)");
+        $st->execute([(int) $scope["id"], $otherScope]);
+        $ids = [];
+        foreach ($st->fetchAll() as $r) {
+            if ($r["cluster_id"] === null) return false;
+            $ids[] = (int) $r["cluster_id"];
+        }
+        return count($ids) === 2 && $ids[0] === $ids[1];
     }
 
     /** none / outgoing / incoming / friend / me */
