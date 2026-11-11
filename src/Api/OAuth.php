@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Store\Db;
 use PDO;
+use RuntimeException;
 
 /**
  * OAuth2 / OpenID Connect 登录。
@@ -406,7 +407,7 @@ final class OAuth {
                         return;
                     }
                     if ($act === "create") {
-                        $m = self::createMember($pdo, $acct, (string) ($_POST["name"] ?? ""));
+                        $m = self::createMember($pdo, $acct, (string) ($_POST["name"] ?? ""), (string) ($_POST["invite"] ?? ""));
                         Session::login($pdo, $m);
                         self::land($pdo, $acct, $m);
                         return;
@@ -463,11 +464,17 @@ final class OAuth {
         return $m;
     }
 
-    /** 新建业务账号：先过站点/群人数配额，再过「每个主账号能建几个」 */
-    private static function createMember(PDO $pdo, array $acct, string $name): array {
+    /**
+     * 新建业务账号：先过群邀请码，再过站点/群人数配额，最后是「每个主账号能建几个」。
+     * 邀请码决定进哪个群 —— 门禁下这是唯一的分群入口，不校验就等于所有主账号都能
+     * 自己造号进主群，几个群完全隔不开。
+     */
+    private static function createMember(PDO $pdo, array $acct, string $name, string $invite): array {
         $name = trim(preg_replace('/\s+/u', " ", $name) ?? "");
+        $invite = trim($invite);
         if ($name === "") throw new RuntimeException("先给这个业务账号起个名字。");
         if (mb_strlen($name) > 24) throw new RuntimeException("名字最多 24 个字。");
+        if ($invite === "") throw new RuntimeException("要填群邀请码才能加入，邀请码由那个群的管理员给你。");
 
         $limit = (int) self::setting($pdo, "quota.account_per_oauth", "0");
         if ($limit > 0) {
@@ -478,8 +485,10 @@ final class OAuth {
             }
         }
 
-        $scope = self::defaultScope($pdo);
-        if ($scope === null) throw new RuntimeException("站点还没有建群，先让管理员建一个群再来。");
+        $st = $pdo->prepare("SELECT * FROM scopes WHERE invite = ? AND archived = 0 LIMIT 1");
+        $st->execute([$invite]);
+        $scope = $st->fetch();
+        if (!$scope) throw new RuntimeException("邀请码不对，或者那个群已经关了。");
         self::assertQuota($pdo, $scope);
 
         $ts = lg_now();
@@ -534,7 +543,8 @@ final class OAuth {
             : '<form class="row" method="post" action="' . $h(self::ACCOUNTS_PATH) . '">'
                 . '<input type="hidden" name="csrf" value="' . $h(self::csrf()) . '">'
                 . '<input type="hidden" name="act" value="create">'
-                . '<div class="who"><input name="name" maxlength="24" placeholder="新业务账号的名字（群里显示这个）" autocomplete="off"></div>'
+                . '<div class="who"><input name="name" maxlength="24" placeholder="新业务账号的名字（群里显示这个）" autocomplete="off">'
+                . '<input name="invite" maxlength="32" placeholder="群邀请码" autocomplete="off"></div>'
                 . '<button type="submit">新建并进群</button></form>';
 
         $errHtml = $err !== "" ? '<p class="err">' . $h($err) . '</p>' : "";

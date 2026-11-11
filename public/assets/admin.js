@@ -112,7 +112,7 @@ function modal(title, body, foot) {
     foot ? div('adm-modal-foot', foot) : null,
   ]);
   mask = div('adm-mask', [box]);
-  mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+  // 点遮罩不关：表单里手一抖就丢内容，只认右上角 × 和 ESC
   document.addEventListener('keydown', onKey);
   document.body.append(mask);
   return { close: close, box: box };
@@ -541,7 +541,7 @@ async function renderScopes(box) {
   }));
 
   box.append(card('说明', [div('hint', [
-    el('p', { text: '主群（slug 为空）是安装时创建的默认群，地址就是 /g/。其它群地址形如 /g/<slug>/。' }),
+    el('p', { text: '主群是安装时创建的默认群，地址就是 /g/。其它群都有自己的路径，地址形如 /g/群路径/，建群时留空会自动生成。' }),
     el('p', { text: '归档后群从列表里隐藏，数据保留；成员的登录与消息不会丢。' }),
   ])], { icon: 'fa-circle-info' }));
 }
@@ -550,7 +550,10 @@ function newScopeDialog() {
   const f = el('form', { class: 'adm-form' }, [
     div('form-grid', [
       field('群名', textInput('title', '', '例如：夜航船')),
-      field('Slug（可空）', textInput('slug', '', '例如：night')),
+      field('群路径（可留空）', textInput('slug', '', '例如：night'),
+        '群路径就是网址里的那一段：填 night，群地址就是 /g/night/。留空会自动生成。'),
+      field('邀请码（可留空）', textInput('invite', '', '4-32 位字母数字'),
+        '成员进这个群要用的码。留空会自动生成，建完能在列表里看到，也可以随时改。'),
       div('span2', [field('简介', textInput('intro', '', '一句话介绍'))]),
       field('人类上限', textInput('human_cap', '0', '0 表示不限', 'number')),
       field('AI 上限', textInput('ai_cap', '0', '0 表示不限', 'number')),
@@ -563,6 +566,7 @@ function newScopeDialog() {
         await api('scopes', {
           title: formValue(f, 'title'),
           slug: formValue(f, 'slug'),
+          invite: formValue(f, 'invite'),
           intro: formValue(f, 'intro'),
           human_cap: formValue(f, 'human_cap') || '0',
           ai_cap: formValue(f, 'ai_cap') || '0',
@@ -752,8 +756,8 @@ async function renderAccounts(box) {
   const opts = { gate: gate, providers: providers, defProvider: defProvider };
   box.innerHTML = '';
   box.append(pageHead('管理员账号', gate
-    ? '账号存在 accounts 表；门禁开着，新增管理员时要一并填 OAuth 归属（提供方 + sub）'
-    : '账号存在 accounts 表；每个账号在群里有一条成员身份，登录后显示对应 badge', [
+    ? '一个主账号在群里有一个身份。门禁开着，新增管理员要一起填他的 OAuth 身份。'
+    : '一个主账号在群里有一个身份；如果开了门禁，一个主账号可以有几个群身份。', [
     btn('新增管理员', 'btn-primary', function () { accountDialog(null, opts); }, 'fa-user-plus'),
   ]));
 
@@ -949,7 +953,7 @@ async function renderOAuth(box) {
     discovered.innerHTML = '';
     const iss = issuerInput.value.trim();
     if (!iss) {
-      status.append(el('div', { class: 'discover-err', text: '请先填 Basic URL，例如 https://accounts.google.com' }));
+      status.append(el('div', { class: 'discover-err', text: '先填上面的提供方地址，例如 https://accounts.google.com' }));
       return;
     }
     status.append(div('discover-busy', [icon('fa-spinner', 'fa-spin'), el('span', { text: '正在请求 ' + iss.replace(/\/+$/, '') + '/.well-known/openid-configuration …' })]));
@@ -993,7 +997,7 @@ async function renderOAuth(box) {
       field('提供方标识', fProvider, '小写字母、数字、- 和 _，例如 google'),
       field('Scope', fScope, '通常 openid profile email'),
       field('Client ID', fClient, '提供方后台登记的应用 ID'),
-      field('Client Secret', fSecret, '只写不读；留空表示沿用已保存的值'),
+      field('Client Secret', fSecret, '留空就沿用已经存的那个'),
     ]),
     div('hint', [
       el('p', { text: '保存后可在登录页点「第三方登录」测试；回调地址就是上面那张卡里的地址。' }),
@@ -1066,7 +1070,7 @@ async function renderCaptcha(box) {
 
   // 内建滑块不需要钥匙，选它就收起第三方字段
   const idField = field('Site Key', siteKey, '前端渲染 widget 用，是公开的');
-  const keyField = field('Secret Key', secret, '只写不读；留空表示沿用已保存的值');
+  const keyField = field('Secret Key', secret, '留空就沿用已经存的那个');
   const third = div('form-grid', [
     idField,
     keyField,

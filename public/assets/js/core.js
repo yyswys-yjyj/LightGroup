@@ -582,7 +582,7 @@ export function closeSheet() {
 /**
  * 打开一个弹层。
  * opts.onBeforeClose：返回 false 就拦下这次关闭（编辑器用来防手滑）。
- * 点遮罩、右上角 ×、ESC 走同一条关闭路径。
+ * 右上角 ×、ESC 走同一条关闭路径；点遮罩不关，免得误触丢输入。
  */
 export function openSheet(title, body, opts) {
   closeSheet();
@@ -616,7 +616,7 @@ export function openSheet(title, body, opts) {
   }
 
   x.addEventListener('click', tryClose);
-  mask.addEventListener('click', function (e) { if (e.target === mask) tryClose(); });
+  // 点遮罩不关：弹层里常有输入框，鼠标偏一下就把内容丢了；只认右上角 × 和 ESC
   document.addEventListener('keydown', onKey);
   mask.__lgCleanup = function () { document.removeEventListener('keydown', onKey); };
   document.body.appendChild(mask);

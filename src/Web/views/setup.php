@@ -219,7 +219,7 @@ $lgCallback = rtrim(\LightGroup\Api\OAuth::origin(), "/") . \LightGroup\Api\OAut
       </div>
       <div class="oauth-box" id="oauth-box" hidden>
         <p class="oauth-head"><i class="fa-solid fa-key" aria-hidden="true"></i> OAuth2 提供方</p>
-        <p class="lead">门禁开着的时候这些是必填项。Client Secret 会存进站点数据库的 settings 表，别的地方不要再用同一份。</p>
+        <p class="lead">门禁开着的时候这些是必填项。Client Secret 只留在这台服务器上，别的地方不要再填同一份。</p>
         <div class="cb-box">
           <span class="cb-label">回调地址（Redirect URI）—— 要填到提供方后台</span>
           <div class="cb-row">
@@ -308,7 +308,7 @@ $lgCallback = rtrim(\LightGroup\Api\OAuth::origin(), "/") . \LightGroup\Api\OAut
         <button type="button" class="btn btn-ghost btn-sm" data-copy-btn="done-token"><i class="fa-regular fa-copy" aria-hidden="true"></i> 复制</button>
       </div>
     </div>
-    <p class="lead">把群地址填进 Operit 插件的 base 参数，再填邀请码就能进群。管理员用 token 调接口。</p>
+    <p class="lead">把群地址填进 Operit 插件的 base 参数，再填邀请码就能进群；下面这串是管理员 token，给对外的工具用。</p>
     <div class="panel-acts"><a id="done-app" class="btn btn-primary btn-lg" href="<?= e(\LightGroup\Web\Url::to("/app")) ?>"><i class="fa-solid fa-comments" aria-hidden="true"></i> 进入群聊</a><a id="done-admin" class="btn btn-ghost btn-lg" href="<?= e(\LightGroup\Web\Url::to("/admin")) ?>">管理后台</a></div>
   </section>
 

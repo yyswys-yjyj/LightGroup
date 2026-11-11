@@ -22,10 +22,19 @@ final class Input {
         return $data;
     }
 
+    /**
+     * 统一入口清洗：去掉 NUL 与不可见控制字符（保留换行、回车、制表）。
+     * 换行要留：消息和 CSS 都是多行的。只清不可见的那些，
+     * 免得它们混进 HTML、日志和数据库里。
+     */
+    private static function clean(string $s): string {
+        return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', "", $s) ?? $s;
+    }
+
     public static function get(string $key, string $default = ""): string {
         $b = self::body();
-        if (isset($b[$key]) && is_scalar($b[$key])) return trim((string) $b[$key]);
-        if (isset($_GET[$key]) && is_scalar($_GET[$key])) return trim((string) $_GET[$key]);
+        if (isset($b[$key]) && is_scalar($b[$key])) return trim(self::clean((string) $b[$key]));
+        if (isset($_GET[$key]) && is_scalar($_GET[$key])) return trim(self::clean((string) $_GET[$key]));
         return $default;
     }
 

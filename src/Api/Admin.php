@@ -143,12 +143,20 @@ final class Admin {
             $invite = trim((string) self::in("invite", ""));
             if ($title === "") Json::fail("群名不能为空");
             if ($slug !== "" && !preg_match('/^[a-z0-9][a-z0-9_-]{0,31}$/', $slug)) Json::fail("群路径只能用字母数字和 - _");
+            if ($slug === "") {
+                // 主群地址是 /g/，其它群都得有自己的一段路径；空着就自动生成，
+                // 不能空着插入 —— 那会撞上「slug 必须唯一」的索引，报成「已被占用」。
+                $slug = self::autoSlug($pdo);
+            }
+            if ($invite !== "" && !preg_match('/^[A-Za-z0-9_-]{4,32}$/', $invite)) {
+                Json::fail("邀请码只能用字母数字和 - _（4-32 位）");
+            }
             if ($invite === "") $invite = self::randCode();
             try {
                 $st = $pdo->prepare("INSERT INTO scopes (slug, title, intro, invite, cluster_id, human_cap, ai_cap, archived, recall_policy, created_at) VALUES (?, ?, '', ?, NULL, 0, 0, 0, '5m', ?)");
                 $st->execute([$slug, $title, $invite, lg_now()]);
             } catch (\Throwable $e) {
-                Json::fail("群路径或邀请码已被占用");
+                Json::fail("群路径或邀请码已被占用，换一个试试");
             }
             $newId = (int) $pdo->lastInsertId();
             self::ensureSuperMember($pdo, $newId);
@@ -253,6 +261,21 @@ final class Admin {
 
     private static function randCode(): string {
         return "iv" . bin2hex(random_bytes(4));
+    }
+
+    /** 群路径留空时自动生成：短、全小写、避开容易看错的字符，撞了就再抽一次 */
+    private static function autoSlug(PDO $pdo): string {
+        $abc = "abcdefghjkmnpqrstuvwxyz23456789";
+        $max = strlen($abc) - 1;
+        for ($try = 0; $try < 20; $try++) {
+            $s = "";
+            for ($i = 0; $i < 6; $i++) $s .= $abc[random_int(0, $max)];
+            $st = $pdo->prepare("SELECT 1 FROM scopes WHERE slug = ? LIMIT 1");
+            $st->execute([$s]);
+            if (!$st->fetchColumn()) return $s;
+        }
+        // 连着撞 20 次基本不可能，真撞上了也别让用户看到「已被占用」
+        return "g" . bin2hex(random_bytes(5));
     }
 
     /**

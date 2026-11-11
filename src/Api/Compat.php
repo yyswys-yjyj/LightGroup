@@ -128,10 +128,14 @@ final class Compat {
         return $row ? (string) $row["name"] : "";
     }
 
-    /** 每人一个稳定的头像底色，按主键取模，跟站长的 color 字段对齐 */
+    /**
+     * 每人一个稳定的头像底色，按主键取模。
+     * 必须和 Profile::COLORS、前端 avatar.js 的 HUES 完全一致：三处各写一套的话，
+     * 聊天里的头像和点开资料页的头像会是两种颜色。
+     */
     private const COLORS = [
-        "#6b7280", "#f76d6d", "#6d9df7", "#f7b76d", "#b06df7",
-        "#6df7d1", "#f76dc1", "#a0d468", "#e2b93b", "#7f8c8d",
+        "#2563eb", "#7c3aed", "#db2777", "#ea580c", "#ca8a04",
+        "#16a34a", "#0891b2", "#475569", "#9f1239", "#4d7c0f",
     ];
 
     private static function colorOf(int $id): string {
@@ -1102,7 +1106,7 @@ final class Compat {
             $out[] = [
                 "id"     => (string) $mem["id"],
                 "name"   => (string) $mem["name"],
-                "color"  => (string) $mem["color"],
+                "color"  => self::colorOf((int) $mem["id"]),
                 "avatar" => (string) $mem["avatar"],
                 "at"     => (int) $it["at"],
             ];
