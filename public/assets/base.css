@@ -346,3 +346,9 @@ input,textarea,select{color-scheme:inherit}
 .about-license a{color:var(--accent);text-decoration:none}
 .about-license a:hover{text-decoration:underline}
 html.about-open{overflow:hidden}
+
+/* 首屏加载占位：图标必须在这里定尺寸，图片没尺寸时会按原图铺满整页 */
+.boot{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--text-dim);font-size:14px;margin:0}
+.boot-mark{width:46px;height:46px;border-radius:14px;background:var(--accent);color:var(--accent-text);display:inline-flex;align-items:center;justify-content:center;font-size:19px;overflow:hidden;animation:boot-pulse 1.4s ease-in-out infinite}
+.boot-mark img{width:100%;height:100%;object-fit:cover;display:block}
+@keyframes boot-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.9);opacity:.7}}

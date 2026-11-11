@@ -1,8 +1,3 @@
-/* ---------- 首屏加载 ---------- */
-.boot{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--text-dim);font-size:14px;margin:0}
-.boot-mark{width:46px;height:46px;border-radius:14px;background:var(--accent);color:var(--accent-text);display:inline-flex;align-items:center;justify-content:center;font-size:19px;animation:boot-pulse 1.4s ease-in-out infinite}
-@keyframes boot-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.9);opacity:.7}}
-
 /* LightGroup · 聊天界面 */
 .page-app{height:100dvh;overflow:hidden}
 #app{height:100dvh}
