@@ -1685,7 +1685,7 @@ final class Compat {
         if (str_starts_with($img, "[img]")) $img = substr($img, 5);
 
         if ($text === "" && $img === "" && $voice === "" && !$card) Json::fail("不能发空消息");
-        if (mb_strlen($text) > 500) Json::fail("单条消息不要超过 500 字，长的分几条发");
+        if (mb_strlen($text) > 10000) Json::fail("单条消息最多 10000 字，再长请分开几条发");
         if ($dur < 0) $dur = 0;
         if ($dur > 600) $dur = 600;
 
@@ -2313,7 +2313,7 @@ final class Compat {
             "scope"    => $scope["title"],
             "features" => ["reply", "recall", "styles", "profile", "upload", "wait", "doc", "translate", "apikey"],
             "limits"   => [
-                "text"      => 500,
+                "text"      => 10000,
                 "upload"    => 5200000,
                 "wait_max"  => 25,
                 "read_max"  => 200,

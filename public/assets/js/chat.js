@@ -440,6 +440,10 @@ async function sendText() {
   if (!ta) return;
   const text = ta.value.trim();
   if (!text) return;
+  if (text.length > 10000) {
+    toast('单条消息最多 10000 字，再长请分开几条发');
+    return;
+  }
   ta.value = '';
   ta.style.height = 'auto';
   const payload = { text: text };
