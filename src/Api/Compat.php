@@ -39,6 +39,11 @@ final class Compat {
      */
     public static function dispatch(PDO $pdo, array $scope, string $path): void {
         self::$ctxScope = $scope;
+        // 长消息全文：签名链接，不要求登录，AI 客户端拿到就能直接取纯文本
+        if (str_starts_with($path, "api/txt/")) {
+            self::serveLongText($pdo, substr($path, 8));
+            return;
+        }
         switch ($path) {
             case "join":      self::join($pdo, $scope); break;
             case "api/link":  self::link($pdo, $scope); break;
@@ -858,6 +863,69 @@ final class Compat {
         return $ids ?: [(int) $scope["id"]];
     }
 
+    /** 长消息在 API 里只给开头一段，剩下的用签名链接让对方自己取 */
+    private const TXT_LINK_AT = 500;
+    private const TXT_PREVIEW = 200;
+
+    private static function textKey(): string {
+        $lock = lg_lock();
+        $s = (string) ($lock["secret"] ?? "");
+        if ($s !== "") return $s;
+        $cfg = lg_config();
+        return "lg-txt:" . (string) ($cfg["db_path"] ?? ($cfg["db"]["path"] ?? "default"));
+    }
+
+    private static function longTextUrl(int $msgId): string {
+        $sig = substr(hash_hmac("sha256", "txt|" . $msgId, self::textKey()), 0, 20);
+        return self::absUrl("/g/api/txt/" . $msgId . "-" . $sig . ".txt");
+    }
+
+    /** 超过阈值的消息：text/md 只留开头，附上全文链接；本尊见 serveLongText */
+    private static function briefForClient(array $msgs): array {
+        foreach ($msgs as $i => $m) {
+            $text = (string) ($m["text"] ?? "");
+            $len  = mb_strlen($text);
+            if ($len <= self::TXT_LINK_AT) continue;
+            $url  = self::longTextUrl((int) $m["id"]);
+            $head = mb_substr($text, 0, self::TXT_PREVIEW);
+            $cut  = "\n…\n[全文](" . $url . ")（共 " . $len . " 字，链接里是纯文本）";
+            $msgs[$i]["text"] = $head . $cut;
+            if (isset($msgs[$i]["md"])) $msgs[$i]["md"] = $head . $cut;
+            $msgs[$i]["text_url"] = $url;
+            $msgs[$i]["text_len"] = $len;
+            $msgs[$i]["text_cut"] = 1;
+        }
+        return $msgs;
+    }
+
+    /** GET api/txt/<id>-<sig>.txt：签名对得上就给纯文本，过期/篡改一律 404 */
+    private static function serveLongText(PDO $pdo, string $name): void {
+        if (!preg_match('~^(\d+)-([a-f0-9]{20})\.txt$~', trim($name, "/"), $m)) {
+            http_response_code(400);
+            header("Content-Type: text/plain; charset=utf-8");
+            echo "链接不完整";
+            exit;
+        }
+        $id  = (int) $m[1];
+        $sig = substr(hash_hmac("sha256", "txt|" . $id, self::textKey()), 0, 20);
+        if (!hash_equals($sig, $m[2])) {
+            http_response_code(404);
+            header("Content-Type: text/plain; charset=utf-8");
+            echo "链接无效";
+            exit;
+        }
+        $st = $pdo->prepare("SELECT m.text, m.deleted_at FROM messages m WHERE m.id = ? LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        header("Content-Type: text/plain; charset=utf-8");
+        header("X-Robots-Tag: noindex");
+        header("Cache-Control: private, max-age=0, must-revalidate");
+        if (!$row) { http_response_code(404); echo "消息不存在"; exit; }
+        if (!empty($row["deleted_at"])) { http_response_code(410); echo "这条消息已被撤回"; exit; }
+        echo (string) $row["text"];
+        exit;
+    }
+
     private static function read(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
@@ -867,7 +935,7 @@ final class Compat {
         // 可选 conv：不传就是老的 scope 语义（含集群互通）
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
-        $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId);
+        $msgs = self::briefForClient(self::fetchSince($pdo, $scope, $since, $limit, $convId));
         Json::ok([
             "msgs"   => $msgs,
             "recalled" => Conv::recalledIds(
@@ -1808,7 +1876,7 @@ final class Compat {
         $lastId = $since;
         try {
             while (true) {
-                $msgs = self::fetchSince($pdo, $scope, $lastId, 100);
+                $msgs = self::briefForClient(self::fetchSince($pdo, $scope, $lastId, 100));
                 if ($msgs) {
                     Json::ok(["msgs" => $msgs, "lastId" => (int) $msgs[count($msgs) - 1]["id"]]);
                     return;

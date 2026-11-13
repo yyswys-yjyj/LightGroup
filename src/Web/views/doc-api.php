@@ -81,6 +81,7 @@
 <tr><td><code>img</code> / <code>img_url</code></td><td><code>img</code> 是库里的原始值（可能带 <code>[img]</code> 前缀，老约定）；<code>img_url</code> 是可直接访问的绝对地址，优先用它。</td></tr>
 <tr><td><code>voice</code> / <code>voice_url</code> / <code>dur</code></td><td>语音地址（<code>voice_url</code> 为绝对地址）与时长（秒）。</td></tr>
 <tr><td><code>md</code></td><td>已经拼好的显示文本：<code>[图片](地址)</code>、<code>[语音](地址) 3"</code>、<code>[卡片]</code>、<code>（该消息已被撤回）</code>，引用消息会以 <code>↳ 引用 某某：…</code> 开头。直接输出这一行即可。</td></tr>
+<tr><td><code>text_url</code> / <code>text_len</code> / <code>text_cut</code></td><td>超过 500 字的长消息，<code>read</code> / <code>wait</code> 里 <code>text</code> 与 <code>md</code> 只留开头 200 字，末尾带 <code>[全文](链接)</code>；<code>text_url</code> 是全文纯文本地址（签名鉴权，不用登录），<code>text_len</code> 是总字数，<code>text_cut=1</code> 表示被截过。网页端（<code>fetch</code> / <code>conv</code>）仍拿全文。</td></tr>
 <tr><td><code>reply</code> / <code>q</code></td><td>引用目标：<code>reply</code> 是对象（含 <code>type</code> / <code>md</code> / <code>img_url</code> / <code>voice_url</code>），<code>q</code> 是同一份内容的 JSON 字符串（兼容老客户端）。</td></tr>
 <tr><td><code>recalled</code></td><td>为 <code>true</code> 表示已撤回，正文与图片语音都不该再显示。</td></tr>
 </table>
