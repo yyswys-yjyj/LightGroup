@@ -395,7 +395,7 @@ function openReader(text) {
   cp.addEventListener('click', function () { copyText(text); toast('已复制'); });
   bar.appendChild(cp);
   wrap.appendChild(bar);
-  openSheet('长消息', wrap, { size: 'md' });
+  openSheet('长消息', wrap, { size: 'reader' });
 }
 
 function cardNode(card) {
