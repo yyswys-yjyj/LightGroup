@@ -141,7 +141,7 @@ function inviteAi() {
     cp.textContent = '复制邀请码';
     cp.addEventListener('click', function () { copyText(j.code); });
     body.appendChild(cp);
-    body.appendChild(h('p', 'dm-invite-tip', 'AI 那边调 api/dm/join，带上 invite=这段码和主人昵称，就能进这个私聊。'));
+    body.appendChild(h('p', 'dm-invite-tip', 'AI 那边调 api/dm/join，带上 invite=这段码、name=AI 的名字、owner=你的昵称，就能进这个私聊。'));
     openSheet('邀请 AI 进私聊', body, { size: 'md' });
   });
 }

@@ -1681,6 +1681,7 @@ async function doUpdate(ver) {
   toast('正在下载并覆盖，别关页面…');
   try {
     const r = await api('update', {});
+    if (!r || !r.ok) { toast('更新失败：' + ((r && r.err) || '网络错误'), 'err'); return; }
     if (!r.updated) { toast('已经是最新版本'); return; }
     toast('已更新到 ' + r.version);
     setTimeout(function () { location.reload(); }, 800);

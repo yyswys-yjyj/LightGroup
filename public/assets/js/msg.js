@@ -122,28 +122,10 @@ export function msgNode(m, prev) {
     // text_auto：服务端给老客户端补的媒体行，网页已经有图/语音气泡了，剔掉再渲染
     const shown = displayText(m);
     if (shown) {
-      // 长文折成消息盒子：一条几千字的消息会把整个会话顶掉，先露个头
+      // 长文渲染成消息卡片：气泡里只露个摘要，点开在弹层里读全文
       if (shown.length > LONG_TEXT) {
-        const p = h('div', 'txt msg-box');
-        const cut = h('span', 'msg-box-cut', shown.slice(0, LONG_TEXT) + '…');
-        const full = h('span', 'msg-box-full');
-        paintText(full, shown);
-        full.style.display = 'none';
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'msg-box-toggle';
-        const label = '展开全文（共 ' + shown.length + ' 字）';
-        toggle.textContent = label;
-        toggle.addEventListener('click', function () {
-          const opened = full.style.display !== 'none';
-          full.style.display = opened ? 'none' : '';
-          cut.style.display = opened ? '' : 'none';
-          toggle.textContent = opened ? label : '收起';
-        });
-        p.appendChild(cut);
-        p.appendChild(full);
-        p.appendChild(toggle);
-        bub.appendChild(p);
+        bub.classList.add('bub-long');
+        bub.appendChild(longCard(shown));
       } else {
         const p = h('div', 'txt');
         paintText(p, shown);
@@ -333,8 +315,9 @@ function voiceNode(m) {
     spin.classList.add('fa-spin');
     tx.insertBefore(spin, tx.firstChild);
     api('api/voice/text', { conv: S.curId, msg: m.id }).then(function (r) {
-      const text = (r && r.text) ? String(r.text) : '';
-      if (!text) throw new Error('没听清，再说一遍试试');
+      if (!r || !r.ok) throw new Error((r && r.err) || '转写失败了');
+      const text = r.text ? String(r.text) : '';
+      if (!text) throw new Error('接口没返回文字');
       showText(text);
     }).catch(function (e) {
       toast((e && e.message) || '转写失败了');
@@ -364,6 +347,55 @@ export function paintText(el, text) {
     last = mt.index + mt[0].length;
   }
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
+
+/**
+ * 长消息卡片：几百字的消息会把会话顶掉半屏，卡片里只放几行摘要，
+ * 想看整段点「查看全文」，在弹层里读完还能一键复制。
+ */
+function longCard(text) {
+  const card = h('div', 'msg-card');
+  const head = h('div', 'msg-card-head');
+  head.appendChild(icon('fa-file-lines'));
+  head.appendChild(h('span', 'msg-card-title', '长消息'));
+  head.appendChild(h('span', 'msg-card-count', '共 ' + text.length + ' 字'));
+  card.appendChild(head);
+
+  const body = h('div', 'msg-card-body');
+  body.textContent = text.slice(0, 160);
+  card.appendChild(body);
+
+  const foot = h('div', 'msg-card-foot');
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'msg-card-open';
+  open.textContent = '查看全文';
+  open.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    openReader(text);
+  });
+  foot.appendChild(open);
+  card.appendChild(foot);
+
+  card.addEventListener('click', function () { openReader(text); });
+  return card;
+}
+
+/** 全文阅读弹层：内容可以很长，弹层里滚动，底部给一个复制 */
+function openReader(text) {
+  const wrap = h('div', 'msg-reader-wrap');
+  const box = h('div', 'msg-reader');
+  paintText(box, text);
+  wrap.appendChild(box);
+  const bar = h('div', 'msg-reader-bar');
+  const cp = document.createElement('button');
+  cp.type = 'button';
+  cp.className = 'btn';
+  cp.textContent = '复制全文';
+  cp.addEventListener('click', function () { copyText(text); toast('已复制'); });
+  bar.appendChild(cp);
+  wrap.appendChild(bar);
+  openSheet('长消息', wrap, { size: 'md' });
 }
 
 function cardNode(card) {
