@@ -120,6 +120,12 @@
   max-width: 640px;
   margin: 0 auto;
   padding: 14px 14px 40px;
+  /* 这一层自己就是滚动容器：page-host 是 overflow:hidden，
+     资料页比一屏长的时候不在这里滚就整段被裁掉，滚不到底 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* 窄屏纵向堆叠：身份卡在上，简介在下 */

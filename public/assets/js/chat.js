@@ -11,6 +11,9 @@ import { openProfileCard } from './people.js';
 let feedEl = null;
 let mountedId = null;
 let timer = 0;
+// 往上翻历史：首屏只拿最新一页，滚到顶再要更早的
+let olderLoading = false;
+let hasOlder = true;
 
 export function isPublicConv() {
   return !S.cur || S.curId === 0 || S.cur.isPublic || S.cur.kind === 'group';
@@ -27,6 +30,37 @@ export function refreshSub() {
 function isNearBottom() {
   if (!feedEl) return true;
   return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 180;
+}
+
+function onFeedScroll() {
+  if (feedEl && feedEl.scrollTop < 120) loadOlder();
+}
+
+// 滚到顶：拿更早的一页塞到前面，并把视口按原来的相对位置挪回去
+async function loadOlder() {
+  if (olderLoading || !hasOlder || !feedEl) return;
+  if (!S.msgs.length) return;
+  const oldest = S.msgs[0].id;
+  if (!oldest) return;
+  olderLoading = true;
+  const beforeHeight = feedEl.scrollHeight;
+  const beforeTop = feedEl.scrollTop;
+  let j = null;
+  try {
+    j = S.mode === 'legacy'
+      ? await api('fetch?before=' + oldest + '&limit=50')
+      : await api('api/conv?id=' + S.curId + '&before=' + oldest + '&limit=50');
+  } catch (e) {
+    j = null;
+  }
+  olderLoading = false;
+  if (!j || !j.ok) return;
+  const older = (j.msgs || []).filter(function (m) { return !S.msgs.some(function (x) { return x.id === m.id; }); });
+  if (!older.length) { hasOlder = false; return; }
+  S.msgs = older.concat(S.msgs);
+  hasOlder = !!j.more;
+  renderFeed();
+  if (feedEl) feedEl.scrollTop = feedEl.scrollHeight - beforeHeight + beforeTop;
 }
 function scrollBottom(smooth) {
   if (!feedEl) return;
@@ -51,6 +85,8 @@ export function mount(id) {
     S.lastId = 0;
     S.reply = null;
     S.mode = (S.convApi || cid !== 0) ? 'conv' : 'legacy';
+    hasOlder = true;
+    olderLoading = false;
   }
   S.page = 'chat';
   build();
@@ -86,6 +122,7 @@ function build() {
   page.appendChild(bars);
   feedEl = h('div', 'feed');
   feedEl.id = 'feed';
+  feedEl.addEventListener('scroll', onFeedScroll, { passive: true });
   page.appendChild(feedEl);
   page.appendChild(buildComposer());
   host.appendChild(page);
@@ -246,6 +283,7 @@ function apply(j) {
   if (j.todos) S.todos = j.todos;
   S.msgs = [];
   S.lastId = 0;
+  hasOlder = !!j.more;
   if (j.msgs && j.msgs.length) {
     j.msgs.forEach(function (m) { if (!S.msgs.some(function (x) { return x.id === m.id; })) S.msgs.push(m); });
     S.lastId = j.lastId || j.msgs[j.msgs.length - 1].id;

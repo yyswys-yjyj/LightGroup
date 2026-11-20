@@ -498,6 +498,24 @@ function backFromUser() {
 
 let hostWaits = 0;
 
+// 资料页自己是滚动容器（见 profile.css 的 .pf-page）。
+// 拉完简介会整页重建一次，不把位置还回去的话，用户刚滚到地方就会被弹回顶部。
+const pageScroll = { uid: '', top: 0 };
+
+function bindPageScroll(page, uid) {
+  page.addEventListener('scroll', function () {
+    if (page.getAttribute('data-uid') === uid) pageScroll.top = page.scrollTop;
+  }, { passive: true });
+}
+
+function restorePageScroll(page, uid) {
+  if (pageScroll.uid !== uid) return;
+  const top = pageScroll.top;
+  if (!top) return;
+  page.scrollTop = top;
+  requestAnimationFrame(function () { page.scrollTop = top; });
+}
+
 function renderUserPage(uid) {
   const host = hostEl();
   if (!host) {
@@ -511,10 +529,13 @@ function renderUserPage(uid) {
   S.page = 'u';
   try { applyLayout(); } catch (e) { void e; }
   host.textContent = '';
+  if (pageScroll.uid !== uid) { pageScroll.uid = uid; pageScroll.top = 0; }
   const page = h('div', 'pf-page');
   page.setAttribute('data-uid', uid);
   host.appendChild(page);
+  bindPageScroll(page, uid);
   paintUserPage(uid, CACHE.get(uid) || null);
+  restorePageScroll(page, uid);
   loadUserProfile(uid).then(function (p) {
     if (uidFromHash() !== uid) return;
     if (p) paintUserPage(uid, p);
@@ -547,6 +568,8 @@ function paintUserPage(uid, p) {
   const page = host.querySelector('.pf-page');
   if (!page || page.getAttribute('data-uid') !== uid) return;
   const d = p || null;
+  // 清空会顺带把 scrollTop 归零，滚动事件再把记录写坏，所以先把位置扣下来
+  const keepTop = page.scrollTop;
   page.textContent = '';
 
   const head = h('div', 'pf-page-head');
@@ -758,6 +781,14 @@ function paintUserPage(uid, p) {
   }
 
   showTab('moments');
+
+  if (keepTop) {
+    pageScroll.top = keepTop;
+    page.scrollTop = keepTop;
+    requestAnimationFrame(function () {
+      if (page.isConnected) page.scrollTop = keepTop;
+    });
+  }
 }
 
 // 成员不存在 / 接口挂了：别一直停在「加载中」

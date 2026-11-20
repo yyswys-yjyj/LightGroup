@@ -74,23 +74,30 @@ export async function addFriend(member) {
   repaint();
 }
 
-export async function acceptFriend(id) {
-  const j = await api('api/friends/accept', { id: id });
+// forId：这条关系挂在自己的某个 AI 上（主人代管），缺省就是自己
+function friendBody(id, forId) {
+  const b = { id: id };
+  if (forId) b.for = forId;
+  return b;
+}
+
+export async function acceptFriend(id, forId) {
+  const j = await api('api/friends/accept', friendBody(id, forId));
   if (!j.ok) { toast(j.err || '操作失败'); return; }
-  toast('已加为好友');
+  toast(forId ? '已替 AI 加为好友' : '已加为好友');
   await loadFriends();
   repaint();
 }
 
-export async function rejectFriend(id) {
-  const j = await api('api/friends/reject', { id: id });
+export async function rejectFriend(id, forId) {
+  const j = await api('api/friends/reject', friendBody(id, forId));
   if (!j.ok) { toast(j.err || '操作失败'); return; }
   await loadFriends();
   repaint();
 }
 
-export async function removeFriend(id) {
-  const j = await api('api/friends/remove', { id: id });
+export async function removeFriend(id, forId) {
+  const j = await api('api/friends/remove', friendBody(id, forId));
   if (!j.ok) { toast(j.err || '操作失败'); return; }
   toast('已移除好友');
   closeSheet();
@@ -213,6 +220,14 @@ function paintFriends() {
   }
 }
 
+// 这条关系挂在自己的哪个 AI 上（主人代管），回名字
+function aiNameOf(forRaw) {
+  if (!forRaw) return '';
+  const id = String(forRaw).replace(/^a_/, '');
+  const ai = (S.members || []).filter(function (x) { return String(x.id) === id; })[0];
+  return ai ? (ai.name || 'AI') : 'AI';
+}
+
 function friendRow(m, mode) {
   const row = h('div', 'friend-row');
   row.appendChild(avatar(m, 42));
@@ -220,8 +235,13 @@ function friendRow(m, mode) {
   const nm = h('div', 'm-row-n');
   nm.appendChild(h('b', '', m.name || '匿名'));
   if (m.kind === 'ai') nm.appendChild(h('span', 'tag-ai', 'AI'));
+  if (m.for) nm.appendChild(h('span', 'badge', '你的 AI'));
   info.appendChild(nm);
-  info.appendChild(h('div', 'm-row-s', mode === 'incoming' ? '想加你为好友' : (mode === 'outgoing' ? '等待对方同意' : memberSub(m))));
+  let sub;
+  if (mode === 'incoming') sub = m.for ? '想加你的 AI「' + aiNameOf(m.for) + '」为好友' : '想加你为好友';
+  else if (mode === 'outgoing') sub = m.for ? '你的 AI「' + aiNameOf(m.for) + '」申请中' : '等待对方同意';
+  else sub = m.for ? '你的 AI「' + aiNameOf(m.for) + '」的好友' : memberSub(m);
+  info.appendChild(h('div', 'm-row-s', sub));
   row.appendChild(info);
 
   const acts = h('div', 'row-acts');
@@ -229,10 +249,10 @@ function friendRow(m, mode) {
     const b1 = btn('发消息', 'btn btn-sm btn-primary', function () { openDm(m); });
     acts.appendChild(b1);
   } else if (mode === 'incoming') {
-    acts.appendChild(btn('同意', 'btn btn-sm btn-primary', function () { acceptFriend(m.id); }));
-    acts.appendChild(btn('拒绝', 'btn btn-sm btn-ghost', function () { rejectFriend(m.id); }));
+    acts.appendChild(btn('同意', 'btn btn-sm btn-primary', function () { acceptFriend(m.id, m.for); }));
+    acts.appendChild(btn('拒绝', 'btn btn-sm btn-ghost', function () { rejectFriend(m.id, m.for); }));
   } else {
-    acts.appendChild(btn('撤回', 'btn btn-sm btn-ghost', function () { rejectFriend(m.id); }));
+    acts.appendChild(btn('撤回', 'btn btn-sm btn-ghost', function () { rejectFriend(m.id, m.for); }));
   }
   row.appendChild(acts);
   row.addEventListener('click', function (e) {
@@ -284,7 +304,11 @@ function section(body, label, list) {
       const st = friendState(m.id);
       if (st === 'friend') acts.appendChild(btn('发消息', 'btn btn-xs btn-primary', function () { openDm(m); }));
       else if (st === 'outgoing') acts.appendChild(btn('已申请', 'btn btn-xs btn-ghost', function () { toast('已经申请过了'); }));
-      else if (st === 'incoming') acts.appendChild(btn('同意', 'btn btn-xs btn-primary', function () { acceptFriend(m.id); }));
+      else if (st === 'incoming') {
+        // 可能是自己的 AI 收到申请：带上 for，才替对应 AI 处理
+        const inc = (S.friends.incoming || []).filter(function (x) { return String(x.id) === String(m.id); })[0];
+        acts.appendChild(btn('同意', 'btn btn-xs btn-primary', function () { acceptFriend(m.id, inc && inc.for); }));
+      }
       else if (m.kind !== 'ai') acts.appendChild(btn('加好友', 'btn btn-xs btn-ghost', function () { addFriend(m); }));
       if (acts.children.length) it.appendChild(acts);
     }

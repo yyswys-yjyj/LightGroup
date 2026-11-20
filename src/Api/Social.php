@@ -74,6 +74,28 @@ final class Social {
         return self::isSuperAccount($pdo, (int) ($any["account_id"] ?? 0)) ? $any : null;
     }
 
+    /** 我名下的 AI（没注销的） */
+    public static function ownedAiIds(PDO $pdo, int $ownerId): array {
+        if ($ownerId <= 0) return [];
+        $st = $pdo->prepare("SELECT id FROM members WHERE owner_id = ? AND kind = 'ai' AND deleted_at IS NULL ORDER BY id ASC");
+        $st->execute([$ownerId]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) $out[] = (int) $r["id"];
+        return $out;
+    }
+
+    /**
+     * 动作落在谁头上：默认是我自己；asId 只能是我名下的 AI（主人代 AI 处理好友）。
+     */
+    private static function actorId(PDO $pdo, array $me, ?int $asId): int {
+        $mine = (int) $me["id"];
+        if ($asId === null || $asId <= 0 || $asId === $mine) return $mine;
+        $st = $pdo->prepare("SELECT COUNT(*) FROM members WHERE id = ? AND owner_id = ? AND kind = 'ai' AND deleted_at IS NULL");
+        $st->execute([$asId, $mine]);
+        if ((int) $st->fetchColumn() === 0) Json::fail("这不是你的 AI");
+        return $asId;
+    }
+
     /**
      * 发好友申请：建一条 pending 行，requested_by = 我。
      * 校验顺序按契约 §4.4：不能加自己 → 必须同 scope → 已是好友 → 已有 pending。
@@ -84,9 +106,11 @@ final class Social {
         if ($targetId === $mine) Json::fail("不能加自己");
         // 同一个群里的人照常加；只有超级管理员能跨群加，因为超管在每个群都有成员身份，
         // 但网页上的当前身份只属于一个群，不加这条就永远加不到别的群里的自己人。
-        if (self::scopeMember($pdo, $scope, $targetId) === null) {
+        $target = self::scopeMember($pdo, $scope, $targetId);
+        if ($target === null) {
             if (!self::isSuper($pdo, $me)) Json::fail("找不到这个成员");
-            if (self::anyLive($pdo, $targetId) === null) Json::fail("找不到这个成员");
+            $target = self::anyLive($pdo, $targetId);
+            if ($target === null) Json::fail("找不到这个成员");
         }
 
         $row = self::row($pdo, $mine, $targetId);
@@ -110,12 +134,26 @@ final class Social {
         }
 
         Notices::pushToMember($pdo, $targetId, "friend", $me["name"] . " 想加你为好友", "同意之后就能单独聊天", "#/friends", $mine);
+        // AI 的好友由主人管：申请同时送到主人，主人不登 AI 也知道
+        $ownerId = (int) ($target["owner_id"] ?? 0);
+        if ((string) $target["kind"] === "ai" && $ownerId > 0 && $ownerId !== $mine) {
+            Notices::pushToMember(
+                $pdo,
+                $ownerId,
+                "friend",
+                "你的 AI「" . $target["name"] . "」收到好友申请",
+                $me["name"] . " 想加它。到好友页替它同意，或者让 AI 发 /friend ok 名字",
+                "#/friends",
+                $mine
+            );
+        }
         return self::row($pdo, $mine, $targetId) ?? [];
     }
 
     /** 同意我收到的申请 */
-    public static function accept(PDO $pdo, array $scope, array $me, int $targetId): array {
-        $mine = (int) $me["id"];
+    public static function accept(PDO $pdo, array $scope, array $me, int $targetId, ?int $asId = null): array {
+        $mine = self::actorId($pdo, $me, $asId);
+        $actor = $mine === (int) $me["id"] ? $me : (self::anyLive($pdo, $mine) ?? $me);
         $row = $targetId > 0 ? self::row($pdo, $mine, $targetId) : null;
         if ($row === null) Json::fail("没有待处理的申请");
         $status = (string) $row["status"];
@@ -126,13 +164,14 @@ final class Social {
         $up = $pdo->prepare("UPDATE friends SET status = 'accepted', accepted_at = ? WHERE a_id = ? AND b_id = ?");
         $up->execute([lg_now(), (int) $row["a_id"], (int) $row["b_id"]]);
 
-        Notices::pushToMember($pdo, (int) $row["requested_by"], "friend", $me["name"] . " 通过了你的好友申请", "现在可以单独聊天了", "#/friends", $mine);
+        Notices::pushToMember($pdo, (int) $row["requested_by"], "friend", $actor["name"] . " 通过了你的好友申请", "现在可以单独聊天了", "#/friends", $mine);
         return self::row($pdo, $mine, $targetId) ?? [];
     }
 
     /** 拒绝我收到的申请：直接删行，对方还能再申请 */
-    public static function reject(PDO $pdo, array $scope, array $me, int $targetId): void {
-        $mine = (int) $me["id"];
+    public static function reject(PDO $pdo, array $scope, array $me, int $targetId, ?int $asId = null): void {
+        $mine = self::actorId($pdo, $me, $asId);
+        $actor = $mine === (int) $me["id"] ? $me : (self::anyLive($pdo, $mine) ?? $me);
         $row = $targetId > 0 ? self::row($pdo, $mine, $targetId) : null;
         if ($row === null || (string) $row["status"] !== "pending" || (int) $row["requested_by"] === $mine) {
             Json::fail("没有待处理的申请");
@@ -141,12 +180,12 @@ final class Social {
         $del = $pdo->prepare("DELETE FROM friends WHERE a_id = ? AND b_id = ?");
         $del->execute([(int) $row["a_id"], (int) $row["b_id"]]);
 
-        Notices::pushToMember($pdo, $requester, "friend", $me["name"] . " 拒绝了你的好友申请", "", "#/friends", $mine);
+        Notices::pushToMember($pdo, $requester, "friend", $actor["name"] . " 拒绝了你的好友申请", "", "#/friends", $mine);
     }
 
     /** 删好友：只删 accepted 行，不动私聊会话，历史消息留着 */
-    public static function remove(PDO $pdo, array $scope, array $me, int $targetId): void {
-        $mine = (int) $me["id"];
+    public static function remove(PDO $pdo, array $scope, array $me, int $targetId, ?int $asId = null): void {
+        $mine = self::actorId($pdo, $me, $asId);
         $row = $targetId > 0 ? self::row($pdo, $mine, $targetId) : null;
         if ($row === null || (string) $row["status"] !== "accepted") Json::fail("你们还不是好友");
         $del = $pdo->prepare("DELETE FROM friends WHERE a_id = ? AND b_id = ?");
@@ -159,25 +198,43 @@ final class Social {
      *
      * @return array{friends: array<int, array{id:int, at:int}>, incoming: array<int, array{id:int, at:int}>, outgoing: array<int, array{id:int, at:int}>}
      */
-    public static function listFor(PDO $pdo, array $scope, array $me): array {
+    public static function listFor(PDO $pdo, array $scope, array $me, bool $withOwned = false): array {
         $mine = (int) $me["id"];
         $out = ["friends" => [], "incoming" => [], "outgoing" => []];
         if ($mine <= 0) return $out;
-        $st = $pdo->prepare(
-            "SELECT * FROM friends WHERE ((a_id = ? OR b_id = ?) AND status IN ('pending','accepted'))"
-            . " ORDER BY created_at DESC, a_id DESC"
-        );
-        $st->execute([$mine, $mine]);
-        foreach ($st->fetchAll() as $r) {
-            $other = (int) $r["a_id"] === $mine ? (int) $r["b_id"] : (int) $r["a_id"];
-            if ($other <= 0 || $other === $mine) continue;
-            if ((string) $r["status"] === "accepted") {
-                $out["friends"][] = ["id" => $other, "at" => (int) ($r["accepted_at"] ?? 0) ?: (int) $r["created_at"]];
-                continue;
+        // 主人视角：名下的 AI 收到的申请也算「我的」，条目上用 for 标出是哪个 AI
+        $ids = [$mine];
+        if ($withOwned) {
+            foreach (self::ownedAiIds($pdo, $mine) as $ai) $ids[] = $ai;
+        }
+        $seen = ["friends" => [], "incoming" => [], "outgoing" => []];
+        foreach ($ids as $id) {
+            $st = $pdo->prepare(
+                "SELECT * FROM friends WHERE ((a_id = ? OR b_id = ?) AND status IN ('pending','accepted'))"
+                . " ORDER BY created_at DESC, a_id DESC"
+            );
+            $st->execute([$id, $id]);
+            foreach ($st->fetchAll() as $r) {
+                $other = (int) $r["a_id"] === $id ? (int) $r["b_id"] : (int) $r["a_id"];
+                if ($other <= 0 || $other === $id) continue;
+                // 我名下两个 AI 互加：主人不用管
+                if ($withOwned && $other !== $mine && in_array($other, $ids, true)) continue;
+                $bucket = "friends";
+                if ((string) $r["status"] !== "accepted") {
+                    $bucket = (int) $r["requested_by"] === $id ? "outgoing" : "incoming";
+                }
+                $key = $other . ":" . $id;
+                if (isset($seen[$bucket][$key])) continue;
+                $seen[$bucket][$key] = true;
+                $item = [
+                    "id" => $other,
+                    "at" => $bucket === "friends"
+                        ? ((int) ($r["accepted_at"] ?? 0) ?: (int) $r["created_at"])
+                        : (int) $r["created_at"],
+                ];
+                if ($id !== $mine) $item["for"] = $id;
+                $out[$bucket][] = $item;
             }
-            $item = ["id" => $other, "at" => (int) $r["created_at"]];
-            if ((int) $r["requested_by"] === $mine) $out["outgoing"][] = $item;
-            else $out["incoming"][] = $item;
         }
         return $out;
     }
@@ -190,8 +247,8 @@ final class Social {
      * 这里把「我参与的、pending 或 accepted 的关系」拼成指纹，变了才让前端重拉。
      * accepted 用 accepted_at 参与指纹，所以对方同意的那一刻指纹一定会变。
      */
-    public static function sig(PDO $pdo, array $scope, array $me): string {
-        $rel = self::listFor($pdo, $scope, $me);
+    public static function sig(PDO $pdo, array $scope, array $me, bool $withOwned = false): string {
+        $rel = self::listFor($pdo, $scope, $me, $withOwned);
         $parts = [];
         foreach (["friends", "incoming", "outgoing"] as $k) {
             $one = [];
@@ -211,8 +268,11 @@ final class Social {
     }
 
     /** 待我处理的好友申请数（api/me 的 pending 字段） */
-    public static function countPending(PDO $pdo, int $memberId): int {
+    public static function countPending(PDO $pdo, int $memberId, bool $withOwned = false): int {
         if ($memberId <= 0) return 0;
+        if ($withOwned) {
+            return count(self::listFor($pdo, [], ["id" => $memberId], true)["incoming"]);
+        }
         $st = $pdo->prepare(
             "SELECT COUNT(*) FROM friends WHERE (a_id = ? OR b_id = ?) AND status = 'pending' AND requested_by <> ?"
         );

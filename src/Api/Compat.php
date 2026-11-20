@@ -505,7 +505,11 @@ final class Compat {
             $plain = Token::issue();
             $up = $pdo->prepare("UPDATE members SET token_hash = ?, last_seen_at = ? WHERE id = ?");
             $up->execute([Token::hash($plain), lg_now(), (int) $exist["id"]]);
-            Json::ok(["token" => $plain, "bot" => ["name" => $exist["name"]], "again" => true, "mcp" => self::mcpUrl($pdo, $plain)]);
+            Json::ok([
+                "token" => $plain, "bot" => ["name" => $exist["name"]], "again" => true,
+                "mcp" => self::mcpUrl($pdo, $plain),
+                "default" => self::defaultTarget($pdo, $scope),
+            ]);
         }
 
         self::checkAiQuota($pdo, $scope, (int) $human["id"]);
@@ -517,7 +521,19 @@ final class Compat {
             $human["oauth_id"], Token::hash($plain), lg_now(), lg_now(),
         ]);
 
-        Json::ok(["token" => $plain, "bot" => ["name" => $name], "mcp" => self::mcpUrl($pdo, $plain)]);
+        Json::ok([
+            "token" => $plain, "bot" => ["name" => $name],
+            "mcp" => self::mcpUrl($pdo, $plain),
+            // AI 建好就默认挂在公开大群：读写不带会话参数都落在这里
+            "default" => self::defaultTarget($pdo, $scope),
+        ]);
+    }
+
+    /** AI 的默认落点：公开大群的 id 和标题（没有公开群就回 null） */
+    private static function defaultTarget(PDO $pdo, array $scope): array {
+        $conv = Conv::publicConv($pdo, $scope);
+        if ($conv === null) return ["conv" => 0, "title" => ""];
+        return ["conv" => (int) $conv["id"], "title" => (string) $conv["title"]];
     }
 
     /**
@@ -929,13 +945,15 @@ final class Compat {
     private static function read(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
+        // before：往上翻更早（首屏 since=0 时默认拿最新一页）
+        $before = Input::int("before", 0);
         $limit = Input::int("limit", 50);
         if ($limit <= 0) $limit = 50;
         if ($limit > 200) $limit = 200;
         // 可选 conv：不传就是老的 scope 语义（含集群互通）
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
-        $msgs = self::briefForClient(self::fetchSince($pdo, $scope, $since, $limit, $convId));
+        $msgs = self::briefForClient(self::fetchSince($pdo, $scope, $since, $limit, $convId, $before));
         Json::ok([
             "msgs"   => $msgs,
             "recalled" => Conv::recalledIds(
@@ -946,6 +964,9 @@ final class Compat {
                 $convId === null ? null : self::convReadIds($pdo, $scope, $convId)
             ),
             "lastId" => $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since,
+            // 本批最早的一条：前端拿它当 before 往上翻
+            "oldestId" => $msgs ? (int) $msgs[0]["id"] : 0,
+            "more"     => count($msgs) >= $limit,
             "now"    => lg_now(),
             "tick"   => self::tick(),
         ]);
@@ -959,12 +980,13 @@ final class Compat {
     private static function fetch(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
+        $before = Input::int("before", 0);
         $limit = Input::int("limit", 50);
         if ($limit <= 0) $limit = 50;
         if ($limit > 200) $limit = 200;
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
-        $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId);
+        $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId, $before);
         Json::ok([
             "msgs"    => $msgs,
             "recalled" => Conv::recalledIds(
@@ -976,6 +998,8 @@ final class Compat {
             ),
             "members" => self::convMembers($pdo, $scope, $conv),
             "lastId"  => $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since,
+            "oldestId" => $msgs ? (int) $msgs[0]["id"] : 0,
+            "more"     => count($msgs) >= $limit,
             "now"     => lg_now(),
             "tick"    => self::tick(),
         ]);
@@ -1007,7 +1031,7 @@ final class Compat {
         return Conv::publicConvIds($pdo, $scope);
     }
 
-    public static function fetchSince(PDO $pdo, array $scope, int $since, int $limit, ?int $convId = null): array {
+    public static function fetchSince(PDO $pdo, array $scope, int $since, int $limit, ?int $convId = null, int $before = 0): array {
         $ids = [];
         $in  = "";
         $convIds = [];
@@ -1036,20 +1060,25 @@ final class Compat {
                     ? " WHERE m.scope_id IN ($in)"
                         . " AND (m.conv_id IN (SELECT c.id FROM conversations c WHERE c.is_public = 1 AND c.scope_id IN ($in))"
                         . " OR m.conv_id IS NULL)"
-                        . " AND m.id > ?"
                     : ($inC !== ""
-                        ? " WHERE m.conv_id IN ($inC) AND m.id > ?"
-                        : " WHERE m.conv_id = ? AND m.id > ?"))
-             . " ORDER BY m.id ASC LIMIT $limit";
+                        ? " WHERE m.conv_id IN ($inC)"
+                        : " WHERE m.conv_id = ?"));
+
+        // 取哪一段：since 往后（轮询增量）、before 往前（往上翻更早）、都不给就是最新一页
+        $mode = "since";
+        if ($since <= 0) $mode = $before > 0 ? "before" : "latest";
+        if ($mode === "since") $sql .= " AND m.id > ?";
+        elseif ($mode === "before") $sql .= " AND m.id < ?";
+        $sql .= $mode === "since" ? " ORDER BY m.id ASC LIMIT $limit" : " ORDER BY m.id DESC LIMIT $limit";
+
         $st = $pdo->prepare($sql);
-        if ($convId === null) {
-            $st->execute([...$ids, ...$ids, $since]);
-        } elseif ($inC !== "") {
-            $st->execute([...$convIds, $since]);
-        } else {
-            $st->execute([$convId, $since]);
-        }
+        $args = $convId === null ? [...$ids, ...$ids] : ($inC !== "" ? [...$convIds] : [$convId]);
+        if ($mode === "since") $args[] = $since;
+        elseif ($mode === "before") $args[] = $before;
+        $st->execute($args);
         $rows = $st->fetchAll();
+        // DESC 取回来是倒序，统一成升序，前端照旧从前往后渲染
+        if ($mode !== "since") $rows = array_reverse($rows);
 
         $names = self::memberIdMap($pdo, $scope);
 
@@ -1190,7 +1219,7 @@ final class Compat {
         }
         $conv = Conv::convById($pdo, $convId);
         if ($conv === null || (int) $conv["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
-        if ((string) $me["kind"] === "ai" && (int) $conv["is_public"] !== 1) Json::fail("AI 账号只能看公开大群");
+        // AI 账号也走同一条成员校验：被主人或好友拉进私聊，conv_members 里就有它
         if (!Conv::isMember($pdo, $conv, (int) $me["id"])) Json::fail("不在这个会话里");
         return $conv;
     }
@@ -1294,7 +1323,6 @@ final class Compat {
         $dmItems = [];
         foreach (Conv::mine($pdo, $scope, $me) as $c) {
             $isPublic = (int) $c["id"] === $pubId;
-            if ($isAi && !$isPublic) continue;
             if ($isPublic) {
                 $pubItem = [
                     "id"       => (int) $c["id"],
@@ -1379,19 +1407,23 @@ final class Compat {
         $conv = self::resolveConv($pdo, $scope, $me, self::convIdOfRequest(), true);
 
         $since = Input::int("since", 0);
+        $before = Input::int("before", 0);
         $limit = Input::int("limit", 50);
         if ($limit <= 0) $limit = 50;
         if ($limit > 200) $limit = 200;
 
-        $msgs   = self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"]);
+        $msgs   = self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"], $before);
         $lastId = $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since;
-        if ($msgs) Conv::markRead($pdo, $conv, $me, $lastId);
+        // 往上翻历史时游标不动，别把已读位置写回旧消息
+        if ($msgs && ($before <= 0 || $since > 0)) Conv::markRead($pdo, $conv, $me, $lastId);
 
         Json::ok([
             "msgs"    => $msgs,
             "recalled" => Conv::recalledIds($pdo, (int) $conv["id"], null, 200, self::convReadIds($pdo, $scope, (int) $conv["id"])),
             "members" => self::convMembers($pdo, $scope, $conv),
             "lastId"  => $lastId,
+            "oldestId" => $msgs ? (int) $msgs[0]["id"] : 0,
+            "more"     => count($msgs) >= $limit,
             "now"     => lg_now(),
             "tick"    => self::tick(),
             "conv"    => self::convOut($pdo, $scope, $conv, $me, self::memberMap($pdo, $scope)),
@@ -1402,7 +1434,8 @@ final class Compat {
     /** GET api/friends：好友 + 收到的申请 + 我发出的申请 */
     private static function friendsList(PDO $pdo, array $scope): void {
         $me  = self::requireMember($pdo);
-        $rel = Social::listFor($pdo, $scope, $me);
+        // 主人视角：自己名下的 AI 收到的申请也一并列出来，带 for 标明是哪个 AI
+        $rel = Social::listFor($pdo, $scope, $me, true);
         // 好友可能来自别的群（互通圈子 / 超管跨群加的），本群成员表里查不到的要单独补
         $ids = [];
         foreach (["friends", "incoming", "outgoing"] as $k) {
@@ -1413,7 +1446,10 @@ final class Compat {
         $friends = [];
         foreach ($rel["friends"] as $it) {
             $mem = $map[$it["id"]] ?? null;
-            if ($mem !== null) $friends[] = $mem;
+            if ($mem === null) continue;
+            // 这条关系挂在自己的 AI 上时标出来，UI 才不会当成「我的好友」
+            if (!empty($it["for"])) $mem["for"] = "a_" . (int) $it["for"];
+            $friends[] = $mem;
         }
         Json::ok([
             "friends"  => $friends,
@@ -1432,9 +1468,9 @@ final class Compat {
         $me = self::requireMember($pdo);
         $mid = (int) $me["id"];
         Json::ok([
-            "sig"     => Social::sig($pdo, $scope, $me),
+            "sig"     => Social::sig($pdo, $scope, $me, true),
             "friends" => Social::countFriends($pdo, $mid),
-            "pending" => Social::countPending($pdo, $mid),
+            "pending" => Social::countPending($pdo, $mid, true),
         ]);
     }
 
@@ -1443,13 +1479,15 @@ final class Compat {
         foreach ($rows as $it) {
             $mem = $map[$it["id"]] ?? null;
             if ($mem === null) continue;
-            $out[] = [
+            $row = [
                 "id"     => (string) $mem["id"],
                 "name"   => (string) $mem["name"],
                 "color"  => self::colorOf((int) $mem["id"]),
                 "avatar" => (string) $mem["avatar"],
                 "at"     => (int) $it["at"],
             ];
+            if (!empty($it["for"])) $row["for"] = "a_" . (int) $it["for"];
+            $out[] = $row;
         }
         return $out;
     }
@@ -1473,8 +1511,17 @@ final class Compat {
     private static function friendCounts(PDO $pdo, array $me): array {
         return [
             "friends" => Social::countFriends($pdo, (int) $me["id"]),
-            "pending" => Social::countPending($pdo, (int) $me["id"]),
+            // 待处理也把名下 AI 的算进来，主人不会漏掉
+            "pending" => Social::countPending($pdo, (int) $me["id"], true),
         ];
+    }
+
+    /** 主人替 AI 处理好友：body 里的 for = a_<id> 或数字 */
+    private static function friendForId(): int {
+        $raw = trim((string) Input::get("for"));
+        if ($raw === "") return 0;
+        if (preg_match('/^a_(\d+)$/i', $raw, $mm)) return (int) $mm[1];
+        return ctype_digit($raw) ? (int) $raw : 0;
     }
 
     private static function friendRequest(PDO $pdo, array $scope): void {
@@ -1485,31 +1532,33 @@ final class Compat {
 
     private static function friendAccept(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        Social::accept($pdo, $scope, $me, self::friendTarget($pdo, $scope));
+        $for = self::friendForId();
+        Social::accept($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     private static function friendReject(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        Social::reject($pdo, $scope, $me, self::friendTarget($pdo, $scope));
+        $for = self::friendForId();
+        Social::reject($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     private static function friendRemove(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        Social::remove($pdo, $scope, $me, self::friendTarget($pdo, $scope));
+        $for = self::friendForId();
+        Social::remove($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     /** POST api/dm/open：先必须是好友，再复用/新建私聊 */
     private static function dmOpen(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        if ((string) $me["kind"] === "ai") Json::fail("AI 账号只能看公开大群");
         $targetId = self::friendTarget($pdo, $scope);
         if ($targetId === (int) $me["id"]) Json::fail("不能和自己私聊");
         $target = Social::scopeMember($pdo, $scope, $targetId);
         if ($target === null) Json::fail("找不到这个成员");
-        if ((string) $target["kind"] === "ai") Json::fail("AI 账号只能看公开大群");
+        // AI 也能开私聊（斜杠 /dm 走同一条路），门槛和人类一样：先加好友
         if (!Social::areFriends($pdo, (int) $me["id"], $targetId)) Json::fail("先加好友");
 
         $conv = Conv::ensureDm($pdo, $scope, (int) $me["id"], $targetId, (int) $me["id"]);
@@ -1731,8 +1780,463 @@ final class Compat {
         return $bits === [] ? "（空消息）" : implode("\n", $bits);
     }
 
+    /**
+     * 斜杠命令：AI 账号只有一个 send，全站功能都挂在 text 上。
+     * 不落库，结果交给 MCP 的 chat_send 原样带回给 AI。
+     */
+    private static function slash(PDO $pdo, array $scope, array $me, string $text): void {
+        if (!preg_match('#^/([a-zA-Z]+)[ \t]*(.*)$#su', trim($text), $mm)) Json::fail("命令格式不对，例如 /help");
+        $cmd  = strtolower($mm[1]);
+        $rest = trim((string) $mm[2]);
+
+        $orig = Input::body();
+        self::actAs($me);
+        try {
+            $out = self::slashRun($pdo, $scope, $me, $cmd, $rest);
+        } finally {
+            Input::inject($orig);
+            self::actAs(null);
+        }
+        Json::ok(["cmd" => $cmd, "text" => (string) $out["text"], "data" => $out["data"] ?? []]);
+    }
+
+    private static function slashRun(PDO $pdo, array $scope, array $me, string $cmd, string $rest): array {
+        switch ($cmd) {
+            case "help":    return self::cmdHelp();
+            case "me":      return self::cmdMe($pdo, $scope, $me);
+            case "members": return self::cmdMembers($pdo, $scope);
+            case "chats":   return self::cmdChats($pdo, $scope, $me);
+            case "dm":      return self::cmdDm($pdo, $scope, $me, $rest);
+            case "friend":  return self::cmdFriend($pdo, $scope, $me, $rest);
+            case "moments": return self::cmdMoments($pdo, $scope, $me, $rest);
+            case "moment":  return self::cmdMoment($pdo, $scope, $me, $rest);
+            case "like":    return self::cmdLike($pdo, $scope, $me, $rest);
+            case "comment": return self::cmdComment($pdo, $scope, $me, $rest);
+            case "notice":  return self::cmdNotice($pdo, $scope, $me, $rest);
+            case "profile": return self::cmdProfile($pdo, $scope, $me, $rest);
+            case "recall":  return self::cmdRecall($pdo, $scope, $me, $rest);
+        }
+        Json::fail("没有这个命令：/" . $cmd . "。发 /help 看全部命令");
+    }
+
+    private static function cmdHelp(): array {
+        $lines = [
+            "LightGroup 命令（send 的 text 以 / 开头）：",
+            "/help                这份说明",
+            "/me                  我是谁",
+            "/members             本群成员",
+            "/chats               我的会话",
+            "/dm                  我的私聊列表",
+            "/dm 名字 内容         发私聊（必须是好友）",
+            "/friend              好友概览",
+            "/friend add 名字     加好友",
+            "/friend ok 名字      同意申请",
+            "/friend no 名字      拒绝申请",
+            "/friend del 名字     删好友",
+            "/moments [N]         最近 N 条动态（默认 5）",
+            "/moment 内容          发动态（#标签 会进话题）",
+            "/like 动态id          点赞",
+            "/comment 动态id 内容  评论",
+            "/notice [N]          站内信（默认 5）",
+            "/notice read         全部标为已读",
+            "/profile             我的资料",
+            "/profile 名字         看别人的资料",
+            "/profile name 新名字  改昵称",
+            "/profile bio 文本     改简介",
+            "/recall 消息id        撤回自己的消息",
+            "默认目标：不带会话参数时，读写都落在公开大群。",
+            "不以 / 开头的 text 照常发到公开大群。",
+        ];
+        return ["text" => implode("\n", $lines), "data" => ["commands" => array_values(array_filter(array_map(
+            fn($l) => preg_match('#^/([a-z]+)#', $l, $g) ? $g[1] : "",
+            $lines
+        )))]];
+    }
+
+    private static function cmdMe(PDO $pdo, array $scope, array $me): array {
+        $role = self::roleOf($pdo, $me);
+        $data = [
+            "id"    => self::mid($me),
+            "name"  => (string) $me["name"],
+            "kind"  => (string) $me["kind"],
+            "role"  => $role,
+            "scope" => (string) ($scope["title"] ?? ""),
+        ];
+        if ((string) $me["kind"] === "ai" && (int) ($me["owner_id"] ?? 0) > 0) {
+            $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $st->execute([(int) $me["owner_id"]]);
+            $data["owner"] = (string) ($st->fetchColumn() ?: "");
+        }
+        $roleName = ["super" => "超级管理员", "admin" => "管理员"][$role] ?? "成员";
+        $text = $data["name"] . "（" . $data["id"] . "，" . ((string) $me["kind"] === "ai" ? "AI" : "人") . "，"
+            . $roleName . "）在「" . $data["scope"] . "」";
+        if (isset($data["owner"])) $text .= "，主人是 " . $data["owner"];
+        return ["text" => $text, "data" => $data];
+    }
+
+    private static function cmdMembers(PDO $pdo, array $scope): array {
+        $rows = [];
+        $lines = [];
+        foreach (self::membersOf($pdo, (int) $scope["id"]) as $one) {
+            $rows[] = [
+                "id"    => (string) $one["id"],
+                "name"  => (string) $one["name"],
+                "kind"  => (string) $one["kind"],
+                "owner" => (string) ($one["owner"] ?? ""),
+                "role"  => (string) ($one["role"] ?? ""),
+            ];
+            $line = $one["id"] . " " . $one["name"];
+            if ((string) $one["kind"] === "ai") $line .= "（AI" . (!empty($one["owner"]) ? "，" . $one["owner"] . " 的" : "") . "）";
+            if ((string) ($one["role"] ?? "") !== "") $line .= "[" . $one["role"] . "]";
+            $lines[] = $line;
+        }
+        return ["text" => "本群 " . count($rows) . " 人：\n" . implode("\n", $lines), "data" => ["members" => $rows]];
+    }
+
+    /** 会话摘要文本（私聊/群聊列表共用） */
+    private static function convLine(array $c): string {
+        $last  = is_array($c["last"] ?? null) ? $c["last"] : null;
+        $text  = $last === null ? "" : trim((string) ($last["text"] ?? ""));
+        if (mb_strlen($text) > 40) $text = mb_substr($text, 0, 40) . "…";
+        $line = "#" . (int) $c["id"] . " " . (string) ($c["title"] ?? "");
+        if ((int) ($c["unread"] ?? 0) > 0) $line .= "（未读 " . (int) $c["unread"] . "）";
+        if ($text !== "") $line .= "：" . $text;
+        return $line;
+    }
+
+    private static function cmdChats(PDO $pdo, array $scope, array $me): array {
+        $rows = [];
+        $lines = [];
+        foreach (Conv::mine($pdo, $scope, $me) as $c) {
+            $rows[] = [
+                "id"     => (int) $c["id"],
+                "kind"   => (string) $c["kind"],
+                "title"  => (string) ($c["title"] ?? ""),
+                "unread" => (int) ($c["unread"] ?? 0),
+            ];
+            $lines[] = self::convLine($c);
+        }
+        return ["text" => $lines ? "我的会话：\n" . implode("\n", $lines) : "还没有会话", "data" => ["convs" => $rows]];
+    }
+
+    private static function cmdDm(PDO $pdo, array $scope, array $me, string $rest): array {
+        if ($rest === "") {
+            $rows = [];
+            $lines = [];
+            foreach (Conv::mine($pdo, $scope, $me) as $c) {
+                if ((int) ($c["isPublic"] ?? 0) === 1) continue;
+                $rows[] = [
+                    "conv"   => (int) $c["id"],
+                    "name"   => (string) ($c["member"]["name"] ?? $c["title"] ?? ""),
+                    "unread" => (int) ($c["unread"] ?? 0),
+                ];
+                $lines[] = self::convLine($c);
+            }
+            $text = $rows ? "我的私聊：\n" . implode("\n", $lines) : "还没有私聊。用 /dm 名字 内容 发第一条。";
+            return ["text" => $text, "data" => ["dms" => $rows]];
+        }
+
+        [$target, $body] = self::splitTarget($pdo, $scope, $rest);
+        if ($body === "") Json::fail("私聊要带内容，例如 /dm 站长 在吗");
+        if (mb_strlen($body) > 10000) Json::fail("单条消息最多 10000 字");
+
+        if ((string) $me["kind"] === "ai") {
+            $allowed = (int) ($me["owner_id"] ?? 0) === (int) $target["id"];
+            if (!$allowed) {
+                foreach (Social::listFor($pdo, $scope, $me)["friends"] as $f) {
+                    if ((int) $f["id"] === (int) $target["id"]) { $allowed = true; break; }
+                }
+            }
+            if (!$allowed) Json::fail("AI 只能私聊自己的主人和好友");
+        }
+
+        $conv = Conv::ensureDm($pdo, $scope, (int) $me["id"], (int) $target["id"], (int) $me["id"]);
+        $res = self::captured(function () use ($pdo, $scope, $me, $conv, $body): void {
+            Input::inject(["text" => $body]);
+            self::insertMessage($pdo, $scope, $me, $conv);
+        });
+        $id = (int) ($res["msg"]["id"] ?? 0);
+        return [
+            "text" => "已私聊 " . $target["name"] . "（会话 " . (int) $conv["id"] . "，消息 #" . $id . "）",
+            "data" => ["conv" => (int) $conv["id"], "id" => $id],
+        ];
+    }
+
+    private static function cmdFriend(PDO $pdo, array $scope, array $me, string $rest): array {
+        $rel = Social::listFor($pdo, $scope, $me);
+        $names = [];
+        foreach (self::membersOf($pdo, (int) $scope["id"]) as $one) $names[self::parseMid((string) $one["id"])] = (string) $one["name"];
+
+        if ($rest !== "" && preg_match('#^(add|ok|no|del)\s+(.+)$#u', $rest, $g)) {
+            $op     = $g[1];
+            $target = self::memberByName($pdo, $scope, trim($g[2]));
+            $id     = (int) $target["id"];
+            if ($op === "add") { Social::request($pdo, $scope, $me, $id); return ["text" => "好友申请已发给 " . $target["name"], "data" => []]; }
+            if ($op === "ok")  { Social::accept($pdo, $scope, $me, $id);  return ["text" => "已同意 " . $target["name"] . " 的好友申请", "data" => []]; }
+            if ($op === "no")  { Social::reject($pdo, $scope, $me, $id);  return ["text" => "已拒绝 " . $target["name"] . " 的申请", "data" => []]; }
+            Social::remove($pdo, $scope, $me, $id);
+            return ["text" => "已删除好友 " . $target["name"], "data" => []];
+        }
+
+        $fmt = function (array $list) use ($names): array {
+            $out = [];
+            foreach ($list as $it) {
+                $out[] = ["id" => "h_" . (int) $it["id"], "name" => $names[(int) $it["id"]] ?? ("成员 " . (int) $it["id"])];
+            }
+            return $out;
+        };
+        $friends  = $fmt($rel["friends"]);
+        $incoming = $fmt($rel["incoming"]);
+        $outgoing = $fmt($rel["outgoing"]);
+        $lines = ["好友 " . count($friends) . " 个"];
+        foreach ($friends as $f) $lines[] = "  " . $f["name"];
+        if ($incoming) {
+            $lines[] = "等我的处理 " . count($incoming) . " 条：";
+            foreach ($incoming as $f) $lines[] = "  " . $f["name"] . "（/friend ok|no 名字）";
+        }
+        if ($outgoing) {
+            $lines[] = "我发出的 " . count($outgoing) . " 条：";
+            foreach ($outgoing as $f) $lines[] = "  " . $f["name"];
+        }
+        return ["text" => implode("\n", $lines), "data" => ["friends" => $friends, "incoming" => $incoming, "outgoing" => $outgoing]];
+    }
+
+    private static function cmdMoments(PDO $pdo, array $scope, array $me, string $rest): array {
+        $n = (int) $rest;
+        if ($n <= 0) $n = 5;
+        if ($n > 20) $n = 20;
+
+        $ids = self::scopeIds($pdo, $scope);
+        $in  = implode(",", array_fill(0, count($ids), "?"));
+        $st  = $pdo->prepare(
+            "SELECT m.*, u.name AS member_name FROM moments m LEFT JOIN members u ON u.id = m.member_id"
+            . " WHERE m.scope_id IN ($in) AND m.deleted_at IS NULL ORDER BY m.id DESC LIMIT $n"
+        );
+        $st->execute($ids);
+        $rows = $st->fetchAll();
+
+        $mids = [];
+        foreach ($rows as $r) $mids[] = (int) $r["id"];
+        $likes = [];
+        $comments = [];
+        if ($mids) {
+            $inM = implode(",", array_fill(0, count($mids), "?"));
+            $q = $pdo->prepare("SELECT moment_id, COUNT(*) n FROM moment_likes WHERE moment_id IN ($inM) GROUP BY moment_id");
+            $q->execute($mids);
+            foreach ($q->fetchAll() as $x) $likes[(int) $x["moment_id"]] = (int) $x["n"];
+            $q = $pdo->prepare("SELECT moment_id, COUNT(*) n FROM moment_comments WHERE moment_id IN ($inM) AND deleted_at IS NULL GROUP BY moment_id");
+            $q->execute($mids);
+            foreach ($q->fetchAll() as $x) $comments[(int) $x["moment_id"]] = (int) $x["n"];
+        }
+
+        $items = [];
+        $lines = [];
+        foreach ($rows as $r) {
+            $id = (int) $r["id"];
+            $items[] = [
+                "id"       => $id,
+                "by"       => (string) ($r["member_name"] ?? ""),
+                "ts"       => (int) $r["created_at"],
+                "text"     => (string) ($r["text"] ?? ""),
+                "tags"     => (string) ($r["tags"] ?? ""),
+                "likes"    => $likes[$id] ?? 0,
+                "comments" => $comments[$id] ?? 0,
+            ];
+            $lines[] = "#" . $id . " " . ($r["member_name"] ?? "") . "：" . mb_substr((string) ($r["text"] ?? ""), 0, 80)
+                . "（❤" . ($likes[$id] ?? 0) . " 💬" . ($comments[$id] ?? 0) . "）";
+        }
+        return ["text" => $lines ? "空间动态：\n" . implode("\n", $lines) : "空间里还没有动态", "data" => ["moments" => $items]];
+    }
+
+    private static function cmdMoment(PDO $pdo, array $scope, array $me, string $rest): array {
+        if ($rest === "") Json::fail("要发的内容呢？用法：/moment 正文");
+        $res = self::captured(function () use ($pdo, $scope, $rest): void {
+            self::withMethod("POST", function () use ($pdo, $scope, $rest): void {
+                Input::inject(["text" => $rest, "images" => []]);
+                Moments::handle($pdo, $scope, "moments");
+            });
+        });
+        $id = (int) ($res["id"] ?? 0);
+        return ["text" => "动态已发布 #" . $id, "data" => ["id" => $id]];
+    }
+
+    private static function cmdLike(PDO $pdo, array $scope, array $me, string $rest): array {
+        $id = self::numOf($rest);
+        if ($id <= 0) Json::fail("用法：/like 动态id");
+        $res = self::captured(function () use ($pdo, $scope, $id): void {
+            Input::inject(["id" => (string) $id]);
+            Moments::handle($pdo, $scope, "like");
+        });
+        return ["text" => (!empty($res["liked"]) ? "已点赞 #" : "已取消点赞 #") . $id . "（❤" . (int) ($res["likes"] ?? 0) . "）", "data" => $res];
+    }
+
+    private static function cmdComment(PDO $pdo, array $scope, array $me, string $rest): array {
+        if (!preg_match('~^#?(\d+)\s+(.+)$~su', trim($rest), $g)) Json::fail("用法：/comment 动态id 内容");
+        $id   = (int) $g[1];
+        $body = trim($g[2]);
+        $res = self::captured(function () use ($pdo, $scope, $id, $body): void {
+            Input::inject(["id" => (string) $id, "text" => $body]);
+            Moments::handle($pdo, $scope, "comment");
+        });
+        return ["text" => "已评论 #" . $id, "data" => $res];
+    }
+
+    private static function cmdNotice(PDO $pdo, array $scope, array $me, string $rest): array {
+        if (strtolower(trim($rest)) === "read") {
+            self::captured(function () use ($pdo, $scope): void {
+                self::withMethod("POST", function () use ($pdo, $scope): void {
+                    Input::inject(["op" => "readAll"]);
+                    Notices::handle($pdo, $scope, "notices");
+                });
+            });
+            return ["text" => "站内信已全部标为已读", "data" => []];
+        }
+
+        $n = (int) $rest;
+        if ($n <= 0) $n = 5;
+        if ($n > 20) $n = 20;
+        $res = self::captured(function () use ($pdo, $scope): void {
+            self::withMethod("GET", function () use ($pdo, $scope): void {
+                Notices::handle($pdo, $scope, "notices");
+            });
+        });
+        $items = is_array($res["items"] ?? null) ? array_slice($res["items"], 0, $n) : [];
+        $lines = [];
+        foreach ($items as $it) {
+            $lines[] = "#" . (int) $it["id"] . " [" . (string) $it["kind"] . "] " . (string) $it["title"]
+                . (!empty($it["read"]) ? "" : "（未读）") . "\n  " . mb_substr((string) $it["body"], 0, 120);
+        }
+        $unread = (int) ($res["unread"] ?? 0);
+        $body   = $lines ? "\n" . implode("\n", $lines) : "（还没有站内信）";
+        return [
+            "text" => ($unread > 0 ? "站内信（未读 " . $unread . "）" : "站内信") . $body,
+            "data" => ["items" => $items, "unread" => $unread],
+        ];
+    }
+
+    private static function cmdProfile(PDO $pdo, array $scope, array $me, string $rest): array {
+        $rest = trim($rest);
+        if ($rest === "") {
+            $p = self::profileOut($pdo, $me);
+            return ["text" => self::profileText($p), "data" => $p];
+        }
+        if (preg_match('#^(name|bio)\s+([\s\S]+)$#u', $rest, $g)) {
+            $field = $g[1];
+            $value = trim($g[2]);
+            $res = self::captured(function () use ($pdo, $scope, $me, $field, $value): void {
+                self::withMethod("POST", function () use ($pdo, $scope, $me, $field, $value): void {
+                    $body = ["name" => (string) $me["name"], "bio" => (string) ($me["bio"] ?? "")];
+                    $body[$field] = $value;
+                    Input::inject($body);
+                    self::profile($pdo, $scope);
+                });
+            });
+            $p = is_array($res["profile"] ?? null) ? $res["profile"] : [];
+            return ["text" => "资料已更新\n" . self::profileText($p), "data" => $p];
+        }
+        $target = self::memberByName($pdo, $scope, $rest);
+        $p = self::profileOut($pdo, $target);
+        return ["text" => self::profileText($p), "data" => $p];
+    }
+
+    private static function profileText(array $p): string {
+        $id = ((string) ($p["kind"] ?? "") === "ai" ? "a_" : "h_") . (int) ($p["id"] ?? 0);
+        $lines = [
+            (string) ($p["name"] ?? "") . "（" . $id . "）",
+            "身份：" . ((string) ($p["kind"] ?? "") === "ai" ? "AI" : "人")
+                . (!empty($p["owner"]) ? "，主人 " . $p["owner"] : ""),
+            "简介：" . ((string) ($p["bio"] ?? "") !== "" ? (string) $p["bio"] : "（空）"),
+        ];
+        return implode("\n", $lines);
+    }
+
+    private static function cmdRecall(PDO $pdo, array $scope, array $me, string $rest): array {
+        $id = self::numOf($rest);
+        if ($id <= 0) Json::fail("用法：/recall 消息id");
+        self::captured(function () use ($pdo, $scope, $id): void {
+            Input::inject(["id" => (string) $id]);
+            self::recall($pdo, $scope);
+        });
+        return ["text" => "已撤回消息 #" . $id, "data" => ["id" => $id]];
+    }
+
+    /** 从 "12" / "#12" / "12 多余的话" 里取第一个整数 */
+    private static function numOf(string $raw): int {
+        return preg_match('#(\d+)#', $raw, $g) ? (int) $g[1] : 0;
+    }
+
+    /** 捕获模式下跑一段会 Json::ok/fail 的业务代码，失败就按命令失败抛出 */
+    private static function captured(callable $fn): array {
+        $r = Json::capture($fn);
+        if (empty($r["ok"])) Json::fail((string) ($r["err"] ?? "操作失败"));
+        $data = $r["data"] ?? [];
+        return is_array($data) ? $data : [];
+    }
+
+    /** 临时把请求方法换成 GET/POST，好复用 Moments/Notices 的分支 */
+    private static function withMethod(string $method, callable $fn): mixed {
+        $prev = (string) ($_SERVER["REQUEST_METHOD"] ?? "GET");
+        $_SERVER["REQUEST_METHOD"] = $method;
+        try {
+            return $fn();
+        } finally {
+            $_SERVER["REQUEST_METHOD"] = $prev;
+        }
+    }
+
+    /** /dm 的参数：前半是名字，后半是正文；名字里带空格时依次多拼一个词试 */
+    private static function splitTarget(PDO $pdo, array $scope, string $rest): array {
+        $rest  = trim($rest);
+        $parts = preg_split('/\s+/u', $rest, 3);
+        $tries = [(string) $parts[0]];
+        if (count($parts) >= 2) $tries[] = $parts[0] . " " . $parts[1];
+        foreach ($tries as $name) {
+            $m = self::memberByNameOrNull($pdo, $scope, $name);
+            if ($m !== null) {
+                return [$m, trim(mb_substr($rest, mb_strlen($name)))];
+            }
+        }
+        Json::fail("群里没有叫「" . $parts[0] . "」的人");
+    }
+
+    private static function memberByName(PDO $pdo, array $scope, string $raw): array {
+        $m = self::memberByNameOrNull($pdo, $scope, $raw);
+        if ($m === null) Json::fail("群里没有叫「" . trim($raw) . "」的人");
+        return $m;
+    }
+
+    /** 按 h_7 / a_3 / 7 / 名字找本群成员；超管不在本群成员表里也能找到 */
+    private static function memberByNameOrNull(PDO $pdo, array $scope, string $raw): ?array {
+        $raw = trim($raw);
+        if ($raw === "") return null;
+        $id = self::parseMid($raw);
+        if ($id > 0) {
+            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+            $st->execute([$id]);
+            $row = $st->fetch();
+            if ($row && ((int) $row["scope_id"] === (int) $scope["id"] || self::roleOf($pdo, $row) === "super")) return $row;
+        }
+        foreach (self::membersOf($pdo, (int) $scope["id"]) as $one) {
+            if ((string) $one["name"] === $raw) {
+                $mid = self::parseMid((string) $one["id"]);
+                if ($mid <= 0) continue;
+                $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+                $st->execute([$mid]);
+                $row = $st->fetch();
+                if ($row) return $row;
+            }
+        }
+        return null;
+    }
+
     private static function send(PDO $pdo, array $scope): void {
         $m = self::requireMember($pdo);
+        $text = Input::get("text");
+        // AI 账号发 / 开头的是命令：不落库，走 slash()，MCP 的 chat_send 会把结果原样带回去
+        if ((string) $m["kind"] === "ai" && $text !== "" && $text[0] === "/") {
+            self::slash($pdo, $scope, $m, $text);
+            return;
+        }
         // 不传 conv 时行为与改造前一致：落在 scope 的公开大群
         $conv = self::resolveConv($pdo, $scope, $m, self::optionalConvId());
         self::insertMessage($pdo, $scope, $m, $conv);
