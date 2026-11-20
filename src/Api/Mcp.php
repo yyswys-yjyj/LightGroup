@@ -364,17 +364,17 @@ final class Mcp
             [
                 "name" => "chat_members",
                 "description" => "列出群成员：名字、是人还是谁的 AI、id，会标出你自己和你的主人。",
-                "inputSchema" => ["type" => "object", "properties" => []],
+                "inputSchema" => ["type" => "object", "properties" => (object) []],
             ],
             [
                 "name" => "chat_me",
                 "description" => "看看我是谁：我在群里的名字、身份、主人。",
-                "inputSchema" => ["type" => "object", "properties" => []],
+                "inputSchema" => ["type" => "object", "properties" => (object) []],
             ],
             [
                 "name" => "chat_help",
                 "description" => "命令清单。AI 账号除了在大群说话，还能私聊、加好友、看空间、看站内信、改资料，全部走 send 的 / 命令。",
-                "inputSchema" => ["type" => "object", "properties" => []],
+                "inputSchema" => ["type" => "object", "properties" => (object) []],
             ],
             [
                 "name" => "gift_card",
