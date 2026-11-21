@@ -228,6 +228,20 @@ function pickCam(cams) {
   return cams[0].deviceId || '';
 }
 
+// 内嵌浏览器（App 里的 WebView）默认拒绝网页申请摄像头：
+// 安卓要在宿主里重写 WebChromeClient.onPermissionRequest 并 grant，iOS 要实现
+// WKUIDelegate 的 requestMediaCapturePermissionFor，宿主没做就打不开，站点侧无解
+function inAppWebview() {
+  const ua = navigator.userAgent || '';
+  return /;\s*wv\)/i.test(ua) || /\bWebView\b/i.test(ua) ||
+    /MicroMessenger|QQ\/|Weibo|AlipayClient|DingTalk/i.test(ua);
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 // 浏览器只在安全上下文开摄像头：https 或 localhost/127.0.0.1
 function camSecure() {
   if (window.isSecureContext) return true;
@@ -250,12 +264,35 @@ function camErrText(e) {
   if (policyBlocksCam()) return '这个站点没有开放摄像头，找站长处理。';
   if (!camSecure()) return '浏览器只在 https 或本机地址下允许用摄像头。';
   if (n === 'NotAllowedError' || n === 'SecurityError') {
+    if (inAppWebview()) return '这个内置浏览器不放行摄像头，用系统浏览器打开这个页面再试。';
+    if (isIOS()) return '摄像头没被允许：到 设置 → Safari 浏览器 → 相机 里改成「允许」，或直接在下面的按钮上再点一次。';
     return '摄像头被拦了：点地址栏左边的锁图标，把「摄像头」改成允许，刷新后再试。';
   }
   if (n === 'NotFoundError' || n === 'OverconstrainedError') return '这台设备上没有可用的摄像头。';
   if (n === 'NotReadableError' || n === 'AbortError') return '摄像头被别的程序占着（会议、录屏软件），关掉再试。';
   if (n === 'NotSupportedError') return '这个浏览器打不开摄像头。';
   return '打不开摄像头' + (n ? '（' + n + '）' : '') + '。';
+}
+
+// Chrome 在 Android 上报的设备名是 camera2 0 / camera2 1 这种逻辑相机编号，
+// 不是焦距。这里只按前/后置分类，同一朝向有多颗时加序号。
+function camFacing(dev) {
+  const raw = String((dev && dev.label) || '');
+  if (/back|rear|environment|后置/i.test(raw)) return 'back';
+  if (/front|user|前置/i.test(raw)) return 'front';
+  return '';
+}
+
+function camLabel(dev, cams) {
+  const raw = String((dev && dev.label) || '').trim();
+  const f = camFacing(dev);
+  const pre = f === 'back' ? '后置' : f === 'front' ? '前置' : '';
+  // Android 上的 label 形如 camera2 6, facing back：6 是手机内部的摄像头编号，
+  // 不同厂商对应的镜头（主摄/长焦/超广角）不一样，Web 端也拿不到真实焦距，所以原样保留编号
+  const m = /camera\s*2?\s+(\d+)/i.exec(raw);
+  if (m) return (pre ? pre + ' · ' : '') + 'camera ' + m[1];
+  if (raw) return pre ? pre + ' · ' + raw : raw;
+  return '摄像头 ' + (cams.indexOf(dev) + 1);
 }
 
 function camConstraints(deviceId) {
@@ -281,6 +318,9 @@ export function renderScan(host) {
 
 function paintScanner(box) {
   stopScan();
+  // 换设备只重建内容，不重复插入：以前每切一次就多一整套取景框
+  const oldWrap = box.querySelector('.scan-wrap');
+  if (oldWrap) oldWrap.remove();
   const wrap = h('div', 'scan-wrap');
   const stage = h('div', 'scan-stage');
   wrap.appendChild(stage);
@@ -311,7 +351,7 @@ function paintScanner(box) {
   camSel.hidden = true;
   camSel.addEventListener('change', function () {
     scanDevice = camSel.value || '';
-    paintScanner(box);
+    restart();
   });
   wrap.appendChild(camSel);
 
@@ -338,6 +378,17 @@ function paintScanner(box) {
     stage.appendChild(h('div', 'scan-empty', msg));
   }
 
+  // 权限被拒时不要只留一句话：在用户这次点击里重新申请，iOS/Safari 上只有手势里申请才会给
+  function capRetry(msg) {
+    stage.textContent = '';
+    stage.appendChild(h('div', 'scan-empty', msg));
+    stage.appendChild(btn('点一下开启摄像头', 'btn btn-sm', function () {
+      stage.textContent = '';
+      stage.appendChild(h('div', 'scan-empty', '正在打开摄像头…'));
+      boot(scanDevice);
+    }));
+  }
+
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     cap('这个浏览器打不开摄像头，需要在 https 下打开。');
     return;
@@ -354,6 +405,12 @@ function paintScanner(box) {
     try {
       stream = await navigator.mediaDevices.getUserMedia(camConstraints(deviceId));
     } catch (e) {
+      // 记着的设备已经不在了（换了浏览器/拔了 USB 摄像头）：退回默认设备再试一次
+      if (deviceId) { scanDevice = ''; await restart(); return; }
+      if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+        capRetry(camErrText(e));
+        return;
+      }
       cap(camErrText(e));
       return;
     }
@@ -376,10 +433,11 @@ function paintScanner(box) {
     }
     if (cams.length) {
       camSel.textContent = '';
-      cams.forEach(function (c, i) {
+      cams.forEach(function (c) {
         const o = document.createElement('option');
         o.value = c.deviceId;
-        o.textContent = c.label || ('摄像头 ' + (i + 1));
+        o.textContent = camLabel(c, cams);
+        o.title = c.label || '';
         camSel.appendChild(o);
       });
       const cur = (stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings().deviceId) || '';
@@ -408,6 +466,15 @@ function paintScanner(box) {
         busy = false;
       }
     }, 450);
+  }
+
+  // 换设备：停掉旧流、清空取景框，稍等一下让硬件断开再开新的
+  async function restart() {
+    stopScan();
+    stage.textContent = '';
+    stage.appendChild(h('div', 'scan-empty', '正在打开摄像头…'));
+    await new Promise(function (r) { setTimeout(r, 220); });
+    await boot(scanDevice);
   }
 
   // 先按默认设备开一次，拿到设备名后再决定要不要切到真正的摄像头

@@ -254,7 +254,8 @@ function loadJsqr() {
   if (!jsqrLoading) {
     jsqrLoading = new Promise(function (resolve) {
       const s = document.createElement('script');
-      s.src = BASE + 'assets/vendor/jsqr.js';
+      // 静态资源在站点根 /assets 下，不能拼 API 的 BASE（那会变成 /g/assets/… 404）
+      s.src = '/assets/vendor/jsqr.js';
       s.async = true;
       s.onload = function () { resolve(!!window.jsQR); };
       s.onerror = function () { resolve(false); };
@@ -265,7 +266,11 @@ function loadJsqr() {
 }
 
 let detector = null;
+// 有些 Android 设备报了 BarcodeDetector 却调不通（缺 Play Services 的 ML Kit），
+// 抛过一次错之后就别再试了，直接走自带解码
+let detectorBroken = false;
 function barcodeDetector() {
+  if (detectorBroken) return false;
   if (detector !== null) return detector;
   if (!('BarcodeDetector' in window)) { detector = false; return detector; }
   try {
@@ -277,6 +282,22 @@ function barcodeDetector() {
   return detector;
 }
 
+// 截一帧到复用的 canvas：每 450ms 都 new 一个 canvas 会把内存和 GC 拖慢
+let frameCanvas = null;
+
+function frameData(src, sx, sy, sw, sh, maxSide) {
+  const scale = Math.min(1, maxSide / Math.max(sw, sh));
+  const cw = Math.max(1, Math.round(sw * scale));
+  const ch = Math.max(1, Math.round(sh * scale));
+  if (!frameCanvas) frameCanvas = document.createElement('canvas');
+  if (frameCanvas.width !== cw) frameCanvas.width = cw;
+  if (frameCanvas.height !== ch) frameCanvas.height = ch;
+  const ctx = frameCanvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cw, ch);
+  return { data: ctx.getImageData(0, 0, cw, ch).data, w: cw, h: ch };
+}
+
 /** 从 video 元素或图片元素里读二维码；读不到返回空串 */
 export async function decodeSource(src) {
   const det = barcodeDetector();
@@ -286,6 +307,7 @@ export async function decodeSource(src) {
       if (codes && codes.length) return String(codes[0].rawValue || '');
     } catch (e) {
       void e;
+      detectorBroken = true;
     }
   }
   const ok = await loadJsqr();
@@ -293,23 +315,26 @@ export async function decodeSource(src) {
   const w = src.videoWidth || src.naturalWidth || src.width || 0;
   const h0 = src.videoHeight || src.naturalHeight || src.height || 0;
   if (!w || !h0) return '';
-  const scale = Math.min(1, 720 / Math.max(w, h0));
-  const cw = Math.max(1, Math.round(w * scale));
-  const ch = Math.max(1, Math.round(h0 * scale));
-  const cv = document.createElement('canvas');
-  cv.width = cw;
-  cv.height = ch;
-  const ctx = cv.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return '';
-  ctx.drawImage(src, 0, 0, cw, ch);
-  const img = ctx.getImageData(0, 0, cw, ch);
-  try {
-    const res = window.jsQR(img.data, cw, ch, { inversionAttempts: 'attemptBoth' });
-    return res && res.data ? String(res.data) : '';
-  } catch (e) {
-    void e;
-    return '';
+
+  // 先整帧（上限 1280，别像以前那样缩到 720——远距离的小码会直接糊掉），
+  // 整帧读不出来再把取景框那一块（中间 70%）单独放大读一遍。
+  const tries = [
+    [0, 0, w, h0, 1280],
+    [Math.round(w * 0.15), Math.round(h0 * 0.15), Math.round(w * 0.7), Math.round(h0 * 0.7), 960]
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    const t = tries[i];
+    if (t[2] < 24 || t[3] < 24) continue;
+    const fr = frameData(src, t[0], t[1], t[2], t[3], t[4]);
+    if (!fr) continue;
+    try {
+      const res = window.jsQR(fr.data, fr.w, fr.h, { inversionAttempts: 'attemptBoth' });
+      if (res && res.data) return String(res.data);
+    } catch (e) {
+      void e;
+    }
   }
+  return '';
 }
 
 /** 相册图片解码 */
