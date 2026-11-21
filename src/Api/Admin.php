@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
 use LightGroup\Store\MemberNames;
+use LightGroup\Web\Favicon;
 use LightGroup\Web\Site;
 use PDO;
 
@@ -422,6 +423,8 @@ final class Admin {
         $types = [
             "site.name"            => "text",
             "site.intro"           => "text",
+            "site.icon_light"      => "iconpath",
+            "site.icon_dark"       => "iconpath",
             "site.url"             => "url",
             "theme"                => "theme",
             "theme.preset"         => "text",
@@ -550,6 +553,10 @@ final class Admin {
                 if (!preg_match('/^\d{1,5}$/', $v) || (int) $v < 1 || (int) $v > 65535) Json::fail("邮箱端口要填 1-65535 之间的数字");
             } elseif ($kind === "mailsecure") {
                 if (!in_array($v, ["", "ssl", "tls"], true)) Json::fail("加密方式只能是 ssl / tls / 不加密");
+            } elseif ($kind === "iconpath") {
+                if ($v !== "" && (!str_starts_with($v, "/assets/") || !preg_match('/\.png$/i', $v))) {
+                    Json::fail("站点图标要填 /assets/ 下的 PNG 路径");
+                }
             } elseif ($kind === "email") {
                 if ($v !== "" && !filter_var($v, FILTER_VALIDATE_EMAIL)) Json::fail("「" . $k . "」不是有效的邮箱地址");
             }
@@ -573,6 +580,13 @@ final class Admin {
             $changed[] = "oauth.enabled";
         }
         if (!$changed) Json::fail("没有要改的内容");
+        // 换了站点图标就顺手重建标签页图标，否则浏览器还是显示上一份 favicon.ico
+        if (in_array("site.icon_light", $changed, true) || in_array("site.icon_dark", $changed, true)) {
+            Favicon::rebuild(
+                (string) self::setting($pdo, "site.icon_light", ""),
+                (string) self::setting($pdo, "site.icon_dark", "")
+            );
+        }
         self::log($pdo, "settings.save", "更新设置 " . count($changed) . " 项：" . implode(", ", $changed));
         Json::ok(["changed" => $changed]);
     }

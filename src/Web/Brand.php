@@ -32,7 +32,7 @@ final class Brand
         return $out;
     }
 
-    /** <head> 里的图标声明：favicon.ico 是安装时按浅色稿生成的 */
+    /** <head> 里的图标声明：有站点图标就用图标本身，没设置时才回退到内置稿 */
     public static function heads(array $site): string
     {
         $light = (string) ($site['icon'] ?? '');
@@ -40,7 +40,9 @@ final class Brand
         if ($light === '' && $dark === '') {
             return '<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">';
         }
-        $out = '<link rel="icon" href="/favicon.ico" sizes="any">';
+        // 不再列 favicon.ico：浏览器看到 sizes="any" 的 ico 会优先选它，
+        // 而那份 ico 可能是上一次装站时的稿子，看起来就像图标没换。
+        $out = '';
         if ($light !== '') {
             $out .= '<link rel="icon" type="image/png" href="' . e($light) . '">';
         }

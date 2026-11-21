@@ -4,6 +4,7 @@
 !/data/.gitkeep
 /public/uploads/*
 !/public/uploads/.gitkeep
+/public/favicon.ico
 /public/assets/icon/*
 !/public/assets/icon/.gitkeep
 /.dsh/

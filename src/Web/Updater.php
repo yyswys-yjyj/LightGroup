@@ -19,6 +19,7 @@ final class Updater
         'config.php', '.lock', '.git', '.gitignore', '.dsh',
         'data', 'public/uploads', 'site.conf', 'php-cli.ini',
         'favicon.ico', 'favicon.svg', 'vendor', 'publish', 'opmbuild',
+        'public/favicon.ico', 'public/favicon.svg', 'public/assets/favicon.svg', 'public/assets/icon',
     ];
 
     /**
