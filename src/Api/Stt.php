@@ -9,7 +9,7 @@ use PDO;
  * 语音转文字。
  *
  * 站内没有识别引擎，转写走外部 OpenAI 兼容接口（/v1/audio/transcriptions）。
- * 超管在后台填地址、Key、模型才算开启；没配就明确告诉用户「站点没开语音转文字」，
+ * 超管在后台填地址、Key、模型才算开启；没配就明确告诉用户「这个站还没开语音转文字」，
  * 不要假装在转、转半天不出字。
  */
 final class Stt {
@@ -36,17 +36,17 @@ final class Stt {
      * 返回 ["ok"=>bool, "text"=>string, "err"=>string]。
      */
     public static function transcribe(PDO $pdo, string $voice): array {
-        if (!self::configured($pdo)) return ["ok" => false, "text" => "", "err" => "站点没开语音转文字"];
+        if (!self::configured($pdo)) return ["ok" => false, "text" => "", "err" => "这个站还没开语音转文字"];
 
         $file = self::localFile($voice);
         $tmp  = "";
         if ($file === null) {
             // 站内上传的语音找不到文件，别再当成外链去下载，报个说得清的原因
             if (strpos($voice, "/uploads/") !== false) {
-                return ["ok" => false, "text" => "", "err" => "语音文件找不到了"];
+                return ["ok" => false, "text" => "", "err" => "这条语音已经没了，可能要重新发一次"];
             }
             $tmp = self::download($voice);
-            if ($tmp === "") return ["ok" => false, "text" => "", "err" => "下载语音失败"];
+            if ($tmp === "") return ["ok" => false, "text" => "", "err" => "语音取不回来，稍后再试"];
             $file = $tmp;
         }
 
@@ -65,7 +65,7 @@ final class Stt {
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 90,
+            CURLOPT_TIMEOUT        => 45,
             CURLOPT_POSTFIELDS     => [
                 "file"  => new \CURLFile($file, self::mime($file), basename($file)),
                 "model" => $model,
@@ -88,14 +88,26 @@ final class Stt {
                 if (is_array($j) && isset($j["error"]["message"])) $detail = (string) $j["error"]["message"];
                 elseif (is_array($j) && isset($j["error"]) && is_string($j["error"])) $detail = $j["error"];
             }
-            if ($detail === "") $detail = $cerr !== "" ? $cerr : ("接口返回 HTTP " . $code);
-            return ["ok" => false, "text" => "", "err" => "转写失败：" . mb_substr($detail, 0, 200)];
+            if ($detail === "") $detail = $cerr !== "" ? $cerr : ("HTTP " . $code);
+            // 原始报错只留日志：带英文和状态码的原文对用户没有意义
+            error_log("[stt] " . mb_substr($detail, 0, 300));
+            return ["ok" => false, "text" => "", "err" => self::friendlyError($code, $cerr)];
         }
 
         $j = json_decode((string) $resp, true);
         $text = is_array($j) ? trim((string) ($j["text"] ?? "")) : "";
-        if ($text === "") return ["ok" => false, "text" => "", "err" => "接口没返回文字"];
+        if ($text === "") return ["ok" => false, "text" => "", "err" => "这段语音里没听出内容，换个位置再录一次"];
         return ["ok" => true, "text" => $text, "err" => ""];
+    }
+
+    /** 把识别服务的错误翻成用户能看懂的一句话，原始报错只进日志 */
+    private static function friendlyError(int $code, string $cerr): string {
+        if ($cerr !== "" && stripos($cerr, "timed out") !== false) return "语音识别服务没响应，稍后再试";
+        if ($code === 401 || $code === 403) return "语音识别服务没通过验证，联系站长看一下";
+        if ($code === 429) return "语音识别太频繁了，过一会儿再试";
+        if ($code === 413) return "这条语音太大了，短一点再试";
+        if ($code >= 500) return "语音识别服务暂时不可用，稍后再试";
+        return "这段语音没转成功，稍后再试";
     }
 
     /** 本站上传的文件直接读本地，省一次回环下载 */

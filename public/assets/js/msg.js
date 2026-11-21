@@ -289,7 +289,7 @@ function voiceNode(m) {
   box.appendChild(bar);
   box.appendChild(dur);
 
-  // 语音转文字：按钮一直放着，站点没配识别接口时后端会明确回「站点没开语音转文字」
+  // 语音转文字：按钮一直放着，站点没配识别服务时后端会明确回「这个站还没开语音转文字」
   const wrap = h('div', 'voice-wrap');
   wrap.appendChild(box);
   const tx = document.createElement('button');
@@ -316,13 +316,13 @@ function voiceNode(m) {
     const spin = icon('fa-spinner');
     spin.classList.add('fa-spin');
     tx.insertBefore(spin, tx.firstChild);
-    api('api/voice/text', { conv: S.curId, msg: m.id }).then(function (r) {
-      if (!r || !r.ok) throw new Error((r && r.err) || '转写失败了');
+    api('api/voice/text', { conv: S.curId, msg: m.id }, { timeout: 55000 }).then(function (r) {
+      if (!r || !r.ok) throw new Error((r && r.err) || '这段语音没转成功，稍后再试');
       const text = r.text ? String(r.text) : '';
-      if (!text) throw new Error('接口没返回文字');
+      if (!text) throw new Error('这段语音里没听出内容，换个位置再录一次');
       showText(text);
     }).catch(function (e) {
-      toast((e && e.message) || '转写失败了');
+      toast((e && e.message) || '这段语音没转成功，稍后再试');
       tx.disabled = false;
       txLabel.textContent = '转文字';
       if (spin.parentNode) spin.parentNode.removeChild(spin);
@@ -729,7 +729,7 @@ async function todoClose(t) {
 
 async function doTranslate(m) {
   toast('翻译中…');
-  const j = await api('api/translate', { text: m.text, to: 'zh-Hans' });
+  const j = await api('api/translate', { text: m.text, to: 'zh-Hans' }, { timeout: 15000 });
   if (!j.ok) { toast(j.err || '翻译失败'); return; }
   const row = document.querySelector('.row[data-id="' + m.id + '"]');
   if (!row) return;

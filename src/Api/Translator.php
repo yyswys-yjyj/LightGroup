@@ -21,6 +21,9 @@ final class Translator {
 
     private static ?array $mem = null;
 
+    /** 一次翻译最多愿意等的秒数；到点就报错，别把 PHP 进程挂在外面 */
+    private const BUDGET = 8;
+
     /**
      * 返回 ['text' => 译文, 'from' => 识别语言, 'to' => 目标语言,
      *       'provider' => 通道代号, 'provider_name' => 给人看的名字]
@@ -32,27 +35,31 @@ final class Translator {
         if ($text === '') throw new \RuntimeException('没有要翻译的内容');
         if (mb_strlen($text) > 2000) throw new \RuntimeException('一次最多翻译 2000 字');
 
+        $deadline = microtime(true) + self::BUDGET;
         $lastErr = '';
         for ($attempt = 0; $attempt < 2; $attempt++) {
-            $s = self::session($attempt === 1);
+            if (microtime(true) >= $deadline) break;
+            $s = self::session($attempt === 1, $deadline);
             if ($s === null) continue;
-            $r = self::call($s, $text, $to);
+            if (microtime(true) >= $deadline) break;
+            $r = self::call($s, $text, $to, $deadline);
             if ($r['ok']) return self::named($r['data']);
             $lastErr = $r['err'];
         }
         // Bing 页面改版、限流、机房网络都可能让上面这条路不通，
         // 兜底换成 Google 的公开端点，用户那边不该因为一边挂了就翻不了。
         try {
-            return self::named(self::google($text, $to));
+            if (microtime(true) < $deadline) return self::named(self::google($text, $to, $deadline));
         } catch (\RuntimeException $e) {
             $lastErr = $e->getMessage();
         }
         // 两条路都不通才留一行记录，方便下次在 error log 里看是哪边挂了
         error_log('[translate] 全部通道失败：' . $lastErr);
-        throw new \RuntimeException($lastErr !== '' ? $lastErr : '翻译服务暂时不可用，稍后再试');
+        if ($lastErr === '') $lastErr = microtime(true) >= $deadline ? '翻译服务响应太慢，稍后再试' : '翻译服务暂时不可用，稍后再试';
+        throw new \RuntimeException($lastErr);
     }
 
-    private static function session(bool $force = false): ?array {
+    private static function session(bool $force = false, float $deadline = 0): ?array {
         if (!$force) {
             if (self::$mem !== null && (time() - (int) self::$mem['at']) < self::TTL) return self::$mem;
             $file = APP_ROOT . '/data' . self::CACHE;
@@ -68,11 +75,12 @@ final class Translator {
         $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
         foreach (self::HOSTS as $host) {
+            if ($deadline > 0 && microtime(true) >= $deadline) break;
             $jar = tempnam(sys_get_temp_dir(), 'lgbing');
             if ($jar === false) return null;
             $ch = curl_init($host . '/translator');
             curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_CONNECTTIMEOUT => 8,
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => self::left($deadline, 6), CURLOPT_CONNECTTIMEOUT => self::left($deadline, 3),
                 CURLOPT_USERAGENT => $ua, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
                 CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 4,
             ]);
@@ -107,14 +115,14 @@ final class Translator {
         return null;
     }
 
-    private static function call(array $s, string $text, string $to): array {
+    private static function call(array $s, string $text, string $to, float $deadline = 0): array {
         // 用拿凭据时落地的域名，cookie 只在那个域下有效
         $base = (string) ($s['base'] ?? 'https://cn.bing.com');
         $url = $base . '/ttranslatev3?isVertical=1&IG=' . rawurlencode($s['ig']) . '&IID=translator.5023.1';
         $body = http_build_query(['fromLang' => 'auto-detect', 'to' => $to, 'text' => $text, 'token' => $s['token'], 'key' => $s['key']]);
         $ch = curl_init($url);
         curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => self::left($deadline, 6), CURLOPT_CONNECTTIMEOUT => self::left($deadline, 3),
             CURLOPT_USERAGENT => $s['ua'],
             CURLOPT_COOKIE => $s['cookie'],
             CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body,
@@ -123,11 +131,17 @@ final class Translator {
         $out = (string) curl_exec($ch);
         $err = curl_error($ch);
 
-        if ($err !== '') return ['ok' => false, 'err' => '网络不通：' . $err];
+        if ($err !== '') {
+            error_log('[translate] bing: ' . $err);
+            return ['ok' => false, 'err' => '翻译服务连不上，稍后再试'];
+        }
         $j = json_decode($out, true);
-        if (!is_array($j)) return ['ok' => false, 'err' => '翻译服务返回了看不懂的东西'];
-        if (isset($j['statusCode'])) return ['ok' => false, 'err' => '翻译失败：' . (string) ($j['statusCode'] ?? '')];
-        if (!isset($j[0]['translations'][0]['text'])) return ['ok' => false, 'err' => '翻译失败'];
+        if (!is_array($j)) return ['ok' => false, 'err' => '翻译服务暂时不可用，稍后再试'];
+        if (isset($j['statusCode'])) {
+            error_log('[translate] bing status ' . (string) ($j['statusCode'] ?? ''));
+            return ['ok' => false, 'err' => '翻译服务暂时不可用，稍后再试'];
+        }
+        if (!isset($j[0]['translations'][0]['text'])) return ['ok' => false, 'err' => '翻译服务暂时不可用，稍后再试'];
 
         return ['ok' => true, 'data' => [
             'text' => (string) $j[0]['translations'][0]['text'],
@@ -141,13 +155,13 @@ final class Translator {
      * 兜底通道：Google 那个不需要 key 的公开端点，返回的是一个嵌套数组，
      * 每个分句的译文在第一列，拼起来就是整段。
      */
-    private static function google(string $text, string $to): array {
+    private static function google(string $text, string $to, float $deadline = 0): array {
         $tl = self::googleLang($to);
         $url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t'
              . '&tl=' . rawurlencode($tl) . '&q=' . rawurlencode($text);
         $ch = curl_init($url);
         curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => self::left($deadline, 6), CURLOPT_CONNECTTIMEOUT => self::left($deadline, 3),
             CURLOPT_USERAGENT => 'Mozilla/5.0', CURLOPT_FOLLOWLOCATION => true,
         ]);
         $out = (string) curl_exec($ch);
@@ -163,6 +177,14 @@ final class Translator {
         if ($buf === '') throw new \RuntimeException('翻译服务暂时不可用，稍后再试');
 
         return ['text' => $buf, 'from' => (string) ($j[2] ?? ''), 'to' => $tl, 'provider' => 'google'];
+    }
+
+    /** 剩余预算，最少 1 秒、最多 $max；没有预算概念时按 $max 走 */
+    private static function left(float $deadline, int $max): int {
+        if ($deadline <= 0) return $max;
+        $n = (int) ceil($deadline - microtime(true));
+        if ($n < 1) return 1;
+        return $n < $max ? $n : $max;
     }
 
     /** 给译文补上「谁翻的」，前端照着显示在译文下面 */

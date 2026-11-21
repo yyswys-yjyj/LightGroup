@@ -191,7 +191,7 @@ function showScopeMismatch(j) {
   document.body.appendChild(wrap);
 }
 
-export async function api(path, body) {
+export async function api(path, body, opts) {
   // 以 / 开头的路径当绝对路径：人类 REST（/u/api/v1）不在群前缀 BASE 底下
   const url = path.charAt(0) === '/' ? path : BASE + path;
   const opt = { method: body === undefined ? 'GET' : 'POST', headers: {}, credentials: 'same-origin' };
@@ -199,9 +199,21 @@ export async function api(path, body) {
     opt.headers['Content-Type'] = 'application/json';
     opt.body = JSON.stringify(body);
   }
+  // 个别请求（翻译、语音识别）可能被上游拖住，给个头，别让按钮转到天荒地老
+  const ctl = opts && opts.timeout ? new AbortController() : null;
+  let timer = null;
+  if (ctl) {
+    opt.signal = ctl.signal;
+    timer = setTimeout(function () { ctl.abort(); }, opts.timeout);
+  }
   let res;
   try { res = await fetch(url, opt); }
-  catch (e) { return { ok: false, err: '网络断了' }; }
+  catch (e) {
+    if (timer) clearTimeout(timer);
+    if (ctl && ctl.signal.aborted) return { ok: false, err: '服务器响应太慢，稍后再试' };
+    return { ok: false, err: '网络断了' };
+  }
+  if (timer) clearTimeout(timer);
   // 未登录时接口层可能直接 302 到 /login，fetch 会跟随并拿回一个 HTML 页面
   if (res.redirected && /\/login\b/.test(res.url)) { toLogin(); return { ok: false, err: '登录已失效，请重新登录' }; }
   const text = await res.text();

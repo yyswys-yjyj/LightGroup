@@ -249,7 +249,7 @@ export function openAdmin(button) {
 let aiAdapter = 'xsj';
 
 function adapterHint(a) {
-  if (a === 'xsj') return '小群（xsj）：老的小群接口，只能收发消息、看成员、等新消息。';
+  if (a === 'xsj') return '小群（xsj）：老版本，只能收发消息、看成员、等新消息。';
   if (a === 'api') return 'API（REST）：走 /g/api/v1，会话、好友、空间、通知都能用，适合自己写脚本或客户端。';
   return 'MCP：完整的 AI 账号，会话、好友、空间、通知都能用。';
 }

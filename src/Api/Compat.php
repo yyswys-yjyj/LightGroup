@@ -1933,7 +1933,7 @@ final class Compat {
         $voice = trim((string) ($msg["voice"] ?? ""));
         $voice = (string) preg_replace('#^\[voice\]#', "", $voice);
         if ($voice === "") Json::fail("这条不是语音");
-        if (!Stt::configured($pdo)) Json::fail("站点没开语音转文字");
+        if (!Stt::configured($pdo)) Json::fail("这个站还没开语音转文字");
         self::rateLimit($pdo, "stt:" . self::clientIp(), 30, "转写太频繁了，过几分钟再试");
 
         $res = Stt::transcribe($pdo, $voice);

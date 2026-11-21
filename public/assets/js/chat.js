@@ -491,7 +491,7 @@ function openAtPicker() {
 // ---------- 发送 ----------
 async function send(payload) {
   if (S.mode === 'legacy') {
-    if (!isPublicConv()) return { ok: false, err: '私聊接口还没准备好' };
+    if (!isPublicConv()) return { ok: false, err: '私聊暂时打不开，稍后再试' };
     return api('api/send', payload);
   }
   const body = Object.assign({ conv: S.curId }, payload);
