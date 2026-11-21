@@ -3,7 +3,7 @@ import { S, h, iconBtn, toast, api, go, openSheet, closeSheet, emit } from './co
 import { avatar } from './avatar.js';
 import { canModerate, refreshBars } from './msg.js';
 import { openProfileCard } from './people.js';
-import { openQr } from './qr.js';
+import { openQr, linkFor } from './qr.js';
 import { convById } from './conv.js';
 
 let el = null;
@@ -126,7 +126,7 @@ function paintGroup(body) {
 
 function qr() {
   const name = (S.cur && (S.cur.title || S.cur.name)) || '群';
-  openQr(name + ' 的二维码', 'lightgroup://group/' + S.curId);
+  openQr(name + ' 的二维码', linkFor('group', S.curId));
 }
 
 function noticeSheet() {
@@ -180,7 +180,7 @@ function paintDm(body) {
 
   body.appendChild(row('备注', null, function () { remarkSheet(m); }));
   body.appendChild(row('二维码', null, function () {
-    openQr((m.name || '') + ' 的二维码', 'lightgroup://user/' + m.id);
+    openQr((m.name || '') + ' 的二维码', linkFor('user', m.id));
   }));
   body.appendChild(row('拉入黑名单', 'danger', function () { block(m); }));
   body.appendChild(row('删除好友', 'danger', function () { unfriend(m); }));

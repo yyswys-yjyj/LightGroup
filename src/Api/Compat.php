@@ -66,7 +66,8 @@ final class Compat {
             case "api/session": self::sessionLogin($pdo, $scope); break;
             case "api/login":   self::passwordLogin($pdo, $scope); break;
             case "api/logout":  Session::logout(); Json::ok(); break;
-            case "api/translate": self::translate($pdo, $scope); break;
+            // 翻译要等外部服务：先放掉会话锁，否则同一浏览器的其它请求全排队
+            case "api/translate": lg_session_release(); self::translate($pdo, $scope); break;
             case "api/notice":  self::noticeSet($pdo, $scope); break;
             case "api/pin":     self::pinSet($pdo, $scope); break;
             case "api/todo":    self::todoOp($pdo, $scope); break;
@@ -88,7 +89,7 @@ final class Compat {
             case "api/dm/open":       self::dmOpen($pdo, $scope); break;
             case "api/dm/invite":     self::dmInvite($pdo, $scope); break;
             case "api/dm/join":       self::dmJoin($pdo, $scope); break;
-            case "api/voice/text":    self::voiceText($pdo, $scope); break;
+            case "api/voice/text":    lg_session_release(); self::voiceText($pdo, $scope); break;
             case "api/themes":          self::themes($pdo, $scope); break;
             case "api/theme/set":       self::themeSet($pdo, $scope); break;
             case "api/theme/pack/save": self::themePackSave($pdo, $scope); break;

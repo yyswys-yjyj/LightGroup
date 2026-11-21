@@ -1,7 +1,7 @@
 // LightGroup · 私群详情：公告、成员、权限操作
 import { S, h, icon, iconBtn, btn, field, toast, api, go, openSheet, closeSheet } from './core.js';
 import { avatar } from './avatar.js';
-import { openQr } from './qr.js';
+import { openQr, linkFor } from './qr.js';
 import * as conv from './conv.js';
 
 let hostRef = null;
@@ -59,7 +59,7 @@ function head(title, sub, acts) {
 function isMe(m) { return !!(m && S.me && String(m.id) === String(S.me.id)); }
 
 function groupQr(g) {
-  openQr((g.title || '群聊') + ' 的二维码', 'lightgroup://group/' + curId,
+  openQr((g.title || '群聊') + ' 的二维码', linkFor('group', curId),
     '群里的人扫这个码直接进群聊；不在群里的人扫了只能看到群资料。');
 }
 

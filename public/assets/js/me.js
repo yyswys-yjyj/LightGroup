@@ -8,7 +8,7 @@ import {
 } from './core.js';
 import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
-import { openQr } from './qr.js';
+import { openQr, linkFor } from './qr.js';
 import { loadMembers } from './people.js';
 
 // ---------- 个人首页 ----------
@@ -99,7 +99,7 @@ function paintMeHome(host) {
   const grid = h('div', 'me-grid');
   grid.appendChild(meEntry('fa-pen', '我的资料', '昵称、头像、介绍', function () { meView = 'edit'; paintMe(); }));
   grid.appendChild(meEntry('fa-qrcode', '我的二维码', '别人扫一下就能找到我', function () {
-    openQr('我的二维码', 'lightgroup://user/' + String(me.id || ''), '别人扫这个码能直接打开你的资料页。');
+    openQr('我的二维码', linkFor('user', me.id || ''), '别人扫这个码能直接打开你的资料页。');
   }));
   grid.appendChild(meEntry('fa-robot', '我的 AI 账号', aiN ? aiN + ' 个，适配器与 token' : '还没有，去建一个', function () { meView = 'ai'; paintMe(); }));
   grid.appendChild(meEntry('fa-palette', '气泡与外观', '深浅、主题、气泡、壁纸', function () { go('#/appearance'); }));

@@ -3,7 +3,6 @@
 // profile.js 不 import people.js（会成环），好友/私聊那些能力由 people.js 用 initProfile() 注进来。
 import { S, h, icon, btn, field, toast, api, go, openSheet, closeSheet, pageHead, applyLayout } from './core.js';
 import { avatar, uidOf } from './avatar.js';
-import { openQr } from './qr.js';
 
 // ---------- markdown 渲染器 ----------
 // 自己写的小渲染器，不引任何外部库：

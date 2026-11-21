@@ -1,4 +1,4 @@
-<?php /** @var array $site */ /** @var string $base */ /** @var array|null $bootMe */
+<?php /** @var array $site */ /** @var string $base */ /** @var array|null $bootMe */ /** @var array|null $scope */
 $appVer = (int) max(
     @filemtime(__DIR__ . "/../../../public/assets/app.css") ?: 0,
     @filemtime(__DIR__ . "/../../../public/assets/base.css") ?: 0
@@ -79,6 +79,12 @@ window.__LG_BOOT__ = <?= json_encode([
     "site"    => $site,
     "base"    => $base,
     "me"      => $bootMe,
+    // 当前作用域：二维码里带它，扫码时用来分辨「同一个群」还是「本站别的群」
+    "scope"   => isset($scope) && is_array($scope) ? [
+        "id" => (int) ($scope["id"] ?? 0),
+        "slug" => (string) ($scope["slug"] ?? ""),
+        "title" => (string) ($scope["title"] ?? ""),
+    ] : null,
     // 站内路径（全站单一入口，路由里没有 .php）
     "urls"    => [
         "app"    => \LightGroup\Web\Url::to("/app"),

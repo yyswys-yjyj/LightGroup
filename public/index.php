@@ -107,9 +107,10 @@ if ($path === "/app") {
     }
     // 页面里的接口地址跟着成员所在的群走（默认群的 slug 是空串）
     $base = "/g/";
-    $st = $pdo->prepare("SELECT slug FROM scopes WHERE id = ? LIMIT 1");
+    $st = $pdo->prepare("SELECT id, slug, title FROM scopes WHERE id = ? LIMIT 1");
     $st->execute([(int) $me["scope_id"]]);
-    $slug = (string) ($st->fetchColumn() ?: "");
+    $scopeRow = $st->fetch() ?: null;
+    $slug = $scopeRow ? (string) ($scopeRow["slug"] ?? "") : "";
     if ($slug !== "") $base = "/g/" . $slug . "/";
     View::render("app-shell", [
         "site"   => Site::info(),
@@ -121,6 +122,11 @@ if ($path === "/app") {
             "kind" => (string) $me["kind"],
             "theme" => (string) ($me["theme"] ?? ""),
         ],
+        "scope" => $scopeRow ? [
+            "id" => (int) $scopeRow["id"],
+            "slug" => (string) ($scopeRow["slug"] ?? ""),
+            "title" => (string) ($scopeRow["title"] ?? ""),
+        ] : null,
     ]);
     exit;
 }

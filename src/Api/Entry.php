@@ -23,13 +23,22 @@ final class Entry
 {
     public static function handle(): void
     {
+        $rest = self::rest();
+
+        // 站点公开信息：不读会话、不发 cookie —— 别的站点扫码时直接来取
+        if ($rest === "api/about" || str_starts_with($rest, "api/about/")) {
+            if (!lg_installed()) {
+                Json::fail("站点尚未安装", 404);
+            }
+            About::handle();
+            return;
+        }
+
         lg_session();
 
         if (!lg_installed()) {
             Json::fail("站点尚未安装", 404);
         }
-
-        $rest = self::rest();
 
         // /g/mcp 是给 AI 用的 JSON-RPC 端点，没有群路径这一段。
         // 必须在拆 slug 之前拦下来，否则 "mcp" 会被当成群路径去开网页。
@@ -102,7 +111,17 @@ final class Entry
                 // 首屏配色要用：members.theme 存的是「模式-主题」
                 "theme" => (string) ($me["theme"] ?? ""),
             ];
-            View::render("app-shell", ["site" => $site, "base" => $basePath, "bootMe" => $bootMe]);
+            View::render("app-shell", [
+                "site" => $site,
+                "base" => $basePath,
+                "bootMe" => $bootMe,
+                // 二维码要带作用域：前端扫描时靠它判断是不是同一个群
+                "scope" => [
+                    "id" => (int) $scope["id"],
+                    "slug" => (string) ($scope["slug"] ?? ""),
+                    "title" => (string) ($scope["title"] ?? ""),
+                ],
+            ]);
             exit;
         }
 

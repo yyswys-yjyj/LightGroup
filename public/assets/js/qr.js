@@ -1,15 +1,25 @@
 // LightGroup · 二维码：生成弹层、解码（BarcodeDetector / jsQR）、扫码跳转
-import { BASE, S, h, btn, toast, api, go, openSheet, closeSheet } from './core.js';
+import { BASE, BOOT, S, h, btn, toast, api, go, openSheet, closeSheet } from './core.js';
 
-const RE_USER = /^lightgroup:\/\/user\/([A-Za-z0-9_]+)$/i;
-const RE_GROUP = /^lightgroup:\/\/group\/(\d+)$/i;
+/** 本群的作用域 id：二维码带它，扫到别的群时能分辨出来 */
+function myScopeId() {
+  return (BOOT.scope && BOOT.scope.id) ? String(BOOT.scope.id) : '';
+}
+
+/** 生成一张本站的二维码内容：带站点与作用域，避免不同站点/不同群串在一起 */
+export function linkFor(kind, id) {
+  const q = ['site=' + encodeURIComponent(location.origin)];
+  const sid = myScopeId();
+  if (sid) q.push('scope=' + encodeURIComponent(sid));
+  return 'lightgroup://' + kind + '/' + encodeURIComponent(String(id)) + '?' + q.join('&');
+}
 
 /** 二维码图片地址（服务端生成 SVG） */
 export function qrSrc(data, px) {
   return BASE + 'api/qr?d=' + encodeURIComponent(String(data)) + '&s=' + (px || 560);
 }
 
-/** 弹层里放一张二维码，附复制内容与下载 */
+/** 弹层里放一张二维码，附复制内容与下载；只给复制按钮，不把原文铺在界面上 */
 export function openQr(title, data, hint) {
   const wrap = h('div', 'qr-wrap');
   const img = document.createElement('img');
@@ -19,7 +29,6 @@ export function openQr(title, data, hint) {
   img.height = 220;
   img.src = qrSrc(data, 560);
   wrap.appendChild(img);
-  wrap.appendChild(h('div', 'qr-text', String(data)));
   if (hint) wrap.appendChild(h('div', 'qr-hint', hint));
 
   const row = h('div', 'qr-acts');
@@ -43,16 +52,54 @@ export function openQr(title, data, hint) {
   return wrap;
 }
 
+/** lightgroup://user/h_1?site=...&scope=1（site/scope 可缺省，老码照样能用） */
+function parseLg(raw) {
+  const t = String(raw || '').trim();
+  if (t.slice(0, 11).toLowerCase() !== 'lightgroup:') return null;
+  let rest = t.slice(11);
+  if (rest.slice(0, 2) !== '//') return null;
+  rest = rest.slice(2);
+  let qs = '';
+  const qi = rest.indexOf('?');
+  if (qi >= 0) { qs = rest.slice(qi + 1); rest = rest.slice(0, qi); }
+  const si = rest.indexOf('/');
+  if (si <= 0) return null;
+  const kind = rest.slice(0, si).toLowerCase();
+  let id = rest.slice(si + 1);
+  try { id = decodeURIComponent(id); } catch (e) { void e; }
+  const q = new URLSearchParams(qs);
+  return { kind: kind, id: id, site: q.get('site') || '', scope: q.get('scope') || '', raw: t };
+}
+
+function siteOrigin(site) {
+  try { return new URL(String(site)).origin; } catch (e) { return ''; }
+}
+
+function isSameSite(site) {
+  const o = siteOrigin(site);
+  return o !== '' && o === location.origin;
+}
+
 /** 扫码结果统一入口：认得出就跳，认不出就解释 */
 export async function followScan(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  let m;
-  if ((m = RE_USER.exec(t))) { await openUserScan(m[1]); return true; }
-  if ((m = RE_GROUP.exec(t))) { await openGroupScan(parseInt(m[1], 10) || 0); return true; }
-  if (/^https?:\/\//i.test(t)) { warnExternal(t); return true; }
+  const p = parseLg(t);
+  if (p) { await routeLg(p); return true; }
+  const low = t.toLowerCase();
+  if (low.startsWith('http://') || low.startsWith('https://')) { warnExternal(t); return true; }
   unsupported(t);
   return true;
+}
+
+async function routeLg(p) {
+  // 老码没有 site：按本站处理
+  if (p.site && !isSameSite(p.site)) { await otherSite(p); return; }
+  const mine = myScopeId();
+  if (p.scope && mine && String(p.scope) !== mine) { otherScope(p); return; }
+  if (p.kind === 'user') { await openUserScan(p.id); return; }
+  if (p.kind === 'group') { await openGroupScan(parseInt(p.id, 10) || 0); return; }
+  unsupported(p.raw);
 }
 
 async function openUserScan(uid) {
@@ -74,6 +121,81 @@ async function openGroupScan(id) {
   if (!j || !j.ok) { toast((j && j.err) || '这个群找不到了'); return; }
   if (j.group && j.group.isMember) go('#/c/' + id);
   else go('#/pg/' + id);
+}
+
+/** 拉对方站点的公开信息；拿不到就返回 null（对方可能还没升级） */
+async function fetchAbout(origin) {
+  const ctl = ('AbortController' in window) ? new AbortController() : null;
+  const timer = ctl ? setTimeout(function () { ctl.abort(); }, 5000) : 0;
+  try {
+    const r = await fetch(origin + '/g/api/about', {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      headers: { Accept: 'application/json' },
+      signal: ctl ? ctl.signal : undefined,
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j && j.ok && j.site) ? j.site : null;
+  } catch (e) {
+    void e;
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** 别的站点：取它的公开信息并展示，不自动跳过去 */
+async function otherSite(p) {
+  const origin = siteOrigin(p.site) || String(p.site);
+  const about = await fetchAbout(origin);
+  const wrap = h('div', 'qr-other');
+  wrap.appendChild(h('div', 'qr-other-t', '这是另一个站点的二维码'));
+
+  if (about) {
+    const card = h('div', 'qr-site');
+    const im = document.createElement('img');
+    im.className = 'qr-site-i';
+    im.alt = '';
+    im.src = String(about.icon || (origin + '/assets/favicon.svg'));
+    card.appendChild(im);
+    const main = h('div', 'qr-site-m');
+    main.appendChild(h('b', 'qr-site-n', String(about.name || origin)));
+    if (about.intro) main.appendChild(h('div', 'qr-site-d', String(about.intro)));
+    const bits = [];
+    if (about.stats) {
+      if (about.stats.members) bits.push(about.stats.members + ' 位成员');
+      if (about.stats.scopes) bits.push(about.stats.scopes + ' 个群');
+    }
+    if (about.version) bits.push('v' + about.version);
+    if (bits.length) main.appendChild(h('div', 'qr-site-b', bits.join(' · ')));
+    card.appendChild(main);
+    wrap.appendChild(card);
+    wrap.appendChild(h('div', 'qr-hint', '这个码属于上面这个站点。扫错了站点的话，加不了对方的群或人。'));
+  } else {
+    wrap.appendChild(h('div', 'qr-hint', '这个码属于站点 ' + origin + '。对方站点没有提供公开信息，可能还没升级。'));
+  }
+
+  const row = h('div', 'qr-acts');
+  row.appendChild(btn('关闭', 'btn btn-sm btn-ghost', function () { closeSheet(); }));
+  row.appendChild(btn('打开这个站点', 'btn btn-sm btn-primary', function () {
+    closeSheet();
+    window.open(origin + '/', '_blank', 'noopener,noreferrer');
+  }));
+  wrap.appendChild(row);
+  openSheet('扫到别的站点', wrap, { size: 'sm' });
+}
+
+/** 同一个站点、不同的群 */
+function otherScope(p) {
+  const wrap = h('div', 'qr-warn');
+  wrap.appendChild(h('div', 'qr-warn-t', '这是别的群的二维码'));
+  wrap.appendChild(h('div', 'qr-hint', '这张码属于本站的另一个群，群和群之间不互通。到那个群里再扫一次就行。'));
+  const row = h('div', 'qr-acts');
+  row.appendChild(btn('知道了', 'btn btn-sm btn-primary', function () { closeSheet(); }));
+  wrap.appendChild(row);
+  openSheet('扫到别的群', wrap, { size: 'sm' });
 }
 
 function warnExternal(url) {
