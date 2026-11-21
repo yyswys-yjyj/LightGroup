@@ -192,7 +192,8 @@ function showScopeMismatch(j) {
 }
 
 export async function api(path, body) {
-  const url = BASE + path;
+  // 以 / 开头的路径当绝对路径：人类 REST（/u/api/v1）不在群前缀 BASE 底下
+  const url = path.charAt(0) === '/' ? path : BASE + path;
   const opt = { method: body === undefined ? 'GET' : 'POST', headers: {}, credentials: 'same-origin' };
   if (body !== undefined) {
     opt.headers['Content-Type'] = 'application/json';

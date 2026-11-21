@@ -69,9 +69,18 @@ final class V1
                         "GET  /moments", "POST /moments", "POST /moments/{id}/like", "POST /moments/{id}/comment",
                         "GET  /notices", "POST /notices/{id}/read",
                         "GET  /profile", "PUT  /profile", "POST /upload",
+                        "GET  /keys", "POST /keys", "DELETE /keys/{id}",
                     ],
                 ]);
                 return;
+            }
+
+            // 签 key 这两种身份都要有：网页里那个「创建一把 API Key」按钮只带会话，
+            // 第三方客户端则带 token，所以这一个端点在 auth 之前单独处理。
+            if ($parts[0] === "keys") {
+                // REST 平时不起会话，只有这个端点要用网页登录态当兜底
+                lg_session();
+                self::keys($pdo, $who, $parts, $method);
             }
 
             [$me, $scope] = self::auth($pdo, $who);
@@ -113,11 +122,15 @@ final class V1
         $me = $st->fetch();
         if (!$me) {
             $st = $pdo->prepare(
-                "SELECT m.* FROM api_keys k JOIN members m ON m.id = k.member_id"
+                "SELECT k.id AS key_id, m.* FROM api_keys k JOIN members m ON m.id = k.member_id"
                 . " WHERE k.key_hash = ? AND k.revoked_at IS NULL LIMIT 1"
             );
             $st->execute([$hash]);
             $me = $st->fetch();
+            if ($me) {
+                $pdo->prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
+                    ->execute([lg_now(), (int) $me["key_id"]]);
+            }
         }
         if (!$me) self::fail("token 或 API key 不对");
         if (!empty($me["deleted_at"])) self::fail("账号已注销");
@@ -153,6 +166,59 @@ final class V1
 
         $pdo->prepare("UPDATE members SET last_seen_at = ? WHERE id = ?")->execute([lg_now(), (int) $me["id"]]);
         return [$me, $scope];
+    }
+
+    // ---------- API Key ----------
+
+    /**
+     * API Key 的增删查。带 Bearer / ?k / ?key 就按 token 认人，
+     * 什么都没带就用网页会话——个人页那个按钮就是这么用的。
+     */
+    private static function keys(PDO $pdo, string $who, array $parts, string $method): void
+    {
+        $hdr = (string) ($_SERVER["HTTP_AUTHORIZATION"] ?? "");
+        $hasToken = $hdr !== "" || isset($_GET["k"]) || isset($_GET["key"]);
+        $me = $hasToken ? self::auth($pdo, $who)[0] : Session::member($pdo);
+        if (!$me) self::fail("请先登录网页，或带上 Authorization: Bearer <token>");
+
+        if ($method === "GET") {
+            $st = $pdo->prepare(
+                "SELECT id, name, created_at, last_used_at, revoked_at FROM api_keys"
+                . " WHERE member_id = ? ORDER BY id DESC"
+            );
+            $st->execute([(int) $me["id"]]);
+            $rows = [];
+            foreach ($st->fetchAll() as $r) {
+                $rows[] = [
+                    "id"      => (int) $r["id"],
+                    "name"    => (string) $r["name"],
+                    "created" => (int) $r["created_at"],
+                    "used"    => $r["last_used_at"] === null ? null : (int) $r["last_used_at"],
+                    "revoked" => !empty($r["revoked_at"]),
+                ];
+            }
+            Json::out(["ok" => true, "keys" => $rows]);
+        }
+
+        if ($method === "POST") {
+            $name = trim((string) Input::get("name"));
+            if ($name === "") $name = "API Key";
+            if (mb_strlen($name) > 40) self::fail("名字太长");
+            $raw = "lgk_" . bin2hex(random_bytes(20));
+            $pdo->prepare("INSERT INTO api_keys (member_id, name, key_hash, created_at) VALUES (?,?,?,?)")
+                ->execute([(int) $me["id"], $name, Token::hash($raw), lg_now()]);
+            // 明文只在这一次出现，之后库里只有 hash
+            Json::out(["ok" => true, "id" => (int) $pdo->lastInsertId(), "name" => $name, "key" => $raw]);
+        }
+
+        if ($method === "DELETE" && isset($parts[1]) && (int) $parts[1] > 0) {
+            $id = (int) $parts[1];
+            $pdo->prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND member_id = ? AND revoked_at IS NULL")
+                ->execute([lg_now(), $id, (int) $me["id"]]);
+            Json::out(["ok" => true, "revoked" => $id]);
+        }
+
+        self::fail("这个接口只认 GET、POST、DELETE", 405);
     }
 
     // ---------- 端点 ----------

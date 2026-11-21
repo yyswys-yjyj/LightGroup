@@ -397,7 +397,7 @@ function saveProfile() {
 }
 
 function createApiKey() {
-  api('api/v1/keys', { name: '网页客户端' }).then(function (j) {
+  api('/u/api/v1/keys', { name: '网页客户端' }).then(function (j) {
     if (!j.ok) { toast(j.err || '创建失败'); return; }
     keyBox('API Key 只显示这一次：', j.key || '');
   }).catch(function (e) { toast(String((e && e.message) || e)); });
