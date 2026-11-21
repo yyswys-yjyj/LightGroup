@@ -149,6 +149,9 @@ final class Profile {
             "avatar" => (string) ($m["avatar"] ?? ""),
             "joined" => (int) ($m["created_at"] ?? 0),
         ];
+        if ((string) $m["kind"] === "ai") {
+            $out["adapter"] = self::adapterOf($m);
+        }
         if ((string) $m["kind"] === "ai" && !empty($m["owner_id"])) {
             $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
             $st->execute([(int) $m["owner_id"]]);
@@ -184,7 +187,14 @@ final class Profile {
             "model"    => "",
             "bio"      => (string) ($m["bio"] ?? ""),
             "invite"   => (string) $scope["invite"],
+            "adapter"  => $isAi ? self::adapterOf($m) : "",
         ];
+    }
+
+    /** AI 的适配器：xsj 只能收发消息，mcp 是完整账号，api 走 REST */
+    private static function adapterOf(array $m): string {
+        $a = (string) ($m["adapter"] ?? "");
+        return in_array($a, ["xsj", "mcp", "api"], true) ? $a : "mcp";
     }
 
     /** 简介清洗：保留换行与空格，只把 CRLF 归一、去掉 \0 */

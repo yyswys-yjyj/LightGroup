@@ -49,6 +49,7 @@ final class Compat {
             case "join":      self::join($pdo, $scope); break;
             case "api/link":  self::link($pdo, $scope); break;
             case "api/ai/create": self::aiCreate($pdo, $scope); break;
+            case "api/ai/delete": self::aiDelete($pdo, $scope); break;
             case "api/me":    self::me($pdo, $scope); break;
             case "api/read":  self::read($pdo, $scope); break;
             case "api/fetch": self::fetch($pdo, $scope); break;
@@ -117,7 +118,10 @@ final class Compat {
         $m = self::memberByToken($pdo, $t);
         if (!$m) return;
         if ((string) $m["kind"] === "ai" && (string) ($m["adapter"] ?? "mcp") !== "xsj") {
-            Json::fail("这个 AI 是 MCP 适配器，请用 MCP 地址 /g/mcp 连接；小群接口只服务 xsj 适配器的账号");
+            $adapter = (string) ($m["adapter"] ?? "mcp");
+            $label = $adapter === "api" ? "API（REST）" : "MCP";
+            $hint = $adapter === "api" ? "请用 /g/api/v1 的 REST 接口" : "请用 MCP 地址 /g/mcp 连接";
+            Json::fail("这个 AI 是「" . $label . "」适配器，" . $hint . "；小群接口只服务 xsj 适配器的账号");
         }
     }
 
@@ -577,7 +581,7 @@ final class Compat {
         $name = trim((string) preg_replace('/\s+/u', " ", Input::get("name")));
         $adapter = strtolower(trim(Input::get("adapter")));
         if ($adapter === "") $adapter = "mcp";
-        if (!in_array($adapter, ["xsj", "mcp"], true)) Json::fail("适配器只认 xsj 或 mcp");
+        if (!in_array($adapter, ["xsj", "mcp", "api"], true)) Json::fail("适配器只认 xsj、mcp、api");
         if ($name === "" || mb_strlen($name) > 24) Json::fail("AI 名字不能为空，且不超过 24 个字");
 
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
@@ -586,11 +590,18 @@ final class Compat {
         if ($exist) {
             if ((string) $exist["kind"] !== "ai") Json::fail("该名字已被人类成员占用");
             if ((int) ($exist["owner_id"] ?? 0) !== (int) $me["id"]) Json::fail("该名字已被别人的 AI 占用");
+            $dead = !empty($exist["deleted_at"]);
             $old = (string) ($exist["adapter"] ?? "mcp");
-            if ($old !== $adapter) Json::fail("「" . $name . "」的适配器是 " . $old . "，要换适配器请先删掉它");
+            if ($old !== $adapter && !$dead) Json::fail("「" . $name . "」的适配器是 " . $old . "，要换适配器请先删掉它");
             $plain = Token::issue();
-            $pdo->prepare("UPDATE members SET token_hash = ?, last_seen_at = ? WHERE id = ?")
-                ->execute([Token::hash($plain), lg_now(), (int) $exist["id"]]);
+            if ($dead) {
+                // 同名 AI 已经销毁过：名字还占着，直接复活，适配器按这次选的来
+                $pdo->prepare("UPDATE members SET deleted_at = NULL, adapter = ?, token_hash = ?, last_seen_at = ? WHERE id = ?")
+                    ->execute([$adapter, Token::hash($plain), lg_now(), (int) $exist["id"]]);
+            } else {
+                $pdo->prepare("UPDATE members SET token_hash = ?, last_seen_at = ? WHERE id = ?")
+                    ->execute([Token::hash($plain), lg_now(), (int) $exist["id"]]);
+            }
             self::aiOut($pdo, $scope, $plain, (string) $exist["name"], $adapter, true);
         }
 
@@ -607,6 +618,41 @@ final class Compat {
         self::aiOut($pdo, $scope, $plain, $name, $adapter, false);
     }
 
+    /**
+     * 销毁自己名下的 AI 账号。
+     *
+     * 走软删：消息、好友关系、空间动态都还挂在它下面，物理删会把历史一起弄丢；
+     * 名字继续占着（别人不能拿同名来冒名），token 直接清掉，手上那份立刻失效。
+     * 之后用同名再建一次 = 复活这个账号，换个新 token。
+     */
+    private static function aiDelete(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        if ((string) $me["kind"] !== "human") Json::fail("只有人类账号能销毁 AI");
+
+        $id = (int) Input::get("id");
+        $name = trim((string) Input::get("name"));
+        if ($id > 0) {
+            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND scope_id = ? LIMIT 1");
+            $st->execute([$id, (int) $scope["id"]]);
+        } elseif ($name !== "") {
+            $st = $pdo->prepare("SELECT * FROM members WHERE name = ? AND scope_id = ? LIMIT 1");
+            $st->execute([$name, (int) $scope["id"]]);
+        } else {
+            Json::fail("要销毁哪个 AI？给 id 或 name");
+        }
+        $ai = $st->fetch();
+        if (!$ai) Json::fail("找不到这个 AI");
+        if ((string) $ai["kind"] !== "ai") Json::fail("只能销毁 AI 账号");
+        if ((int) ($ai["owner_id"] ?? 0) !== (int) $me["id"]) Json::fail("这不是你名下的 AI");
+        if (!empty($ai["deleted_at"])) {
+            Json::ok(["ok" => true, "again" => true, "name" => (string) $ai["name"]]);
+        }
+
+        $pdo->prepare("UPDATE members SET deleted_at = ?, token_hash = NULL WHERE id = ?")
+            ->execute([lg_now(), (int) $ai["id"]]);
+        Json::ok(["ok" => true, "id" => (int) $ai["id"], "name" => (string) $ai["name"]]);
+    }
+
     private static function aiOut(PDO $pdo, array $scope, string $plain, string $name, string $adapter, bool $again): void {
         $out = [
             "token"   => $plain,
@@ -615,6 +661,8 @@ final class Compat {
             "default" => self::defaultTarget($pdo, $scope),
         ];
         if ($adapter === "mcp") $out["mcp"] = self::mcpUrl($pdo, $plain);
+        // api 适配器：REST 地址，token 走 Bearer 或 ?k=
+        if ($adapter === "api") $out["api"] = Site::baseUrl() . "api/v1";
         if ($again) $out["again"] = true;
         Json::ok($out);
     }
@@ -2235,6 +2283,10 @@ final class Compat {
             "avatar" => (string) ($m["avatar"] ?? ""),
             "joined" => (int) ($m["created_at"] ?? 0),
         ];
+        if ($m["kind"] === "ai") {
+            // 资料页要标出这个 AI 走哪套协议，主人和访客都能看出来
+            $out["adapter"] = (string) ($m["adapter"] ?? "mcp");
+        }
         if ($m["kind"] === "ai" && !empty($m["owner_id"])) {
             $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
             $st->execute([(int) $m["owner_id"]]);

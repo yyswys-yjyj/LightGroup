@@ -9,17 +9,30 @@ use LightGroup\Web\Site;
 use PDO;
 
 /**
- * /g/api/v1 —— 面向第三方客户端的 REST 协议。
+ * REST v1 —— 两套账号共用一套实现，只是入口与鉴权不同：
+ *   /g/api/v1   给 AI 账号（适配器必须是 api），Bearer 用 AI 的 token
+ *   /u/api/v1   给人类账号（做 App / 自己写客户端用），Bearer 用人类 token 或 API Key
  *
- * 和 /g/mcp（MCP 适配器）是两套并行的协议：这里用普通的 HTTP + JSON，
- * 适合不需要 MCP 的客户端（脚本、机器人、以后的 onebot11 适配器）。
+ * 和 /g/mcp（MCP 适配器）、/g/api/*（xsj 适配器）是三条并行的协议。
  *
- * 鉴权：Authorization: Bearer <token>，或 ?k=<AI 的 token> / ?key=<API key>。
+ * 鉴权：Authorization: Bearer <token>，或 ?k=<token> / ?key=<API key>。
  * 成功都是 {"ok":true,...}，失败是 {"ok":false,"err":"..."}，HTTP 状态码 400。
  */
 final class V1
 {
+    /** AI 账号的入口：/g/api/v1 */
     public static function handle(string $rest): void
+    {
+        self::serve($rest, "api/v1", "ai");
+    }
+
+    /** 人类账号的入口：/u/api/v1 */
+    public static function handleUser(string $rest): void
+    {
+        self::serve($rest, "u/api/v1", "human");
+    }
+
+    private static function serve(string $rest, string $base, string $who): void
     {
         header("Content-Type: application/json; charset=utf-8");
         header("Cache-Control: no-store");
@@ -35,15 +48,17 @@ final class V1
             $pdo = Db::connect();
             if (!lg_installed()) self::fail("站点尚未安装", 404);
 
-            $path = trim(substr($rest, strlen("api/v1")), "/");
+            $path = trim(substr($rest, strlen($base)), "/");
             $parts = $path === "" ? [] : explode("/", $path);
             $method = strtoupper((string) ($_SERVER["REQUEST_METHOD"] ?? "GET"));
 
+            $human = $who === "human";
             if (!$parts) {
                 Json::out([
                     "ok"      => true,
-                    "name"    => "LightGroup API",
+                    "name"    => $human ? "LightGroup User API" : "LightGroup AI API",
                     "version" => "1",
+                    "for"     => $human ? "人类账号（网页里登录的那个身份）" : "AI 账号（适配器为 api）",
                     "auth"    => "Authorization: Bearer <token>，或 ?k=<token> / ?key=<API key>",
                     "endpoints" => [
                         "GET  /me", "GET  /members", "GET  /conversations",
@@ -59,7 +74,7 @@ final class V1
                 return;
             }
 
-            [$me, $scope] = self::auth($pdo);
+            [$me, $scope] = self::auth($pdo, $who);
 
             if ($parts[0] === "me" && $method === "GET") self::me($pdo, $scope, $me);
             if ($parts[0] === "members" && $method === "GET") self::members($pdo, $scope, $me);
@@ -83,7 +98,7 @@ final class V1
 
     // ---------- 鉴权 ----------
 
-    private static function auth(PDO $pdo): array
+    private static function auth(PDO $pdo, string $who): array
     {
         $token = "";
         $h = (string) ($_SERVER["HTTP_AUTHORIZATION"] ?? "");
@@ -107,6 +122,21 @@ final class V1
         if (!$me) self::fail("token 或 API key 不对");
         if (!empty($me["deleted_at"])) self::fail("账号已注销");
         if ((int) $me["banned"] === 1) self::fail("账号已被封禁");
+
+        // 两条入口认两种身份：这里错用会让人以为是 token 挂了
+        $kind = (string) ($me["kind"] ?? "human");
+        $adapter = (string) ($me["adapter"] ?? "mcp");
+        if ($who === "human") {
+            if ($kind !== "human") self::fail("这是给人类账号的接口；AI 账号用 /g/api/v1");
+        } else {
+            if ($kind !== "ai") self::fail("这是给 AI 账号的接口；人类账号用 /u/api/v1");
+            if ($adapter !== "api") {
+                $label = $adapter === "xsj" ? "小群（xsj）" : ($adapter === "mcp" ? "MCP" : $adapter);
+                $hint = $adapter === "mcp" ? "请连 /g/mcp" : "请用 /g/api/read、/g/api/send 这些老接口";
+                self::fail("这个 AI 是「" . $label . "」适配器，不能走 REST；" . $hint
+                    . "。要用 REST 请新建一个 API 适配器的 AI");
+            }
+        }
 
         $slug = trim((string) ($_GET["scope"] ?? ""));
         if ($slug !== "") {
@@ -134,7 +164,8 @@ final class V1
             "id"      => self::mid($me),
             "name"    => (string) $me["name"],
             "kind"    => (string) $me["kind"],
-            "adapter" => (string) ($me["adapter"] ?? ""),
+            // 人类账号没有适配器概念，别把库里那个默认值（mcp）露出去
+            "adapter" => (string) $me["kind"] === "ai" ? (string) ($me["adapter"] ?? "mcp") : "",
             "owner"   => (int) ($me["owner_id"] ?? 0) > 0 ? Conv::nameOf($pdo, (int) $me["owner_id"]) : "",
             "bio"     => (string) ($me["bio"] ?? ""),
             "scope"   => ["id" => (int) $scope["id"], "slug" => (string) ($scope["slug"] ?? ""), "title" => (string) ($scope["title"] ?? "")],

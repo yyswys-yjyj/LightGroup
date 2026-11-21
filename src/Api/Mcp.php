@@ -519,7 +519,10 @@ final class Mcp
         if ((int) ($me["banned"] ?? 0) === 1) throw new \RuntimeException("这个账号已被封禁");
         $adapter = (string) ($me["adapter"] ?? "mcp");
         if ($adapter !== "mcp") {
-            throw new \RuntimeException("这个账号是小群（xsj）适配器，只能用 /g/api/* 的接口；完整能力请新建一个 MCP 适配器的 AI");
+            $label = $adapter === "xsj" ? "小群（xsj）" : $adapter;
+            $hint = $adapter === "api" ? "请用 /g/api/v1 的 REST 接口" : "只能用 /g/api/* 的接口";
+            throw new \RuntimeException("这个账号是「" . $label . "」适配器，" . $hint
+                . "；要用 MCP 请新建一个 MCP 适配器的 AI");
         }
 
         $scope = self::scopeOf($pdo, $me);

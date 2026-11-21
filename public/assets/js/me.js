@@ -47,6 +47,26 @@ function withBack(host) {
   head.insertBefore(b, head.firstChild);
 }
 
+/** markdown → 一行纯文本：给身份卡那种只放得下一行的地方用 */
+function plainLine(md, max) {
+  let s = String(md || '');
+  s = s.replace(/```[a-zA-Z0-9+#-]*\s*/g, ' ');
+  s = s.replace(/`([^`]*)`/g, '$1');
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+  s = s.replace(/^\s{0,3}>\s?/gm, '');
+  s = s.replace(/^\s{0,3}([-*+]|\d+\.)\s+/gm, '');
+  s = s.replace(/^\s{0,3}([-*_]\s*){3,}$/gm, ' ');
+  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  s = s.replace(/~~(.*?)~~/g, '$1');
+  s = s.replace(/\*(.+?)\*/g, '$1');
+  s = s.replace(/[ \t]*\n[ \t]*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const lim = max || 90;
+  return s.length > lim ? s.slice(0, lim) + '…' : s;
+}
+
 function paintMeHome(host) {
   const me = S.me || {};
   const role = me.role || 'member';
@@ -65,7 +85,9 @@ function paintMeHome(host) {
   else if (role === 'admin') bits.push('管理员');
   if (me.name) bits.push('@' + me.name);
   info.appendChild(h('span', 'me-card-sub', bits.join(' · ')));
-  if (me.intro || me.bio) info.appendChild(h('div', 'me-card-bio', me.intro || me.bio));
+  // 简介是 markdown，身份卡里只当一行纯文本：去掉语法、换行也压平，长了截断
+  const bioOne = plainLine(me.intro || me.bio, 90);
+  if (bioOne) info.appendChild(h('div', 'me-card-bio', bioOne));
   card.appendChild(info);
   body.appendChild(card);
 
@@ -117,7 +139,7 @@ function paintMeAi(host) {
   page.appendChild(body);
   host.appendChild(page);
 
-  body.appendChild(copyNote('适配器决定这个 AI 走哪套接口：小群（xsj）只能用老接口收发消息；MCP 是完整账号。token 只在创建时显示一次，丢了就重签。'));
+  body.appendChild(copyNote('适配器决定这个 AI 走哪套接口：小群（xsj）只能用老接口收发消息；MCP 走 /g/mcp；API 走 /g/api/v1 的 REST。后两种是完整账号。token 只在创建时显示一次，丢了就重签。'));
   body.appendChild(myAiBlock());
   body.appendChild(h('div', 'page-sec', 'API Key'));
   body.appendChild(copyNote('给第三方客户端用，和 AI 的 token 不是一回事。'));
@@ -211,13 +233,21 @@ export function openAdmin(button) {
   location.href = URLS.admin;
 }
 
-// 创建 AI 时选适配器：xsj 给小群插件，mcp 给完整账号
+// 创建 AI 时选适配器：xsj 给小群插件，mcp 给 MCP 客户端，api 给 REST 客户端
 let aiAdapter = 'xsj';
 
 function adapterHint(a) {
-  return a === 'xsj'
-    ? '小群（xsj）：老的小群接口，只能收发消息、看成员、等新消息。'
-    : 'MCP：完整的 AI 账号，会话、好友、空间、通知都能用。';
+  if (a === 'xsj') return '小群（xsj）：老的小群接口，只能收发消息、看成员、等新消息。';
+  if (a === 'api') return 'API（REST）：走 /g/api/v1，会话、好友、空间、通知都能用，适合自己写脚本或客户端。';
+  return 'MCP：完整的 AI 账号，会话、好友、空间、通知都能用。';
+}
+
+function adapterLabel(a) {
+  return a === 'xsj' ? '小群适配器' : (a === 'api' ? 'API 适配器' : 'MCP 适配器');
+}
+
+function adapterShort(a) {
+  return a === 'xsj' ? '小群' : (a === 'api' ? 'API' : 'MCP');
 }
 
 function myAiBlock() {
@@ -229,7 +259,7 @@ function myAiBlock() {
   const hint = h('div', 'page-tip', adapterHint(aiAdapter));
   const pick = h('div', 'chip-row');
   const chips = {};
-  [['xsj', '小群（xsj）'], ['mcp', 'MCP']].forEach(function (o) {
+  [['xsj', '小群（xsj）'], ['mcp', 'MCP'], ['api', 'API']].forEach(function (o) {
     const b = btn(o[1], 'chip' + (aiAdapter === o[0] ? ' on' : ''), function () {
       aiAdapter = o[0];
       Object.keys(chips).forEach(function (k) { chips[k].classList.toggle('on', k === aiAdapter); });
@@ -264,9 +294,10 @@ function paintMyAi(list) {
     const row = h('div', 'ai-row');
     row.appendChild(avatar(a, 30));
     row.appendChild(h('span', 'ai-name', a.name));
-    const ad = a.adapter === 'xsj' ? 'xsj' : 'mcp';
-    row.appendChild(h('span', 'ai-adapter' + (ad === 'mcp' ? ' on' : ''), ad === 'xsj' ? '小群' : 'MCP'));
+    const ad = a.adapter === 'xsj' ? 'xsj' : (a.adapter === 'api' ? 'api' : 'mcp');
+    row.appendChild(h('span', 'ai-adapter on', adapterShort(ad)));
     row.appendChild(btn('重签 token', 'btn btn-ghost btn-sm', function () { rekeyAi(a, row); }));
+    row.appendChild(btn('销毁', 'btn btn-ghost btn-sm', function () { deleteAi(a); }));
     list.appendChild(row);
   });
 }
@@ -278,7 +309,7 @@ function addAi(input) {
   api('api/ai/create', { name: name, adapter: adapter }).then(function (j) {
     if (!j.ok) { toast(j.err || '创建失败'); return; }
     input.value = '';
-    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建（' + (adapter === 'xsj' ? '小群适配器' : 'MCP 适配器') + '），token 只显示这一次：', j.token || '', j.mcp || '', j.default || null);
+    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建（' + adapterLabel(adapter) + '），token 只显示这一次：', j.token || '', j.mcp || '', j.default || null, j.api || '');
     loadMembers().then(function () {
       const l = document.querySelector('.ai-list');
       if (l) paintMyAi(l);
@@ -287,15 +318,28 @@ function addAi(input) {
 }
 
 function rekeyAi(a, row) {
-  const adapter = a.adapter === 'xsj' ? 'xsj' : 'mcp';
+  const adapter = a.adapter === 'xsj' ? 'xsj' : (a.adapter === 'api' ? 'api' : 'mcp');
   api('api/ai/create', { name: a.name, adapter: adapter }).then(function (j) {
     if (!j.ok) { toast(j.err || '重签失败'); return; }
-    keyBox('AI「' + a.name + '」的新 token（' + (adapter === 'xsj' ? '小群适配器' : 'MCP 适配器') + '）：', j.token || '', j.mcp || '');
+    keyBox('AI「' + a.name + '」的新 token（' + adapterLabel(adapter) + '）：', j.token || '', j.mcp || '', null, j.api || '');
     void row;
   }).catch(function (e) { toast(String((e && e.message) || e)); });
 }
 
-function keyBox(label, tok, mcp, def) {
+/** 销毁自己名下的 AI：软删，消息留着、token 立刻失效、名字不释放 */
+function deleteAi(a) {
+  if (!confirm('销毁 AI「' + a.name + '」？它发过的消息还留着，但 token 立刻失效；想要回同名账号，再建一个同名的就行。')) return;
+  api('api/ai/delete', { name: a.name }).then(function (j) {
+    if (!j.ok) { toast(j.err || '销毁失败'); return; }
+    toast('已销毁「' + a.name + '」');
+    loadMembers().then(function () {
+      const l = document.querySelector('.ai-list');
+      if (l) paintMyAi(l);
+    });
+  }).catch(function (e) { toast(String((e && e.message) || e)); });
+}
+
+function keyBox(label, tok, mcp, def, apiUrl) {
   const old = document.querySelector('.key-wrap');
   if (old) old.remove();
   const wrap = h('div', 'key-wrap');
@@ -316,6 +360,15 @@ function keyBox(label, tok, mcp, def) {
     wrap.appendChild(mbox);
     wrap.appendChild(btn('复制 MCP 地址', 'btn btn-ghost btn-sm', function () { copy(mcp); }));
   }
+  // api 适配器：REST 地址（/g/api/v1），token 走 Authorization: Bearer 或 ?k=
+  if (apiUrl) {
+    wrap.appendChild(h('div', 'page-tip', '这个 AI 走 REST：下面这个地址 + token 就能读写，适合自己写脚本或 App：'));
+    const abox = h('div', 'key-box');
+    abox.appendChild(h('code', '', apiUrl));
+    wrap.appendChild(abox);
+    wrap.appendChild(h('div', 'page-tip', '用法：GET ' + apiUrl + '/me，请求头 Authorization: Bearer <token>；接口清单直接 GET ' + apiUrl + '。'));
+    wrap.appendChild(btn('复制 REST 地址', 'btn btn-ghost btn-sm', function () { copy(apiUrl); }));
+  }
   const ai = document.querySelector('.ai-box');
   const parent = ai ? ai.parentNode : document.querySelector('.page-body');
   if (parent) parent.insertBefore(wrap, ai || null);
@@ -332,7 +385,7 @@ function saveProfile() {
   const name = nameEl ? nameEl.value.trim() : '';
   const intro = introEl ? introEl.value : '';
   if (!name) { toast('昵称不能空着'); return; }
-  api('api/profile', { name: name, intro: intro }).then(function (j) {
+  api('api/profile', { name: name, bio: intro }).then(function (j) {
     if (!j.ok) { toast(j.err || '保存失败'); return; }
     if (j.me) S.me = j.me;
     toast('已保存');

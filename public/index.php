@@ -58,6 +58,13 @@ if (!lg_installed()) {
     exit;
 }
 
+// 人类账号的 REST 入口：/u/api/v1（做 App、自己写客户端用）。
+// 和 /g/api/v1 是同一套实现，只是认人类身份、走人类 token / API Key。
+if ($path === "/u/api/v1" || str_starts_with($path, "/u/api/v1/")) {
+    \LightGroup\Api\V1::handleUser(substr($path, 1));
+    exit;
+}
+
 if ($path === "/setup") {
     View::render("notfound", ["site" => Site::info(), "path" => $path], 404);
     exit;

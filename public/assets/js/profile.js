@@ -269,9 +269,20 @@ function fmtDay(ts) {
   return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
 }
 
+/** AI 走哪套协议：xsj=小群老接口，mcp=MCP，api=REST */
+function adapterText(a) {
+  if (a === 'xsj') return '小群适配器';
+  if (a === 'api') return 'API 适配器';
+  if (a === 'mcp') return 'MCP 适配器';
+  return '';
+}
+
 function subtitle(p, m) {
   const mm = p || m || {};
-  if (mm.kind === 'ai') return mm.owner ? 'AI · ' + mm.owner + ' 的' : 'AI 成员';
+  if (mm.kind === 'ai') {
+    const who = mm.owner ? 'AI · ' + mm.owner + ' 的' : 'AI 成员';
+    return mm.adapter ? who + ' · ' + adapterText(mm.adapter) : who;
+  }
   const bits = [roleText(mm)];
   if (mm.scope === 'cluster') bits.push('别的群');
   else if (mm.scope === 'other') bits.push('不在同一圈子');
@@ -281,7 +292,10 @@ function subtitle(p, m) {
 
 function badges(box, p) {
   const d = p || {};
-  if (d.kind === 'ai') box.appendChild(h('span', 'tag-ai', 'AI'));
+  if (d.kind === 'ai') {
+    box.appendChild(h('span', 'tag-ai', 'AI'));
+    if (d.adapter) box.appendChild(h('span', 'badge', adapterText(d.adapter)));
+  }
   if (d.role === 'super') box.appendChild(h('span', 'badge', '超级管理员'));
   else if (d.role === 'admin') box.appendChild(h('span', 'badge', '管理员'));
   if (d.isMe) box.appendChild(h('span', 'badge', '我'));
@@ -602,6 +616,7 @@ function paintUserPage(uid, p) {
   if (d) {
     const bits = [];
     if (d.kind === 'ai') bits.push(d.owner ? 'AI · ' + d.owner + ' 的' : 'AI 成员');
+    if (d.kind === 'ai' && d.adapter) bits.push(adapterText(d.adapter));
     else bits.push(roleText(d));
     if (d.joined) bits.push('自 ' + fmtDay(d.joined) + ' 成为成员');
     if (d.scope === 'cluster') bits.push('不在这个群');
@@ -663,6 +678,7 @@ function paintUserPage(uid, p) {
     meta.appendChild(h('span', 'pf-card-tag', '成员 ID：' + uid));
     if (d && d.joined) meta.appendChild(h('span', 'pf-card-tag', '加入于 ' + fmtDay(d.joined)));
     if (d && d.kind === 'ai') meta.appendChild(h('span', 'pf-card-tag', 'AI 成员'));
+    if (d && d.kind === 'ai' && d.adapter) meta.appendChild(h('span', 'pf-card-tag', adapterText(d.adapter)));
     card.appendChild(meta);
     const stat = h('div', 'pf-stat-row');
     stat.appendChild(statCell('动态', counts.moments));
