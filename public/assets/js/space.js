@@ -5,7 +5,7 @@ import { openImage } from './msg.js';
 import { shrinkImage } from './chat.js';
 import { canScan, followScan, decodeSource, decodeFile } from './qr.js';
 
-let tab = 'feed';          // feed | mine | notice | scan
+let tab = 'feed';          // feed | mine | notice（扫描器是独立页 #/scan）
 let tag = '';              // 只看这个标签
 let mine = false;          // 只看我发的
 let unread = 0;
@@ -42,7 +42,6 @@ let sideEl = null;
 
 export function renderSpace(host) {
   hostEl = host;
-  if (tab !== 'scan') stopScan();
   host.textContent = '';
   const body = h('div', 'page-body sp-page');
   host.appendChild(body);
@@ -62,7 +61,6 @@ export function renderSpace(host) {
   const box = h('div', 'sp-body');
   inner.appendChild(box);
   if (tab === 'notice') paintNotices(box);
-  else if (tab === 'scan') paintScanner(box);
   else paintFeed(box);
 }
 
@@ -95,8 +93,8 @@ export function renderSideList(host) {
     b.appendChild(h('span', '', it[2]));
     if (it[3] > 0) b.appendChild(h('span', 'req-badge', it[3] > 99 ? '99+' : String(it[3])));
     b.addEventListener('click', function () {
-      if (it[0] === 'scan') { tab = 'scan'; mine = false; }
-      else if (it[0] === 'notice') { tab = 'notice'; }
+      if (it[0] === 'scan') { go('#/scan'); return; }
+      if (it[0] === 'notice') { tab = 'notice'; }
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
       repaint();
@@ -168,18 +166,16 @@ function openComposer() {
 function tabs() {
   const tabs = h('div', 'sp-tabs');
   const list = [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']];
-  if (canScan()) list.push(['scan', '扫描']);
   list.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine)
-      || (it[0] === 'notice' && tab === 'notice') || (it[0] === 'scan' && tab === 'scan');
+      || (it[0] === 'notice' && tab === 'notice');
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sp-tab' + (on ? ' on' : '');
     b.appendChild(h('span', '', it[1]));
     if (it[0] === 'notice' && unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
     b.addEventListener('click', function () {
-      if (it[0] === 'scan') { tab = 'scan'; mine = false; }
-      else if (it[0] === 'notice') tab = 'notice';
+      if (it[0] === 'notice') tab = 'notice';
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
       repaint();
@@ -189,10 +185,11 @@ function tabs() {
   return tabs;
 }
 
-// ---------- 扫描器 ----------
+// ---------- 扫描器（独立页 #/scan） ----------
 
 let scanStream = null;
 let scanTimer = 0;
+let scanDevice = '';
 
 /** 关摄像头；离开扫描页、识别成功、切走页面时都要调 */
 export function stopScan() {
@@ -203,6 +200,50 @@ export function stopScan() {
     });
     scanStream = null;
   }
+}
+
+function mobileUA() {
+  return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS|Windows Phone/i.test(navigator.userAgent || '');
+}
+
+async function listCams() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all.filter(function (d) { return d.kind === 'videoinput'; });
+  } catch (e) { return []; }
+}
+
+// 手机优先后摄；桌面避开虚拟摄像头（OBS 这类），实在没有再用第一个
+function pickCam(cams) {
+  if (!cams.length) return '';
+  const back = cams.filter(function (d) { return /back|rear|environment|后置/i.test(d.label || ''); })[0];
+  if (mobileUA() && back) return back.deviceId || '';
+  const real = cams.filter(function (d) { return !/virtual|obs/i.test(d.label || ''); })[0];
+  if (real && real.deviceId) return real.deviceId;
+  if (back && back.deviceId) return back.deviceId;
+  return cams[0].deviceId || '';
+}
+
+function camConstraints(deviceId) {
+  if (deviceId) return { video: { deviceId: { exact: deviceId } }, audio: false };
+  if (mobileUA()) return { video: { facingMode: { ideal: 'environment' } }, audio: false };
+  return { video: true, audio: false };
+}
+
+/** 独立页：带返回，不占空间的 tab */
+export function renderScan(host) {
+  stopScan();
+  host.textContent = '';
+  const body = h('div', 'page-body');
+  host.appendChild(body);
+  const inner = h('div', 'scan-page');
+  body.appendChild(inner);
+  const head = h('div', 'scan-page-head');
+  head.appendChild(iconBtn('fa-chevron-left', '返回', function () { go('#/space'); }));
+  head.appendChild(h('b', '', '扫描器'));
+  inner.appendChild(head);
+  paintScanner(inner);
 }
 
 function paintScanner(box) {
@@ -231,6 +272,15 @@ function paintScanner(box) {
   const acts = h('div', 'scan-acts');
   acts.appendChild(btn('从相册选图片', 'btn btn-sm btn-ghost', function () { fileInput.click(); }));
   wrap.appendChild(acts);
+
+  const camSel = document.createElement('select');
+  camSel.className = 'tb scan-cam';
+  camSel.hidden = true;
+  camSel.addEventListener('change', function () {
+    scanDevice = camSel.value || '';
+    paintScanner(box);
+  });
+  wrap.appendChild(camSel);
 
   // 没摄像头或权限被拒时，手动粘内容还能用
   const manual = h('details', 'scan-manual');
@@ -266,38 +316,73 @@ function paintScanner(box) {
   video.muted = true;
   video.autoplay = true;
 
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
-    .then(function (stream) {
-      if (!stage.isConnected) {
-        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { void e; } });
+  async function boot(deviceId) {
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(camConstraints(deviceId));
+    } catch (e) {
+      if (!deviceId) {
+        cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。');
         return;
       }
-      scanStream = stream;
-      stage.textContent = '';
-      stage.appendChild(video);
-      stage.appendChild(h('div', 'scan-frame'));
-      stage.appendChild(h('div', 'scan-tip', '把二维码放进取景框里'));
-      video.srcObject = stream;
-      video.play().catch(function () {});
-      let busy = false;
-      scanTimer = setInterval(async function () {
-        if (busy || !video.videoWidth) return;
-        busy = true;
-        try {
-          const t = await decodeSource(video);
-          if (t) {
-            stopScan();
-            video.remove();
-            await followScan(t);
-          }
-        } finally {
-          busy = false;
+      cap('这个摄像头打不开，换个设备再试。');
+      return;
+    }
+    if (!stage.isConnected) {
+      stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err) { void err; } });
+      return;
+    }
+    scanStream = stream;
+
+    const track = stream.getVideoTracks()[0];
+    const cams = await listCams();
+    // 默认设备可能是 OBS 这类虚拟摄像头：桌面端自动换到真实的那一个
+    if (!deviceId && track) {
+      const better = pickCam(cams);
+      const cur = track.getSettings().deviceId || '';
+      if (better && better !== cur && /virtual|obs/i.test(track.label || '')) {
+        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err) { void err; } });
+        return boot(better);
+      }
+    }
+    if (cams.length) {
+      camSel.textContent = '';
+      cams.forEach(function (c, i) {
+        const o = document.createElement('option');
+        o.value = c.deviceId;
+        o.textContent = c.label || ('摄像头 ' + (i + 1));
+        camSel.appendChild(o);
+      });
+      const cur = (stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings().deviceId) || '';
+      camSel.value = deviceId || cur || '';
+      camSel.hidden = cams.length < 2;
+    }
+
+    stage.textContent = '';
+    stage.appendChild(video);
+    stage.appendChild(h('div', 'scan-frame'));
+    stage.appendChild(h('div', 'scan-tip', '把二维码放进取景框里'));
+    video.srcObject = stream;
+    video.play().catch(function () {});
+    let busy = false;
+    scanTimer = setInterval(async function () {
+      if (busy || !video.videoWidth) return;
+      busy = true;
+      try {
+        const t = await decodeSource(video);
+        if (t) {
+          stopScan();
+          video.remove();
+          await followScan(t);
         }
-      }, 450);
-    })
-    .catch(function (e) {
-      cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。');
-    });
+      } finally {
+        busy = false;
+      }
+    }, 450);
+  }
+
+  // 先按默认设备开一次，拿到设备名后再决定要不要切到真正的摄像头
+  boot(scanDevice);
 }
 
 window.addEventListener('hashchange', function () { stopScan(); });

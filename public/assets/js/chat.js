@@ -4,7 +4,8 @@ import {
   emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText
 } from './core.js';
 import { avatar } from './avatar.js';
-import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall, openGroupInfo } from './msg.js';
+import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall } from './msg.js';
+import * as side from './side.js';
 import * as conv from './conv.js';
 import { openProfileCard } from './people.js';
 
@@ -124,6 +125,7 @@ export function stop() {
   feedEl = null;
   S.pgMembers = [];
   S.pgSig = '';
+  side.reset();
 }
 
 function build() {
@@ -141,7 +143,16 @@ function build() {
   feedEl.addEventListener('scroll', onFeedScroll, { passive: true });
   page.appendChild(feedEl);
   page.appendChild(buildComposer());
-  host.appendChild(page);
+
+  // 右侧栏是布局的一部分：桌面贴右侧，窄屏盖住聊天区
+  const wrap = h('div', 'chat-wrap');
+  wrap.appendChild(page);
+  const aside = h('aside', 'chat-side');
+  aside.id = 'chat-side';
+  aside.hidden = true;
+  side.init(aside);
+  wrap.appendChild(aside);
+  host.appendChild(wrap);
 }
 
 function buildHead() {
@@ -164,28 +175,15 @@ function buildHead() {
     info.style.cursor = 'pointer';
     info.title = '点开资料';
     info.addEventListener('click', function () { openProfileCard(S.cur.member); });
-  } else if (pg) {
-    info.style.cursor = 'pointer';
-    info.title = '群资料';
-    info.addEventListener('click', function () { go('#/pg/' + S.curId); });
-  } else {
-    info.style.cursor = 'pointer';
-    info.title = '群资料';
-    info.addEventListener('click', openGroupInfo);
   }
   head.appendChild(info);
 
   const acts = h('div', 'chat-acts');
   if (dm) {
-    acts.appendChild(iconBtn('fa-id-card', '资料', function () { openProfileCard(S.cur.member); }));
-    acts.appendChild(iconBtn('fa-robot', '邀请 AI', inviteAi));
-  } else if (pg) {
-    acts.appendChild(iconBtn('fa-circle-info', '群资料', function () { go('#/pg/' + S.curId); }));
+    acts.appendChild(iconBtn('fa-address-card', '聊天资料', function () { side.toggle(); }));
   } else {
-    acts.appendChild(iconBtn('fa-circle-info', '群资料', openGroupInfo));
+    acts.appendChild(iconBtn('fa-circle-info', '群资料', function () { side.toggle(); }));
   }
-  acts.appendChild(iconBtn('fa-paintbrush', '气泡与外观', function () { go('#/appearance'); }));
-  acts.appendChild(iconBtn('fa-user', '我的资料', function () { go('#/me'); }));
   head.appendChild(acts);
   return head;
 }

@@ -217,6 +217,7 @@ function renderRoute() {
     else if (r.page === 'pg') pg.renderGroup(host, r.id);
     else if (r.page === 'members') people.renderMembers(host);
     else if (r.page === 'space') space.renderSpace(host);
+    else if (r.page === 'scan') space.renderScan(host);
     else if (r.page === 'me') me.renderProfile(host);
     else me.renderAppearance(host);
   }

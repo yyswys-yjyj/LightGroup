@@ -403,11 +403,7 @@ function paintCard(el, member, p) {
     closeUserCard();
     goToUser(uid);
   }));
-  acts.appendChild(btn('二维码', 'btn btn-sm btn-ghost', function () {
-    closeUserCard();
-    openQr((data.name || '用户') + ' 的二维码', 'lightgroup://user/' + uid, '扫这个码能直接找到这个人的资料页。');
-  }));
-  cardActions(acts, data, p);
+  cardActions(acts, data, p, true);
   el.appendChild(acts);
 }
 
@@ -508,7 +504,7 @@ function openFriendSettings(uid, d, p) {
 }
 
 // 卡片 / 资料页共用的一排操作按钮
-function cardActions(box, data, p) {
+function cardActions(box, data, p, compact) {
   const d = data || {};
   const uid = uidOfMember(d);
   const isMe = !!(p && p.isMe) || !!(S.me && keyOf(S.me.id) === uid);
@@ -537,6 +533,8 @@ function cardActions(box, data, p) {
         if (HOST && HOST.openDm) HOST.openDm({ id: uid, name: d.name, kind: d.kind });
       }));
     }
+    // 小卡片只留最常用的两个动作，备注/设置这些进资料页
+    if (compact) return;
     box.appendChild(btn(remark ? '备注：' + remark : '备注', 'btn btn-sm btn-ghost', function () {
       openRemarkEditor(uid, remark);
     }));

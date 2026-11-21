@@ -534,3 +534,42 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .pg-guest-i b{font-size:16px}
 .pg-guest-i span{font-size:12.5px;color:var(--text-faint)}
 
+
+
+/* ---------- 会话右侧栏（群资料 / 好友资料） ---------- */
+.chat-wrap{flex:1;min-height:0;display:flex;position:relative;width:100%}
+.chat-side{position:absolute;right:0;top:0;bottom:0;width:320px;max-width:92%;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .18s ease;z-index:6;box-shadow:-8px 0 24px rgba(0,0,0,.08)}
+.chat-side.open{transform:none}
+.chat-side[hidden]{display:none}
+.cs-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);flex:none}
+.cs-title{font-weight:600;font-size:14px}
+.cs-body{flex:1;min-height:0;overflow-y:auto;padding:12px 14px 20px;display:flex;flex-direction:column;gap:10px}
+.cs-card{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);padding:12px}
+.cs-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cs-card-t{font-size:13px;font-weight:600;color:var(--text)}
+.cs-members{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cs-member{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;border-radius:10px;padding:4px 2px}
+.cs-member:hover{background:var(--surface-3)}
+.cs-member-n{font-size:11.5px;color:var(--text-dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-notice{font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.7}
+.cs-notice.empty{color:var(--text-faint)}
+.cs-meta{font-size:11.5px;color:var(--text-faint);margin-top:6px}
+.cs-empty{font-size:12px;color:var(--text-faint);padding:6px 0}
+.cs-row{display:flex;align-items:center;justify-content:space-between;width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13.5px;color:var(--text);cursor:pointer}
+.cs-row:hover{background:var(--surface-3)}
+.cs-row.danger{color:var(--danger)}
+.cs-arrow{font-size:11px;color:var(--text-faint)}
+.cs-who{display:flex;align-items:center;gap:10px}
+.cs-who-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cs-foot{margin-top:10px;display:flex;justify-content:flex-end}
+@media (min-width:761px){
+  /* 桌面端侧栏是布局的一部分：打开时把聊天区推窄，而不是盖在上面 */
+  .chat-side{position:relative;right:auto;top:auto;bottom:auto;transform:none;box-shadow:none;border-left:1px solid var(--border)}
+}
+@media (max-width:760px){
+  .chat-side{width:100%;max-width:100%;box-shadow:none}
+}
+
+.scan-page{max-width:640px;margin:0 auto;padding:14px 16px 40px}
+.scan-page-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.scan-cam{margin:8px 0;font-size:13px}
