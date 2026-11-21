@@ -882,7 +882,18 @@ export function openSheet(title, body, opts) {
   x.appendChild(icon('fa-xmark'));
   head.appendChild(x);
   card.appendChild(head);
-  card.appendChild(body);
+  // 内容统一由 .sheet-body 包一层：内边距、滚动、撑满都归它管，
+  // 调用方自带 padding 容易让按钮贴着卡片边（见 AGENTS.md 的弹层规则）。
+  // 编辑器 / 阅读器自带整块布局，不包，免得高度算法被套一层。
+  if (o.size === 'editor' || o.size === 'reader') {
+    card.appendChild(body);
+  } else if (body && body.classList && body.classList.contains('sheet-body')) {
+    card.appendChild(body);
+  } else {
+    const sb = h('div', 'sheet-body');
+    sb.appendChild(body);
+    card.appendChild(sb);
+  }
   mask.appendChild(card);
 
   function tryClose() {

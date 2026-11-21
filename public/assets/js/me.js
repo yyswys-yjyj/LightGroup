@@ -84,7 +84,7 @@ function paintMeHome(host) {
   const bits = [me.kind === 'ai' ? 'AI 成员' : '人类成员'];
   if (role === 'super') bits.push('超级管理员');
   else if (role === 'admin') bits.push('管理员');
-  if (me.name) bits.push('@' + me.name);
+  bits.push('@' + (me.username || me.name || ''));
   info.appendChild(h('span', 'me-card-sub', bits.join(' · ')));
   // 简介是 markdown，身份卡里只当一行纯文本：去掉语法、换行也压平，长了截断
   const bioOne = plainLine(me.intro || me.bio, 90);
@@ -143,10 +143,8 @@ function paintMeAi(host) {
   page.appendChild(body);
   host.appendChild(page);
 
-  body.appendChild(copyNote('适配器决定这个 AI 走哪套接口：小群（xsj）只能用老接口收发消息；MCP 走 /g/mcp；API 走 /g/api/v1 的 REST。后两种是完整账号。token 只在创建时显示一次，丢了就重签。'));
   body.appendChild(myAiBlock());
   body.appendChild(h('div', 'page-sec', 'API Key'));
-  body.appendChild(copyNote('给第三方客户端用，和 AI 的 token 不是一回事。'));
   body.appendChild(btn('创建一把 API Key', 'btn btn-line btn-wide', createApiKey));
 }
 
@@ -154,7 +152,7 @@ function paintMeAi(host) {
 function renderProfileEdit(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('我的资料', '用户名、昵称、头像、介绍'));
+  page.appendChild(pageHead('我的资料', '昵称、头像、介绍'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
@@ -168,15 +166,6 @@ function renderProfileEdit(host) {
   av.appendChild(btn('换头像', 'btn btn-ghost btn-sm', pickAvatar));
   body.appendChild(av);
 
-  field(body, '用户名', function (row) {
-    const v = document.createElement('input');
-    v.className = 'tb';
-    v.type = 'text';
-    v.readOnly = true;
-    v.value = (S.me && S.me.username) || '';
-    row.appendChild(v);
-  });
-  body.appendChild(copyNote('用户名是登录用的，建好后不能改；下面的昵称可以随时改。'));
   field(body, '昵称', function (row) {
     const v = document.createElement('input');
     v.id = 'f-name';
@@ -201,7 +190,7 @@ function renderProfileEdit(host) {
   sw.appendChild(inv);
   sw.appendChild(h('span', '', '允许他人把我拉进群聊'));
   body.appendChild(sw);
-  body.appendChild(copyNote('关掉之后，别人建群时选不到你；已经在的群不受影响。'));
+  body.appendChild(copyNote('关掉后，别人建群时选不到你。'));
 
   body.appendChild(btn('保存', 'btn btn-primary btn-wide', saveProfile));
 
@@ -213,7 +202,7 @@ function renderProfileEdit(host) {
  */
 function openDeleteAccount() {
   const body = h('div', 'sheet-body');
-  body.appendChild(h('div', 'page-tip', '注销后这个昵称会被释放，别人可以重新注册；你的消息显示「账号已注销」。'));
+  body.appendChild(h('div', 'page-tip', '注销后不可恢复，你的消息会显示「账号已注销」。'));
   body.appendChild(h('div', 'f-label', '输入昵称「' + ((S.me && S.me.name) || '') + '」确认'));
   const inp = document.createElement('input');
   inp.className = 'tb';
@@ -351,7 +340,7 @@ function rekeyAi(a, row) {
 
 /** 销毁自己名下的 AI：软删，消息留着、token 立刻失效、名字不释放 */
 function deleteAi(a) {
-  if (!confirm('销毁 AI「' + a.name + '」？它发过的消息还留着，但 token 立刻失效；想要回同名账号，再建一个同名的就行。')) return;
+  if (!confirm('销毁 AI「' + a.name + '」？消息保留，token 立刻失效。')) return;
   api('api/ai/delete', { name: a.name }).then(function (j) {
     if (!j.ok) { toast(j.err || '销毁失败'); return; }
     toast('已销毁「' + a.name + '」');
@@ -373,11 +362,11 @@ function keyBox(label, tok, mcp, def, apiUrl) {
   wrap.appendChild(btn('复制', 'btn btn-ghost btn-sm', function () { copy(tok); }));
   // 新建的 AI 默认挂到公开大群：不指定会话时读写都落在这里
   if (def && def.title) {
-    wrap.appendChild(h('div', 'page-tip', '默认落在「' + def.title + '」：read 读群消息，send 不带会话就直接在这发言。'));
+    wrap.appendChild(h('div', 'page-tip', '默认会话：「' + def.title + '」'));
   }
   // 站点开着 MCP 时，服务端会连同 token 一起给地址，直接贴进 Operit 就能连
   if (mcp) {
-    wrap.appendChild(h('div', 'page-tip', '同一个身份还有一条 MCP 地址，填进 Operit 的 MCP 配置就能连，不用另建账号：'));
+    wrap.appendChild(h('div', 'page-tip', 'MCP 地址：'));
     const mbox = h('div', 'key-box');
     mbox.appendChild(h('code', '', mcp));
     wrap.appendChild(mbox);
@@ -385,11 +374,11 @@ function keyBox(label, tok, mcp, def, apiUrl) {
   }
   // api 适配器：REST 地址（/g/api/v1），token 走 Authorization: Bearer 或 ?k=
   if (apiUrl) {
-    wrap.appendChild(h('div', 'page-tip', '这个 AI 走 REST：下面这个地址 + token 就能读写，适合自己写脚本或 App：'));
+    wrap.appendChild(h('div', 'page-tip', 'REST 地址：'));
     const abox = h('div', 'key-box');
     abox.appendChild(h('code', '', apiUrl));
     wrap.appendChild(abox);
-    wrap.appendChild(h('div', 'page-tip', '用法：GET ' + apiUrl + '/me，请求头 Authorization: Bearer <token>；接口清单直接 GET ' + apiUrl + '。'));
+    wrap.appendChild(h('div', 'page-tip', '接口清单：GET ' + apiUrl));
     wrap.appendChild(btn('复制 REST 地址', 'btn btn-ghost btn-sm', function () { copy(apiUrl); }));
   }
   const ai = document.querySelector('.ai-box');
@@ -577,7 +566,6 @@ function openThemeEditor() {
   row.appendChild(h('span', '', '主色'));
   row.appendChild(accent);
   body.appendChild(row);
-  body.appendChild(copyNote('浅底与深色底都由主色和当前深浅模式自动混出来，不用单独配。'));
 
   // 预览
   const pv = h('div', 'theme-preview');
@@ -625,7 +613,7 @@ function openThemeEditor() {
 export function renderAppearance(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('气泡与外观', '跟随账号同步；深浅跟随系统或你手选的模式'));
+  page.appendChild(pageHead('气泡与外观', '跟随账号同步'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);

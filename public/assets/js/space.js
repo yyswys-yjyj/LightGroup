@@ -210,7 +210,7 @@ function paintScanner(box) {
   const wrap = h('div', 'scan-wrap');
   const stage = h('div', 'scan-stage');
   wrap.appendChild(stage);
-  wrap.appendChild(h('div', 'page-tip', '对准二维码，认出后自动跳转。解码只在本机做，图片不会上传。'));
+  wrap.appendChild(h('div', 'page-tip', '对准二维码，认出后自动跳转。'));
 
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
@@ -256,7 +256,7 @@ function paintScanner(box) {
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    cap('这个浏览器打不开摄像头（要 https 或本机地址）。可以从相册选图片，或手动粘贴内容。');
+    cap('这个浏览器打不开摄像头，需要 https 或本机地址。');
     return;
   }
 
@@ -296,7 +296,7 @@ function paintScanner(box) {
       }, 450);
     })
     .catch(function (e) {
-      cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。可以从相册选图片，或手动粘贴内容。');
+      cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。');
     });
 }
 

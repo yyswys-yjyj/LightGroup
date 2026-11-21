@@ -170,6 +170,8 @@ final class Profile {
             "id"     => (int) $m["id"],
             "uid"    => self::mid($m),
             "name"   => (string) $m["name"],
+            // 对外用户 ID：资料页显示成 @username，登录名不再只留在 me 接口
+            "username" => (string) ($m["username"] ?? $m["name"]),
             "kind"   => (string) $m["kind"],
             "role"   => self::roleOf($pdo, $m),
             "color"  => self::colorOf((int) $m["id"]),

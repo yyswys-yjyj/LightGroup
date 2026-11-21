@@ -263,21 +263,22 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .voice-tx:disabled{opacity:.55;cursor:default}
 .voice-tx-out{font-size:13px;line-height:1.65;white-space:pre-wrap;word-break:break-word;max-width:min(420px,100vw - 140px);border-left:2px solid currentColor;padding-left:8px;opacity:.92}
 .row:not(.me) .voice-tx-out{border-left-color:var(--border)}
-.sheet{position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:24px;z-index:70}
-.sheet-card{background:var(--sheet-bg);color:var(--text);border:1px solid var(--border);border-radius:16px;width:100%;max-width:460px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+/* 弹层：四边留白由容器 padding 保证（桌面 24 / 移动 16）。卡片不按视口硬算尺寸，
+   否则和父级 padding 叠加会溢出、贴边；max-height 也一律用 100dvh 减两倍留白。 */
+.sheet{--sheet-pad:24px;position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:var(--sheet-pad);z-index:70}
+.sheet-card{background:var(--sheet-bg);color:var(--text);border:1px solid var(--border);border-radius:16px;width:100%;max-width:460px;max-height:calc(100dvh - var(--sheet-pad) * 2);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
 .sheet-card.sheet-md{max-width:600px}
-.sheet-card.sheet-lg{max-width:920px;max-height:86vh}
-.sheet-card.sheet-xl{max-width:1120px;max-height:88vh}
-/* 编辑器：宽高都撑开，里面的 ta / 预览自己分配高度 */
-.sheet-card.sheet-editor{max-width:min(1280px,calc(100vw - 40px));height:min(840px,calc(100vh - 40px));max-height:none}
+.sheet-card.sheet-lg{max-width:920px}
+.sheet-card.sheet-xl{max-width:1120px}
+/* 编辑器：只留窗口边距，其余交给容器；里面的 ta / 预览自己分配高度 */
+.sheet-card.sheet-editor{max-width:1280px;height:calc(100dvh - var(--sheet-pad) * 2);max-height:none}
 .sheet-card.sheet-editor>.pf-ed{padding:14px 16px 16px;overflow:hidden}
-@media (max-width:760px){.sheet-card.sheet-editor{height:calc(100vh - 24px);max-width:calc(100vw - 24px)}}
 /* 全文阅读：宽度对齐编辑器，高度跟着内容走，长了在弹层里滚 */
-.sheet-card.sheet-reader{max-width:min(1120px,calc(100vw - 40px));max-height:min(86vh,860px)}
-@media (max-width:760px){.sheet-card.sheet-reader{max-width:calc(100vw - 24px);max-height:calc(100vh - 24px)}}
+.sheet-card.sheet-reader{max-width:1120px}
+@media (max-width:760px){.sheet{--sheet-pad:16px}}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);flex:none}
 .sheet-head b{font-size:15px}
-.sheet-body{padding:16px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.sheet-body{padding:16px;overflow:auto;display:flex;flex-direction:column;gap:10px;flex:1 1 auto;min-height:0}
 .sheet-sub{font-size:12px;color:var(--text-faint)}
 .notice-full{white-space:pre-wrap;line-height:1.72;font-size:14px;margin:0}
 .todo-item{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px}
@@ -487,7 +488,7 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .page-tip.warn{color:#b45309}
 .pg-create{display:flex;flex-direction:column;gap:14px}
 .pg-create .f-row{gap:6px}
-.pg-pick{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow-y:auto;padding:2px}
+.pg-pick{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow-y:auto}
 .pg-pick-row{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;cursor:pointer;text-align:left}
 .pg-pick-row>i{flex:none;color:var(--text-faint);font-size:12px}
 .pg-pick-row.on{border-color:var(--accent);background:var(--accent-soft)}
@@ -499,14 +500,14 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .sw-row input{width:16px;height:16px;accent-color:var(--accent)}
 
 /* 好友设置弹层 */
-.pf-set{display:flex;flex-direction:column;gap:8px;padding:2px}
+.pf-set{display:flex;flex-direction:column;gap:8px}
 .pf-set-who{font-size:13px;color:var(--text-dim);padding:0 2px 4px}
 .pf-set .f-row{gap:6px}
 .pf-set .btn{justify-content:center}
 
 
 /* ---------- 二维码 ---------- */
-.qr-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:2px}
+.qr-wrap{display:flex;flex-direction:column;align-items:center;gap:10px}
 .qr-img{width:220px;height:220px;display:block;background:#fff;border-radius:14px;border:1px solid var(--border);padding:8px;box-shadow:var(--shadow-sm)}
 .qr-text{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-dim);word-break:break-all;text-align:center;max-width:100%}
 .qr-hint{font-size:12.5px;color:var(--text-faint);text-align:center;line-height:1.6}

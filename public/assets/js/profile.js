@@ -737,8 +737,9 @@ function paintUserPage(uid, p) {
   nm.appendChild(h('b', '', (d && d.name) || '匿名'));
   if (d) badges(nm, d);
   info.appendChild(nm);
+  // 用户 ID 用 username，不从昵称推
   info.appendChild(h('div', 'pf-hero-handle',
-    d ? '@' + String(d.name || 'member').replace(/\s+/g, '') : '加载中…'));
+    d ? '@' + String(d.username || d.uid || '') : '加载中…'));
   if (d) {
     const bits = [];
     if (d.kind === 'ai') bits.push(d.owner ? 'AI · ' + d.owner + ' 的' : 'AI 成员');

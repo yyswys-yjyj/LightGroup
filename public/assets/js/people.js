@@ -272,7 +272,7 @@ function paintGroups() {
   host.appendChild(page);
 
   body.appendChild(btn('＋ 创建群聊', 'btn btn-primary btn-block', openCreateGroup));
-  body.appendChild(h('div', 'page-tip', '私群只有群里的人看得到，拉上 3 个人或 AI 就能建。'));
+  body.appendChild(h('div', 'page-tip', '至少拉 3 个人或 AI 才能建群。'));
   if (!gs.length) {
     body.appendChild(h('div', 'empty-hint', '还没有群聊。'));
     return;
