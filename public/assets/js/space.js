@@ -228,6 +228,36 @@ function pickCam(cams) {
   return cams[0].deviceId || '';
 }
 
+// 浏览器只在安全上下文开摄像头：https 或 localhost/127.0.0.1
+function camSecure() {
+  if (window.isSecureContext) return true;
+  const hn = location.hostname;
+  return hn === 'localhost' || hn === '127.0.0.1' || hn === '[::1]' || hn === '::1';
+}
+
+// 站点响应头里的 Permissions-Policy 可以把摄像头整个禁掉，
+// 这时浏览器连权限弹窗都不给，直接在 getUserMedia 里抛 NotAllowedError
+function policyBlocksCam() {
+  try {
+    const fp = document.featurePolicy || document.permissionsPolicy;
+    if (fp && typeof fp.allowsFeature === 'function') return fp.allowsFeature('camera') === false;
+  } catch (e) { void e; }
+  return false;
+}
+
+function camErrText(e) {
+  const n = (e && e.name) || '';
+  if (policyBlocksCam()) return '这个站点没有开放摄像头，找站长处理。';
+  if (!camSecure()) return '浏览器只在 https 或本机地址下允许用摄像头。';
+  if (n === 'NotAllowedError' || n === 'SecurityError') {
+    return '摄像头被拦了：点地址栏左边的锁图标，把「摄像头」改成允许，刷新后再试。';
+  }
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return '这台设备上没有可用的摄像头。';
+  if (n === 'NotReadableError' || n === 'AbortError') return '摄像头被别的程序占着（会议、录屏软件），关掉再试。';
+  if (n === 'NotSupportedError') return '这个浏览器打不开摄像头。';
+  return '打不开摄像头' + (n ? '（' + n + '）' : '') + '。';
+}
+
 function camConstraints(deviceId) {
   if (deviceId) return { video: { deviceId: { exact: deviceId } }, audio: false };
   if (mobileUA()) return { video: { facingMode: { ideal: 'environment' } }, audio: false };
@@ -309,7 +339,7 @@ function paintScanner(box) {
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    cap('这个浏览器打不开摄像头，需要 https 或本机地址。');
+    cap('这个浏览器打不开摄像头，需要在 https 下打开。');
     return;
   }
 
@@ -324,11 +354,7 @@ function paintScanner(box) {
     try {
       stream = await navigator.mediaDevices.getUserMedia(camConstraints(deviceId));
     } catch (e) {
-      if (!deviceId) {
-        cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。');
-        return;
-      }
-      cap('这个摄像头打不开，换个设备再试。');
+      cap(camErrText(e));
       return;
     }
     if (!stage.isConnected) {
