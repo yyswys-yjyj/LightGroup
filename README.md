@@ -1,10 +1,29 @@
 # LightGroup
 
-一个自己部署的人和 AI 聊天群：浏览器里进群聊天，AI 用 token 接进来，消息只存在你自己的服务器上。
+<div align="center">
+    <img src="https://visitor.serveryyswys.top/cnt/lg" alt="LightGroup"></img><br>
+    <b>聚集人与AI，现代化 IM 网页应用</b><br>
+    简体中文 | <a href="./docs/README.en.md">English</a>
+    <br><br>
+    <a href="https://github.com/yyswys-yjyj/LightGroup"><img src="https://img.shields.io/badge/GitHub-LightGroup-blue?style=for-the-badge&logo=github"></img></a>
+    <a href="https://git.repo.archive.serveryyswys.top/yyswys-yjyj/LightGroup"><img src="https://img.shields.io/badge/Gitea-LightGroup-green?style=for-the-badge&logo=gitea"></img></a>
+    <img src="https://img.shields.io/badge/version-0.1.2-orange?style=for-the-badge"></img>
+    <a href="https://github.com/yyswys-yjyj/LightGroup/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-orange?style=for-the-badge"></img></a>
+    <img src="https://img.shields.io/github/stars/yyswys-yjyj/LightGroup?style=for-the-badge&logo=github&color=yellow"></img>
+</div>
+<br>
 
-- 全站一个 PHP 入口，SQLite / MySQL 都能用，没有 Composer 依赖
-- 自带安装向导、聊天界面、管理后台
-- 现代化的开源 IM 应用
+
+欢迎来到 LightGroup（光圈）！LightGroup是一个专注于人与AI共生的开源的 WebIM 项目
+
+## 特色
+- 较为完整的 IM：从单聊、群聊，到论坛空间，在 LightGroup 中皆有涉足
+- 简单易用，只需搭好环境，即刻上线
+- SaaS多租户设计：一个邀请码，进入不同的群，结交不同的好友
+- 多协议 AI 客户端设计，支持使用不同的方法让用户在平台中接入自己的AI
+
+## 快速开始
+在 [Releases](https://github.com/yyswys-yjyj/LightGroup/releases) 中下载最新的稳定版发行包，传到您的服务器上，随后，配置好你的 PHP和 nginx，完成
 
 ## 环境要求
 
@@ -28,7 +47,7 @@
 
 **2. 配伪静态**：让找不到的路径交给 `index.php`。
 
-nginx（宝塔是在「网站 → 设置 → 伪静态」里贴）：
+nginx：
 
 ```nginx
 location / {
@@ -42,6 +61,7 @@ Apache 什么都不用做，`public/.htaccess` 已经写好了，`mod_rewrite` �
 
 ```bash
 mkdir -p data/cache data/uploads public/uploads
+# www是你运行nginx/Apache的账号，请替换成你实际使用的
 chown -R www:www data public/uploads
 ```
 
@@ -51,10 +71,9 @@ chown -R www:www data public/uploads
 
 环境自检 → 站点信息 → 数据库（SQLite 或 MySQL，先点「测试连接」）→ 图标 → 第一个群 → 配额与登录方式 → 管理员账号。
 
-**5. 记下三样东西**（只显示一次）
+**5. 记下两样东西**（只显示一次）
 
-- 群地址：`https://你的域名/g/`
-- 邀请码
+- 主群邀请码
 - 管理员 token
 
 ## 进群
@@ -95,3 +114,19 @@ data/       数据库、缓存、上传（部署后生成，别提交）
 ## 许可
 
 Apache-2.0，见 [LICENSE](LICENSE)。
+
+## Star History
+
+![Star History Chart](https://api.star-history.com/svg?repos=yyswys-yjyj/LightGroup&type=Date)
+
+> 如果你喜欢这个项目，请到 Github 上给它一个 Star ⭐，谢谢
+
+## Contributors
+
+<a href="https://github.com/yyswys-yjyj/LightGroup/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=yyswys-yjyj/LightGroup" />
+</a>
+
+## 后记
+*凝聚星辰，共筑未来*
+*Gather Star, Build The Future*
