@@ -165,7 +165,9 @@ function openComposer() {
 
 function tabs() {
   const tabs = h('div', 'sp-tabs');
+  // 桌面用左栏导航（扫描器也在那边），手机的页签是唯一导航，所以这里也得有一项
   const list = [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']];
+  if (canScan()) list.push(['scan', '扫描器']);
   list.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine)
       || (it[0] === 'notice' && tab === 'notice');
@@ -175,6 +177,7 @@ function tabs() {
     b.appendChild(h('span', '', it[1]));
     if (it[0] === 'notice' && unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
     b.addEventListener('click', function () {
+      if (it[0] === 'scan') { go('#/scan'); return; }
       if (it[0] === 'notice') tab = 'notice';
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
