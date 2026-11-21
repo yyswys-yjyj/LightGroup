@@ -150,7 +150,7 @@ function paintMeAi(host) {
 function renderProfileEdit(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('我的资料', '昵称、头像、介绍'));
+  page.appendChild(pageHead('我的资料', '用户名、昵称、头像、介绍'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
@@ -164,6 +164,15 @@ function renderProfileEdit(host) {
   av.appendChild(btn('换头像', 'btn btn-ghost btn-sm', pickAvatar));
   body.appendChild(av);
 
+  field(body, '用户名', function (row) {
+    const v = document.createElement('input');
+    v.className = 'tb';
+    v.type = 'text';
+    v.readOnly = true;
+    v.value = (S.me && S.me.username) || '';
+    row.appendChild(v);
+  });
+  body.appendChild(copyNote('用户名是登录用的，建好后不能改；下面的昵称可以随时改。'));
   field(body, '昵称', function (row) {
     const v = document.createElement('input');
     v.id = 'f-name';

@@ -66,6 +66,8 @@ final class Account {
         }
         $now  = lg_now();
         $tomb = self::tombName($pdo, (int) $me["scope_id"], $id);
+        // 用户名不动：它绑在这一行上，别人没法拿它重新注册（会被唯一索引挡住，
+        // 登录时也会明确提示「这个用户名已经注销了」），管理员恢复后还能照旧登录。
         $pdo->beginTransaction();
         try {
             $pdo->prepare(
@@ -106,6 +108,7 @@ final class Account {
         if ($st->fetch()) {
             throw new RuntimeException("昵称「" . $old . "」已经被别人用了，没法恢复，只能彻底删除");
         }
+        // username 在注销时没动过，恢复只还昵称，登录名照旧
         $pdo->prepare("UPDATE members SET name = ?, deleted_name = NULL, deleted_at = NULL, banned = 0 WHERE id = ?")
             ->execute([$old, $memberId]);
         // 名下的 AI 一起解封

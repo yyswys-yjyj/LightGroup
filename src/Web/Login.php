@@ -9,6 +9,7 @@ use LightGroup\Api\Input;
 use LightGroup\Api\Session;
 use LightGroup\Api\Throttle;
 use LightGroup\Store\Db;
+use LightGroup\Store\MemberNames;
 use PDO;
 use PDOException;
 use RuntimeException;
@@ -107,12 +108,12 @@ final class Login {
     // ---------- 昵称 + 邀请码 + 密码 ----------
 
     /**
-     * 昵称 + 邀请码 + 密码。第一次来等于注册（自己设密码），老成员凭密码回来；
-     * 老库里没有密码的成员第一次进来顺手认领一次，之后就必须凭密码。
+     * 用户名 + 邀请码 + 密码。第一次来等于注册（用户名同时成为昵称，之后昵称可以改、
+     * 用户名不再变）；老成员凭密码回来。老库里没有密码的成员第一次进来顺手认领一次。
      */
     private static function memberLogin(PDO $pdo, string $name, string $invite, string $pass): array {
-        if ($name === "") throw new RuntimeException("昵称不能空着");
-        if (mb_strlen($name) > 24) throw new RuntimeException("昵称最多 24 个字");
+        if ($name === "") throw new RuntimeException("用户名不能空着");
+        if (mb_strlen($name) > 24) throw new RuntimeException("用户名最多 24 个字");
         if ($invite === "") throw new RuntimeException("邀请码不能空着");
         if ($pass === "") throw new RuntimeException("密码不能空着");
         if (mb_strlen($pass) < self::PASS_MIN) throw new RuntimeException("密码至少 " . self::PASS_MIN . " 位");
@@ -122,25 +123,34 @@ final class Login {
         $scope = $st->fetch();
         if (!$scope) throw new RuntimeException("邀请码不对，找群主要一个");
 
-        $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
+        // 登录认的是 username，不是昵称：昵称可以改，username 建好就不动
+        $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND username = ? LIMIT 1");
         $st->execute([(int) $scope["id"], $name]);
         $m = $st->fetch();
         if ($m) return self::passwordBack($pdo, $m, $pass);
 
-        if ($name === self::superName($pdo)) throw new RuntimeException("这个昵称已保留，换一个");
+        // 昵称被占着、用户名却查不到：这个人是拿昵称来登了。别顺着往下走成「注册」，
+        // 否则改名之后用新昵称一登，就会在群里凭空多出一个同名的号。
+        $st = $pdo->prepare("SELECT 1 FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
+        $st->execute([(int) $scope["id"], $name]);
+        if ($st->fetchColumn()) {
+            throw new RuntimeException("这是昵称，登录要填当初注册时的用户名");
+        }
+
+        if ($name === self::superName($pdo)) throw new RuntimeException("这个用户名已保留，换一个");
         self::assertQuota($pdo, $scope);
 
         $ts  = lg_now();
         $new = null;
         try {
-            $ins = $pdo->prepare("INSERT INTO members (scope_id, name, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?, ?, 'human', NULL, ?, ?, ?)");
-            $ins->execute([(int) $scope["id"], $name, password_hash($pass, PASSWORD_DEFAULT), $ts, $ts]);
+            $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?, ?, ?, 'human', NULL, ?, ?, ?)");
+            $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), password_hash($pass, PASSWORD_DEFAULT), $ts, $ts]);
             $new = self::memberById($pdo, (int) $pdo->lastInsertId());
         } catch (PDOException $ex) {
             $new = null; // 并发下被别人抢先建了同名，下面再查一次
         }
         if ($new === null) {
-            $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
+            $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND username = ? LIMIT 1");
             $st->execute([(int) $scope["id"], $name]);
             $m = $st->fetch();
             if ($m) return self::passwordBack($pdo, $m, $pass);
@@ -151,12 +161,12 @@ final class Login {
 
     /** 老成员回来：查状态、验密码（没密码就这次认领） */
     private static function passwordBack(PDO $pdo, array $m, string $pass): array {
-        if (!empty($m["deleted_at"])) throw new RuntimeException("这个昵称已经注销了");
-        if ((int) $m["banned"] === 1) throw new RuntimeException("这个昵称已被封禁");
+        if (!empty($m["deleted_at"])) throw new RuntimeException("这个用户名已经注销了");
+        if ((int) $m["banned"] === 1) throw new RuntimeException("这个用户名已被封禁");
         // AI 是给插件用的身份，token 就是它的密码，网页这边没有它的位置
         if ((string) $m["kind"] === "ai") throw new RuntimeException("AI 账号用 token 接插件，不能在这里登录");
         // 管理员身份只能走账号密码，别让任何人用一个昵称领走它
-        if (!empty($m["account_id"])) throw new RuntimeException("这个昵称是管理员，请点下面的「管理员登录」");
+        if (!empty($m["account_id"])) throw new RuntimeException("这个用户名是管理员，请点下面的「管理员登录」");
 
         $hash = (string) ($m["pass_hash"] ?? "");
         if ($hash === "") {

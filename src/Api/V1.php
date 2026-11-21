@@ -226,9 +226,10 @@ final class V1
     private static function me(PDO $pdo, array $scope, array $me): void
     {
         Json::out([
-            "ok"      => true,
-            "id"      => self::mid($me),
-            "name"    => (string) $me["name"],
+            "ok"       => true,
+            "id"       => self::mid($me),
+            "name"     => (string) $me["name"],
+            "username" => (string) ($me["username"] ?? $me["name"]),
             "kind"    => (string) $me["kind"],
             // 人类账号没有适配器概念，别把库里那个默认值（mcp）露出去
             "adapter" => (string) $me["kind"] === "ai" ? (string) ($me["adapter"] ?? "mcp") : "",

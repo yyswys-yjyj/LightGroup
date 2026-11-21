@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
 use LightGroup\Store\Db;
+use LightGroup\Store\MemberNames;
 use LightGroup\Web\Site;
 use PDO;
 
@@ -453,8 +454,8 @@ final class Compat {
         $plain = Token::issue();
         // 顺便发一个网页登录用的密码：进群的人不用再去注册一遍
         $pass = lg_pass();
-        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?)");
-        $ins->execute([(int) $scope["id"], $name, "human", Token::hash($plain), password_hash($pass, PASSWORD_DEFAULT), lg_now(), lg_now()]);
+        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?)");
+        $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), "human", Token::hash($plain), password_hash($pass, PASSWORD_DEFAULT), lg_now(), lg_now()]);
         $newId = (int) $pdo->lastInsertId();
         self::noteJoinIp($pdo, $ip, $newId);
 
@@ -554,10 +555,10 @@ final class Compat {
 
         $plain = Token::issue();
         // 小群协议建出来的一律是 xsj 适配器：它只有大群读写这几个能力
-        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?)");
+        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
         $ins->execute([
-            (int) $scope["id"], $name, "ai", (int) $human["id"],
-            $human["oauth_id"], Token::hash($plain), "xsj", lg_now(), lg_now(),
+            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name),
+            "ai", (int) $human["id"], $human["oauth_id"], Token::hash($plain), "xsj", lg_now(), lg_now(),
         ]);
 
         Json::ok([
@@ -608,12 +609,12 @@ final class Compat {
         self::checkAiQuota($pdo, $scope, (int) $me["id"]);
         $plain = Token::issue();
         $ins = $pdo->prepare(
-            "INSERT INTO members (scope_id, name, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at)"
-            . " VALUES (?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at)"
+            . " VALUES (?,?,?,?,?,?,?,?,?,?)"
         );
         $ins->execute([
-            (int) $scope["id"], $name, "ai", (int) $me["id"],
-            $me["oauth_id"] ?? null, Token::hash($plain), $adapter, lg_now(), lg_now(),
+            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $me["id"], $name),
+            "ai", (int) $me["id"], $me["oauth_id"] ?? null, Token::hash($plain), $adapter, lg_now(), lg_now(),
         ]);
         self::aiOut($pdo, $scope, $plain, $name, $adapter, false);
     }
@@ -738,6 +739,7 @@ final class Compat {
             "me" => [
                 "id"       => self::mid($m),
                 "name"     => (string) $m["name"],
+                "username" => (string) ($m["username"] ?? $m["name"]),
                 "kind"     => (string) $m["kind"],
                 "color"    => self::colorOf((int) $m["id"]),
                 "emoji"    => "",
@@ -1801,11 +1803,11 @@ final class Compat {
             } else {
                 self::checkAiQuota($pdo, $scope, (int) $human["id"]);
                 $pdo->prepare(
-                    "INSERT INTO members (scope_id, name, kind, owner_id, oauth_id, token_hash, created_at, last_seen_at)"
-                    . " VALUES (?,?,?,?,?,?,?,?)"
+                    "INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, created_at, last_seen_at)"
+                    . " VALUES (?,?,?,?,?,?,?,?,?)"
                 )->execute([
-                    (int) $scope["id"], $name, "ai", (int) $human["id"],
-                    $human["oauth_id"], Token::hash($plain), $now, $now,
+                    (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name),
+                    "ai", (int) $human["id"], $human["oauth_id"], Token::hash($plain), $now, $now,
                 ]);
                 $ai = [
                     "id" => (int) $pdo->lastInsertId(), "name" => $name, "kind" => "ai",

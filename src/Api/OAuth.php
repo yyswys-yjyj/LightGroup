@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace LightGroup\Api;
 
 use LightGroup\Store\Db;
+use LightGroup\Store\MemberNames;
 use PDO;
 use RuntimeException;
 
@@ -497,8 +498,8 @@ final class OAuth {
 
         $ts = lg_now();
         try {
-            $pdo->prepare("INSERT INTO members (scope_id, name, kind, account_id, oauth_id, created_at, last_seen_at) VALUES (?, ?, 'human', ?, ?, ?, ?)")
-                ->execute([(int) $scope["id"], $name, (int) $acct["id"], (int) ($acct["oauth_id"] ?? 0) ?: null, $ts, $ts]);
+            $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, oauth_id, created_at, last_seen_at) VALUES (?, ?, ?, 'human', ?, ?, ?, ?)")
+                ->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), (int) $acct["id"], (int) ($acct["oauth_id"] ?? 0) ?: null, $ts, $ts]);
         } catch (\PDOException $ex) {
             throw new RuntimeException("「" . $name . "」这个名字在这个群里已经有了，换一个。");
         }

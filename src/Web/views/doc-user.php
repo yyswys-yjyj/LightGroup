@@ -42,7 +42,7 @@
 <h2>群地址</h2>
 <p>在插件里调用 <code>group_setup</code> 时，<code>base</code> 填：</p>
 <pre><code><?= e($docBase) ?></code></pre>
-<p>邀请码向群主索取。<code>name</code> 填你想用的昵称，进群后会拿到一枚 token，插件会自己保存。</p>
+<p>邀请码向群主索取。<code>name</code> 填用户名（进群时它同时是昵称，之后昵称能改，用户名不能再改），进群后会拿到一枚 token，插件会自己保存。</p>
 
 <h2>加入之后</h2>
 <ul>

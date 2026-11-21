@@ -174,6 +174,8 @@ final class Profile {
         return [
             "id"       => self::mid($m),
             "name"     => (string) $m["name"],
+            // 登录名只有本人看得到（me 接口），不进公开资料
+            "username" => (string) ($m["username"] ?? $m["name"]),
             "kind"     => (string) $m["kind"],
             "color"    => self::colorOf((int) $m["id"]),
             "emoji"    => "",

@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 12;
+    public const VERSION = 13;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -34,6 +34,8 @@ final class Schema {
                 "notice_by"     => "BIGINT NULL",
             ],
             "members"  => [
+                // 登录名：创建时默认等于昵称，之后不可改，昵称可以随便改
+                "username"     => "VARCHAR(191) NULL",
                 "theme"        => "VARCHAR(64) NULL",
                 // AI 账号的协议适配器：xsj = 老小群协议，mcp = MCP 工具集，future: onebot11
                 "adapter"      => "VARCHAR(16) NOT NULL DEFAULT 'mcp'",
@@ -76,6 +78,13 @@ final class Schema {
                 if ($added && $table === "members" && $col === "adapter") {
                     try {
                         $pdo->exec("UPDATE members SET adapter = 'xsj' WHERE kind = 'ai'");
+                    } catch (\Throwable $e) {
+                    }
+                }
+                // 用户名是后加的列：老成员先用昵称顶上，之后昵称改名也不再跟着变
+                if ($added && $table === "members" && $col === "username") {
+                    try {
+                        $pdo->exec("UPDATE members SET username = name WHERE username IS NULL OR username = ''");
                     } catch (\Throwable $e) {
                     }
                 }
@@ -189,7 +198,7 @@ final class Schema {
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_accounts_name ON accounts(name)",
             "CREATE TABLE IF NOT EXISTS members ("
-                . "id $pk, scope_id BIGINT NOT NULL, name $short NOT NULL, kind VARCHAR(8) NOT NULL,"
+                . "id $pk, scope_id BIGINT NOT NULL, name $short NOT NULL, username $short NULL, kind VARCHAR(8) NOT NULL,"
                 . " account_id BIGINT NULL, owner_id BIGINT NULL, oauth_id BIGINT NULL,"
                 . " token_hash $hash NULL, avatar $short NULL, bio $text NULL, styles_css $text NULL, wall $text NULL,"
                 . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
@@ -198,6 +207,7 @@ final class Schema {
                 . " last_seen_at BIGINT NULL"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_members_name ON members(scope_id, name)",
+            "CREATE UNIQUE INDEX {$idx}idx_members_username ON members(scope_id, username)",
             "CREATE UNIQUE INDEX {$idx}idx_members_token ON members(token_hash)",
             "CREATE TABLE IF NOT EXISTS messages ("
                 . "id $pk, scope_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
@@ -229,7 +239,7 @@ final class Schema {
                 . " accepted_at BIGINT NULL, PRIMARY KEY (a_id, b_id)"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_friends_b ON friends(b_id, status)",
-            // 登录失败计数：k 是 ip:<地址> 或 user:<scope>:<昵称>，超阈值就锁一段时间
+            // 登录失败计数：k 是 ip:<地址> 或 user:<scope>:<用户名>，超阈值就锁一段时间
             "CREATE TABLE IF NOT EXISTS login_fails ("
                 . "k VARCHAR(191) NOT NULL PRIMARY KEY, n INT NOT NULL DEFAULT 0,"
                 . " first_at BIGINT NOT NULL DEFAULT 0, last_at BIGINT NOT NULL DEFAULT 0"

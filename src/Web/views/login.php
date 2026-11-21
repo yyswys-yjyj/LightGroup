@@ -52,7 +52,7 @@ if ($capProvider === "geetest4") {
         ? ("用站长的账号和密码进管理后台。" . ($captchaOn ? "开过人机验证，登录时也要过一道。" : ""))
         : ($gate
             ? "本站开了 OAuth 门禁：先用第三方账号登录主账号，再挑一个业务账号进群。"
-            : "第一次来？填昵称和邀请码，自己设个密码就能进。回来时填密码。") ?></p>
+            : "第一次来？填用户名和邀请码，自己设个密码就能进。回来时填密码。用户名是登录凭据，建好后不能改；昵称进群以后可以改。") ?></p>
 
       <?php if ($gate): ?>
       <?php if ($oauthOn): ?>
@@ -71,10 +71,10 @@ if ($capProvider === "geetest4") {
         <?php if ($next !== ""): ?><input type="hidden" name="next" value="<?= e($next) ?>"><?php endif; ?>
 
         <label class="login-field">
-          <span><?= $admin ? "账号" : "昵称" ?></span>
+          <span><?= $admin ? "账号" : "用户名" ?></span>
           <input class="field" type="text" name="name" value="<?= e($who) ?>" data-srv="<?= e($who) ?>" maxlength="24" required
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-                 placeholder="<?= $admin ? "管理员账号" : "群里的名字" ?>" <?= $who === "" ? "autofocus" : "" ?>>
+                 placeholder="<?= $admin ? "管理员账号" : "登录用，建好后不能改" ?>" <?= $who === "" ? "autofocus" : "" ?>>
         </label>
 
         <?php if ($admin): ?>

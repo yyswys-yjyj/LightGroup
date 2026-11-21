@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
+use LightGroup\Store\MemberNames;
 use LightGroup\Web\Site;
 use PDO;
 
@@ -253,8 +254,9 @@ final class Admin {
         $st->execute([$scopeId, (int) $a["id"]]);
         if ($st->fetch()) return;
         try {
-            $st = $pdo->prepare("INSERT INTO members (scope_id, name, kind, account_id, created_at) VALUES (?, ?, 'human', ?, ?)");
-            $st->execute([$scopeId, self::superName($pdo), (int) $a["id"], lg_now()]);
+            $super = self::superName($pdo);
+            $st = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, created_at) VALUES (?, ?, ?, 'human', ?, ?)");
+            $st->execute([$scopeId, $super, MemberNames::plain($pdo, $scopeId, $super), (int) $a["id"], lg_now()]);
         } catch (\Throwable $e) {
         }
     }
@@ -1295,8 +1297,8 @@ final class Admin {
             return (int) $row["id"];
         }
         $memberName = self::uniqueMemberName($pdo, $name, $scopeId);
-        $pdo->prepare("INSERT INTO members (scope_id, name, kind, account_id, oauth_id, created_at) VALUES (?, ?, 'human', ?, ?, ?)")
-            ->execute([$scopeId, $memberName, $accountId, $oauthId, lg_now()]);
+        $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, oauth_id, created_at) VALUES (?, ?, ?, 'human', ?, ?, ?)")
+            ->execute([$scopeId, $memberName, MemberNames::plain($pdo, (int) $scopeId, $memberName), $accountId, $oauthId, lg_now()]);
         return (int) $pdo->lastInsertId();
     }
 
