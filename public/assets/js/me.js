@@ -8,6 +8,7 @@ import {
 } from './core.js';
 import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
+import { openQr } from './qr.js';
 import { loadMembers } from './people.js';
 
 // ---------- 个人首页 ----------
@@ -97,6 +98,9 @@ function paintMeHome(host) {
 
   const grid = h('div', 'me-grid');
   grid.appendChild(meEntry('fa-pen', '我的资料', '昵称、头像、介绍', function () { meView = 'edit'; paintMe(); }));
+  grid.appendChild(meEntry('fa-qrcode', '我的二维码', '别人扫一下就能找到我', function () {
+    openQr('我的二维码', 'lightgroup://user/' + String(me.id || ''), '别人扫这个码能直接打开你的资料页。');
+  }));
   grid.appendChild(meEntry('fa-robot', '我的 AI 账号', aiN ? aiN + ' 个，适配器与 token' : '还没有，去建一个', function () { meView = 'ai'; paintMe(); }));
   grid.appendChild(meEntry('fa-palette', '气泡与外观', '深浅、主题、气泡、壁纸', function () { go('#/appearance'); }));
   if (me.oauth) {
@@ -189,6 +193,16 @@ function renderProfileEdit(host) {
     v.value = (S.me && (S.me.intro || S.me.bio)) || '';
     row.appendChild(v);
   });
+  const sw = h('label', 'sw-row');
+  const inv = document.createElement('input');
+  inv.type = 'checkbox';
+  inv.id = 'f-allow-invite';
+  inv.checked = !(S.me && S.me.allowInvite === false);
+  sw.appendChild(inv);
+  sw.appendChild(h('span', '', '允许他人把我拉进群聊'));
+  body.appendChild(sw);
+  body.appendChild(copyNote('关掉之后，别人建群时选不到你；已经在的群不受影响。'));
+
   body.appendChild(btn('保存', 'btn btn-primary btn-wide', saveProfile));
 
 }
@@ -393,8 +407,13 @@ function saveProfile() {
   const introEl = document.getElementById('f-intro');
   const name = nameEl ? nameEl.value.trim() : '';
   const intro = introEl ? introEl.value : '';
+  const invEl = document.getElementById('f-allow-invite');
   if (!name) { toast('昵称不能空着'); return; }
-  api('api/profile', { name: name, bio: intro }).then(function (j) {
+  api('api/profile', {
+    name: name,
+    bio: intro,
+    allowInvite: invEl && invEl.checked ? '1' : '0'
+  }).then(function (j) {
     if (!j.ok) { toast(j.err || '保存失败'); return; }
     if (j.me) S.me = j.me;
     toast('已保存');

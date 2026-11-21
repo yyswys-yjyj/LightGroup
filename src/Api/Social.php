@@ -87,7 +87,7 @@ final class Social {
     /**
      * 动作落在谁头上：默认是我自己；asId 只能是我名下的 AI（主人代 AI 处理好友）。
      */
-    private static function actorId(PDO $pdo, array $me, ?int $asId): int {
+    public static function actorId(PDO $pdo, array $me, ?int $asId): int {
         $mine = (int) $me["id"];
         if ($asId === null || $asId <= 0 || $asId === $mine) return $mine;
         $st = $pdo->prepare("SELECT COUNT(*) FROM members WHERE id = ? AND owner_id = ? AND kind = 'ai' AND deleted_at IS NULL");
@@ -193,6 +193,75 @@ final class Social {
     }
 
     /**
+     * 给这段关系设备注：remark 是我看到对方的名字。
+     * 关系挂在名下 AI 上时，备注属于 AI 视角（for=a_<id>）。
+     */
+    public static function remark(PDO $pdo, array $scope, array $me, int $targetId, string $remark, ?int $asId = null): void {
+        $mine = self::actorId($pdo, $me, $asId);
+        if ($targetId <= 0 || $targetId === $mine) Json::fail("不能给自己设备注");
+        $row = self::row($pdo, $mine, $targetId);
+        if ($row === null) Json::fail("你们还不是好友");
+        $remark = trim($remark);
+        if (mb_strlen($remark) > 32) Json::fail("备注最多 32 个字");
+        $st = $pdo->prepare("UPDATE friends SET remark_a = ?, remark_b = ? WHERE a_id = ? AND b_id = ?");
+        $st->execute([
+            $mine === (int) $row["a_id"] ? $remark : (string) ($row["remark_a"] ?? ""),
+            $mine === (int) $row["b_id"] ? $remark : (string) ($row["remark_b"] ?? ""),
+            (int) $row["a_id"],
+            (int) $row["b_id"],
+        ]);
+    }
+
+    /**
+     * 拉黑：关系行改成 blocked（好友关系同时解除），但这一行会一直留着。
+     * 这就是「删了好友也加不回来」——request 见到 blocked 直接拒。
+     */
+    public static function block(PDO $pdo, array $scope, array $me, int $targetId, ?int $asId = null): void {
+        $mine = self::actorId($pdo, $me, $asId);
+        if ($targetId <= 0 || $targetId === $mine) Json::fail("不能拉黑自己");
+        if (self::scopeMember($pdo, $scope, $targetId) === null && !self::isSuper($pdo, $me)) Json::fail("找不到这个成员");
+        $row = self::row($pdo, $mine, $targetId);
+        if ($row !== null) {
+            $up = $pdo->prepare("UPDATE friends SET status = 'blocked', blocked_by = ?, accepted_at = NULL WHERE a_id = ? AND b_id = ?");
+            $up->execute([$mine, (int) $row["a_id"], (int) $row["b_id"]]);
+        } else {
+            [$a, $b] = self::pair($mine, $targetId);
+            $ins = $pdo->prepare("INSERT INTO friends (a_id, b_id, status, requested_by, created_at, blocked_by) VALUES (?,?,?,?,?,?)");
+            $ins->execute([$a, $b, "blocked", $mine, lg_now(), $mine]);
+        }
+    }
+
+    /** 解除拉黑：只删「我拉黑对方」的那一行 */
+    public static function unblock(PDO $pdo, array $scope, array $me, int $targetId, ?int $asId = null): void {
+        $mine = self::actorId($pdo, $me, $asId);
+        $row = $targetId > 0 ? self::row($pdo, $mine, $targetId) : null;
+        if ($row === null || (string) $row["status"] !== "blocked") Json::fail("这个人不在你的黑名单里");
+        if ((int) ($row["blocked_by"] ?? 0) !== $mine) Json::fail("是对方拉黑了你");
+        $pdo->prepare("DELETE FROM friends WHERE a_id = ? AND b_id = ?")->execute([(int) $row["a_id"], (int) $row["b_id"]]);
+    }
+
+    /** 我和某人的关系，给资料页决定按钮用 */
+    public static function relation(PDO $pdo, int $viewer, int $other): array {
+        $row = self::row($pdo, $viewer, $other);
+        if ($row === null) return ["state" => "none", "remark" => ""];
+        $remark = self::remarkOf($row, $viewer);
+        $status = (string) $row["status"];
+        if ($status === "blocked") {
+            $by = (int) ($row["blocked_by"] ?? 0);
+            return ["state" => $by === $viewer ? "blockedByMe" : "blockedMe", "remark" => $remark];
+        }
+        if ($status === "accepted") return ["state" => "friend", "remark" => $remark];
+        if ((int) $row["requested_by"] === $viewer) return ["state" => "outgoing", "remark" => $remark];
+        return ["state" => "incoming", "remark" => $remark];
+    }
+
+    /** 取这行关系里、viewer 视角的备注 */
+    public static function remarkOf(array $row, int $viewer): string {
+        $v = (int) $row["a_id"] === $viewer ? (string) ($row["remark_a"] ?? "") : (string) ($row["remark_b"] ?? "");
+        return trim($v);
+    }
+
+    /**
      * 我的好友关系，三段：friends / incoming（别人申请我）/ outgoing（我申请的）。
      * 每项只带对方 id 与时间戳，成员对象由 Compat 统一序列化。
      *
@@ -231,6 +300,8 @@ final class Social {
                     "at" => $bucket === "friends"
                         ? ((int) ($r["accepted_at"] ?? 0) ?: (int) $r["created_at"])
                         : (int) $r["created_at"],
+                    // 备注是「我看对方」的视角：关系挂在 AI 上时用 AI 的视角
+                    "remark" => self::remarkOf($r, $id),
                 ];
                 if ($id !== $mine) $item["for"] = $id;
                 $out[$bucket][] = $item;

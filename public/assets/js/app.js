@@ -10,6 +10,7 @@ import * as chat from './chat.js';
 import * as people from './people.js';
 import * as me from './me.js';
 import * as space from './space.js';
+import * as pg from './pg.js';
 
 const APP = document.getElementById('app');
 let convTimer = 0;
@@ -212,6 +213,8 @@ function renderRoute() {
     const host = document.getElementById('page-host');
     if (!host) return;
     if (r.page === 'friends') people.renderFriends(host);
+    else if (r.page === 'groups') people.renderGroups(host);
+    else if (r.page === 'pg') pg.renderGroup(host, r.id);
     else if (r.page === 'members') people.renderMembers(host);
     else if (r.page === 'space') space.renderSpace(host);
     else if (r.page === 'me') me.renderProfile(host);

@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 13;
+    public const VERSION = 14;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -32,6 +32,9 @@ final class Schema {
                 "notice"        => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
                 "notice_at"     => "BIGINT NOT NULL DEFAULT 0",
                 "notice_by"     => "BIGINT NULL",
+                // 私群配额：单人在本域能建几个、单个私群最多几个人（0 = 跟随站点配置）
+                "pg_member_cap" => "INT NOT NULL DEFAULT 0",
+                "pg_size_cap"   => "INT NOT NULL DEFAULT 0",
             ],
             "members"  => [
                 // 登录名：创建时默认等于昵称，之后不可改，昵称可以随便改
@@ -46,6 +49,8 @@ final class Schema {
                 "pass_hash"    => "VARCHAR(255) NULL",
                 // 注销时把原名搬到这里，名字本身改成「已注销」，昵称才能重新注册
                 "deleted_name" => $mysql ? "VARCHAR(191) NULL" : "TEXT NULL",
+                // 允许别人把我拉进私群；关掉后谁拉都不行
+                "allow_invite" => "TINYINT NOT NULL DEFAULT 1",
             ],
             "messages" => [
                 "reply_to"   => "BIGINT NULL",
@@ -61,6 +66,26 @@ final class Schema {
                 "model"      => "VARCHAR(40) NULL",
                 // 语音转文字的缓存：转一次存下来，别人再点同一条不再重复调接口
                 "voice_text" => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
+            ],
+            // 私群：公告挂在会话上（大群的公告仍挂在 scopes 上）
+            "conversations" => [
+                "notice"    => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
+                "notice_at" => "BIGINT NOT NULL DEFAULT 0",
+                "notice_by" => "BIGINT NULL",
+                // 私群解散时间：解散后从会话列表消失，后台审计仍能看到历史
+                "dissolved_at" => "BIGINT NULL",
+            ],
+            // 私群成员：role = owner / admin / member；pinned_at 是各自会话列表里的置顶时间
+            "conv_members" => [
+                "role"       => "VARCHAR(8) NOT NULL DEFAULT 'member'",
+                "pinned_at"  => "BIGINT NOT NULL DEFAULT 0",
+                "invited_by" => "BIGINT NULL",
+            ],
+            // 好友：各自的备注 + 拉黑记录（blocked_by 有值就属于黑名单，删好友不会删掉这一行）
+            "friends" => [
+                "remark_a"  => "VARCHAR(32) NULL",
+                "remark_b"  => "VARCHAR(32) NULL",
+                "blocked_by" => "BIGINT NULL",
             ],
         ];
         foreach ($wanted as $table => $cols) {
@@ -181,6 +206,7 @@ final class Schema {
                 . " recall_policy VARCHAR(16) NOT NULL DEFAULT '5m',"
                 . " theme VARCHAR(64) NULL,"
                 . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
+                . " pg_member_cap INT NOT NULL DEFAULT 0, pg_size_cap INT NOT NULL DEFAULT 0,"
                 . " created_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_scopes_slug ON scopes(slug)",
@@ -203,8 +229,8 @@ final class Schema {
                 . " token_hash $hash NULL, avatar $short NULL, bio $text NULL, styles_css $text NULL, wall $text NULL,"
                 . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, banned TINYINT NOT NULL DEFAULT 0,"
-                . " deleted_at BIGINT NULL, deleted_name $short NULL, created_at BIGINT NOT NULL DEFAULT 0,"
-                . " last_seen_at BIGINT NULL"
+                . " deleted_at BIGINT NULL, deleted_name $short NULL, allow_invite TINYINT NOT NULL DEFAULT 1,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, last_seen_at BIGINT NULL"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_members_name ON members(scope_id, name)",
             "CREATE UNIQUE INDEX {$idx}idx_members_username ON members(scope_id, username)",
@@ -223,20 +249,27 @@ final class Schema {
             "CREATE TABLE IF NOT EXISTS conversations ("
                 . "id $pk, scope_id BIGINT NOT NULL, kind VARCHAR(8) NOT NULL, title $short NULL,"
                 . " is_public TINYINT NOT NULL DEFAULT 0, dm_key $slug NULL, created_by BIGINT NULL,"
+                . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
+                . " dissolved_at BIGINT NULL,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_msg_id BIGINT NOT NULL DEFAULT 0,"
                 . " last_msg_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_conv_key ON conversations(scope_id, dm_key)",
             "CREATE INDEX {$idx}idx_conv_scope ON conversations(scope_id, kind)",
+            // 私群成员表；role = owner / admin / member，私聊与公开大群不用 role
             "CREATE TABLE IF NOT EXISTS conv_members ("
                 . "conv_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL DEFAULT 0,"
+                . " role VARCHAR(8) NOT NULL DEFAULT 'member', pinned_at BIGINT NOT NULL DEFAULT 0,"
+                . " invited_by BIGINT NULL,"
                 . " PRIMARY KEY (conv_id, member_id)"
                 . ")$suffix",
+            // 好友：status = pending / accepted / blocked；blocked_by 有值表示这一对在黑名单里
             "CREATE TABLE IF NOT EXISTS friends ("
                 . "a_id BIGINT NOT NULL, b_id BIGINT NOT NULL, status VARCHAR(8) NOT NULL,"
                 . " requested_by BIGINT NOT NULL, created_at BIGINT NOT NULL DEFAULT 0,"
-                . " accepted_at BIGINT NULL, PRIMARY KEY (a_id, b_id)"
+                . " accepted_at BIGINT NULL, remark_a VARCHAR(32) NULL, remark_b VARCHAR(32) NULL,"
+                . " blocked_by BIGINT NULL, PRIMARY KEY (a_id, b_id)"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_friends_b ON friends(b_id, status)",
             // 登录失败计数：k 是 ip:<地址> 或 user:<scope>:<用户名>，超阈值就锁一段时间

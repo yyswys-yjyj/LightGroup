@@ -1,5 +1,5 @@
 // LightGroup · 好友、成员、加好友、申请处理
-import { S, h, icon, btn, toast, api, pageHead, go, openSheet, closeSheet } from './core.js';
+import { S, h, icon, btn, field, toast, api, pageHead, go, openSheet, closeSheet } from './core.js';
 import { avatar } from './avatar.js';
 import * as conv from './conv.js';
 import { initProfile, openUserCard } from './profile.js';
@@ -7,7 +7,23 @@ import { initProfile, openUserCard } from './profile.js';
 let hostRef = null;
 let kind = 'friends';
 let tab = 'friends';
+// 联系人页的分栏：好友 / 群聊（群聊里是私群）
+function contactNav(active) {
+  const nav = h('div', 'friend-tabs');
+  [['friends', '好友'], ['groups', '群聊']].forEach(function (d) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'friend-tab' + (active === d[0] ? ' on' : '');
+    b.textContent = d[1];
+    b.addEventListener('click', function () {
+      if (active !== d[0]) go(d[0] === 'groups' ? '#/groups' : '#/friends');
+    });
+    nav.appendChild(b);
+  });
+  return nav;
+}
 const FRIENDS_LOADED = { v: false };
+const GROUPS = { v: false };
 
 export function isMe(m) { return !!(m && S.me && String(m.id) === String(S.me.id)); }
 
@@ -159,6 +175,13 @@ export function renderFriends(host) {
   loadFriends().then(function () { if (kind === 'friends') paintFriends(); });
 }
 
+export function renderGroups(host) {
+  hostRef = host;
+  kind = 'groups';
+  paintGroups();
+  loadGroups().then(function () { if (kind === 'groups') paintGroups(); });
+}
+
 export function renderMembers(host) {
   hostRef = host;
   kind = 'members';
@@ -169,6 +192,7 @@ export function renderMembers(host) {
 function repaint() {
   if (!hostRef) return;
   if (kind === 'friends') paintFriends();
+  else if (kind === 'groups') paintGroups();
   else paintMembers();
 }
 
@@ -178,7 +202,8 @@ function paintFriends() {
   host.textContent = '';
   const page = h('div', 'chat-page');
   const total = (S.friends.friends || []).length;
-  page.appendChild(pageHead('好友', total ? '共 ' + total + ' 位好友' : '还没有好友'));
+  page.appendChild(pageHead('联系人', total ? '共 ' + total + ' 位好友' : '还没有好友'));
+  page.appendChild(contactNav('friends'));
 
   const tabs = h('div', 'friend-tabs');
   const defs = [
@@ -220,6 +245,123 @@ function paintFriends() {
   }
 }
 
+// ---------- 群聊（私群） ----------
+// 列表来自 api/groups：{groups:[{id,title,role,members,ownerId,pinned,notice,last,unread,lastAt,createdAt}], caps}
+export async function loadGroups() {
+  const j = await api('api/groups');
+  if (j && j.ok) {
+    S.groups = { groups: j.groups || [], caps: j.caps || {} };
+    GROUPS.v = true;
+  } else {
+    S.groups = S.groups || { groups: [], caps: {} };
+  }
+  return j;
+}
+export function groupsLoaded() { return GROUPS.v; }
+
+function paintGroups() {
+  const host = hostRef;
+  if (!host) return;
+  host.textContent = '';
+  const gs = (S.groups && S.groups.groups) || [];
+  const page = h('div', 'chat-page');
+  page.appendChild(pageHead('联系人', gs.length ? '群聊 · ' + gs.length + ' 个' : '群聊'));
+  page.appendChild(contactNav('groups'));
+  const body = h('div', 'page-body');
+  page.appendChild(body);
+  host.appendChild(page);
+
+  body.appendChild(btn('＋ 创建群聊', 'btn btn-primary btn-block', openCreateGroup));
+  body.appendChild(h('div', 'page-tip', '私群只有群里的人看得到，拉上 3 个人或 AI 就能建。'));
+  if (!gs.length) {
+    body.appendChild(h('div', 'empty-hint', '还没有群聊。'));
+    return;
+  }
+  const card = h('div', 'list-card');
+  gs.forEach(function (g) { card.appendChild(groupRow(g)); });
+  body.appendChild(card);
+}
+
+function groupRow(g) {
+  const row = h('div', 'm-row');
+  row.appendChild(avatar({ id: 'pg' + g.id, name: g.title || '群聊' }, 42));
+  const info = h('div', 'm-row-i');
+  const nm = h('div', 'm-row-n');
+  nm.appendChild(h('b', '', g.title || '未命名群聊'));
+  if (g.role === 'owner') nm.appendChild(h('span', 'badge', '群主'));
+  else if (g.role === 'admin') nm.appendChild(h('span', 'badge', '管理员'));
+  if (g.pinned) nm.appendChild(h('span', 'tag-ai', '置顶'));
+  info.appendChild(nm);
+  let sub;
+  if (g.last && g.last.text) sub = (g.last.name ? g.last.name + '：' : '') + g.last.text;
+  else sub = (g.members || 0) + ' 人';
+  info.appendChild(h('div', 'm-row-s', sub));
+  row.appendChild(info);
+  if (g.unread) row.appendChild(h('span', 'unread-dot', g.unread > 99 ? '99+' : String(g.unread)));
+  row.addEventListener('click', function () { go('#/pg/' + g.id); });
+  return row;
+}
+
+function openCreateGroup() {
+  const wrap = h('div', 'pg-create');
+  const nameInp = document.createElement('input');
+  nameInp.className = 'tb';
+  nameInp.type = 'text';
+  nameInp.maxLength = 24;
+  nameInp.placeholder = '群名，比如「今晚吃啥」';
+  field(wrap, '群名', function (row) { row.appendChild(nameInp); });
+
+  const picked = {};
+  const list = h('div', 'pg-pick');
+  const candidates = (S.members || []).filter(function (m) { return !isMe(m); });
+  field(wrap, '拉谁进群', function (row) {
+    if (!candidates.length) { row.appendChild(h('div', 'page-tip', '这个群里还没有别人')); return; }
+    candidates.forEach(function (m) {
+      const item = h('button', 'pg-pick-row');
+      item.type = 'button';
+      item.appendChild(avatar(m, 30));
+      const nm = h('span', 'pg-pick-n');
+      nm.appendChild(document.createTextNode(m.name || '匿名'));
+      if (m.kind === 'ai') nm.appendChild(h('span', 'tag-ai', 'AI'));
+      item.appendChild(nm);
+      item.appendChild(icon('fa-check'));
+      item.addEventListener('click', function () {
+        if (picked[m.id]) { delete picked[m.id]; item.classList.remove('on'); }
+        else { picked[m.id] = true; item.classList.add('on'); }
+        refresh();
+      });
+      list.appendChild(item);
+    });
+    row.appendChild(list);
+  });
+
+  const tip = h('div', 'page-tip', '至少选 3 位');
+  wrap.appendChild(tip);
+  const ok = btn('创建群聊', 'btn btn-primary btn-block', doCreate);
+  wrap.appendChild(ok);
+  function refresh() {
+    const n = Object.keys(picked).length;
+    tip.textContent = n ? '已选 ' + n + ' 位' + (n < 3 ? '，还差 ' + (3 - n) + ' 位' : '') : '至少选 3 位';
+    tip.classList.toggle('warn', n > 0 && n < 3);
+  }
+  async function doCreate() {
+    const title = nameInp.value.trim();
+    const ids = Object.keys(picked);
+    if (!title) { toast('给群起个名字'); return; }
+    if (ids.length < 3) { toast('至少拉 3 个人或 AI 才能建群'); return; }
+    ok.disabled = true;
+    const j = await api('api/groups/create', { title: title, members: ids });
+    ok.disabled = false;
+    if (!j.ok) { toast(j.err || '建群失败'); return; }
+    closeSheet();
+    await loadGroups();
+    if (kind === 'groups') paintGroups();
+    await conv.load();
+    go('#/pg/' + (j.id || 0));
+  }
+  openSheet('创建群聊', wrap, { size: 'md' });
+}
+
 // 这条关系挂在自己的哪个 AI 上（主人代管），回名字
 function aiNameOf(forRaw) {
   if (!forRaw) return '';
@@ -233,7 +375,9 @@ function friendRow(m, mode) {
   row.appendChild(avatar(m, 42));
   const info = h('div', 'm-row-i');
   const nm = h('div', 'm-row-n');
-  nm.appendChild(h('b', '', m.name || '匿名'));
+  const rm = mode === 'friend' ? String(m.remark || '') : '';
+  nm.appendChild(h('b', '', rm || m.name || '匿名'));
+  if (rm) nm.appendChild(h('span', 'badge', '备注'));
   if (m.kind === 'ai') nm.appendChild(h('span', 'tag-ai', 'AI'));
   if (m.for) nm.appendChild(h('span', 'badge', '你的 AI'));
   info.appendChild(nm);

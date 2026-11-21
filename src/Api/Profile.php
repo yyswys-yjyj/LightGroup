@@ -52,6 +52,8 @@ final class Profile {
             // 老版「我的资料」表单发的是 intro，兼容一下，不然保存简介一直没反应
             if ($bio === null) $bio = self::field("intro", null);
             $avatar = self::field("avatar", "");
+            // 「允许他人把我拉进群」：布尔开关，没传就当没改
+            $allow = self::field("allowInvite", null);
 
             if ($name !== "" && $name !== (string) $m["name"]) {
                 if (mb_strlen($name) > 24) Json::fail("昵称最多 24 个字");
@@ -70,6 +72,11 @@ final class Profile {
             if ($avatar !== "") {
                 $pdo->prepare("UPDATE members SET avatar = ? WHERE id = ?")->execute([$avatar, (int) $m["id"]]);
                 $m["avatar"] = $avatar;
+            }
+            if ($allow !== null) {
+                $on = in_array(strtolower(trim($allow)), ["1", "true", "on", "yes"], true) ? 1 : 0;
+                $pdo->prepare("UPDATE members SET allow_invite = ? WHERE id = ?")->execute([$on, (int) $m["id"]]);
+                $m["allow_invite"] = $on;
             }
         }
         Json::ok(["profile" => self::out($pdo, $m), "me" => self::meOut($pdo, $scope, $m)]);
@@ -102,8 +109,29 @@ final class Profile {
         $out = self::out($pdo, $target);
         $out["isMe"] = (int) $target["id"] === (int) $me["id"];
         $out["friends"] = self::friendState($pdo, (int) $me["id"], (int) $target["id"]);
+        // relation 比 friends 细：多出 blockedByMe / blockedMe 与备注，前端据此换按钮
+        $out["relation"] = Social::relation($pdo, (int) $me["id"], (int) $target["id"]);
+        $out["dm"] = self::dmWith($pdo, (int) $me["id"], (int) $target["id"]);
         $out["scope"] = "same";
         Json::ok(["profile" => $out]);
+    }
+
+    /**
+     * 我和这个人的私聊会话（有就给 id 与置顶状态）。
+     * 没建过返回 null —— 资料页的「发消息」这时才去调 api/dm/open 现开。
+     */
+    private static function dmWith(PDO $pdo, int $a, int $b): ?array {
+        if ($a <= 0 || $b <= 0 || $a === $b) return null;
+        [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];
+        $st = $pdo->prepare(
+            "SELECT c.id, cm.pinned_at FROM conversations c
+             JOIN conv_members cm ON cm.conv_id = c.id AND cm.member_id = ?
+             WHERE c.dm_key = ? AND c.dissolved_at IS NULL LIMIT 1"
+        );
+        $st->execute([$a, $x . "_" . $y]);
+        $row = $st->fetch();
+        if (!$row) return null;
+        return ["convId" => (int) $row["id"], "pinned" => (int) ($row["pinned_at"] ?? 0) > 0];
     }
 
     /** 两个人所在的群是不是在同一个互通圈子里 */
@@ -190,6 +218,8 @@ final class Profile {
             "bio"      => (string) ($m["bio"] ?? ""),
             "invite"   => (string) $scope["invite"],
             "adapter"  => $isAi ? self::adapterOf($m) : "",
+            // 「允许他人把我拉进群」：建私群选人时后端会按这个拦
+            "allowInvite" => (int) ($m["allow_invite"] ?? 1) === 1,
         ];
     }
 

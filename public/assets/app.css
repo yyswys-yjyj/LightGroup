@@ -467,3 +467,69 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .me-danger{color:#dc2626;border-color:rgba(220,38,38,.35);margin-top:18px}
 .ai-adapter{flex:none;font-size:11px;line-height:1;padding:4px 7px;border-radius:6px;border:1px solid var(--border);color:var(--text-dim)}
 .ai-adapter.on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
+
+/* ---------- 联系人 / 私群 ---------- */
+.btn-block{width:100%;justify-content:center}
+.btn-danger{background:var(--danger-solid);color:var(--on-danger);border-color:transparent}
+.btn-danger:hover{filter:brightness(1.06)}
+.btn-ghost.danger{color:var(--danger)}
+.pg-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}
+.pg-card-h{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.pg-card-h b{flex:1;font-size:13.5px;font-weight:600}
+.pg-notice{white-space:pre-wrap;font-size:13.5px;line-height:1.7;color:var(--text);word-break:break-word}
+.pg-notice.empty{color:var(--text-faint);margin:0}
+.pg-meta{margin-top:8px;font-size:11.5px;color:var(--text-faint)}
+.pg-members .list-card{margin:0 -14px -14px;border:0;border-top:1px solid var(--border);border-radius:0 0 14px 14px}
+.pg-ops{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.pg-row2{display:flex;gap:8px}
+.pg-row2 .btn{flex:1;justify-content:center}
+
+.page-tip.warn{color:#b45309}
+.pg-create{display:flex;flex-direction:column;gap:14px}
+.pg-create .f-row{gap:6px}
+.pg-pick{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow-y:auto;padding:2px}
+.pg-pick-row{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;cursor:pointer;text-align:left}
+.pg-pick-row>i{flex:none;color:var(--text-faint);font-size:12px}
+.pg-pick-row.on{border-color:var(--accent);background:var(--accent-soft)}
+.pg-pick-row.on>i{color:var(--accent-ink)}
+.pg-pick-n{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 设置开关行 */
+.sw-row{display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--text);cursor:pointer;padding:2px 0}
+.sw-row input{width:16px;height:16px;accent-color:var(--accent)}
+
+/* 好友设置弹层 */
+.pf-set{display:flex;flex-direction:column;gap:8px;padding:2px}
+.pf-set-who{font-size:13px;color:var(--text-dim);padding:0 2px 4px}
+.pf-set .f-row{gap:6px}
+.pf-set .btn{justify-content:center}
+
+
+/* ---------- 二维码 ---------- */
+.qr-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:2px}
+.qr-img{width:220px;height:220px;display:block;background:#fff;border-radius:14px;border:1px solid var(--border);padding:8px;box-shadow:var(--shadow-sm)}
+.qr-text{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-dim);word-break:break-all;text-align:center;max-width:100%}
+.qr-hint{font-size:12.5px;color:var(--text-faint);text-align:center;line-height:1.6}
+.qr-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.qr-warn{display:flex;flex-direction:column;gap:10px}
+.qr-warn-t{font-size:15px;font-weight:600;color:var(--text)}
+.qr-url,.qr-raw{margin:0;padding:9px 11px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;overflow:auto;max-height:160px}
+.qr-url{color:var(--text)}
+.qr-raw{color:var(--text-dim);white-space:pre-wrap}
+
+/* ---------- 扫描器 ---------- */
+.scan-wrap{display:flex;flex-direction:column;gap:12px}
+.scan-stage{position:relative;border-radius:16px;overflow:hidden;background:#0b0f14;aspect-ratio:1/1;max-height:56vh;display:flex;align-items:center;justify-content:center}
+.scan-video{width:100%;height:100%;object-fit:cover;display:block}
+.scan-frame{position:absolute;inset:14%;border:2px solid rgba(255,255,255,.85);border-radius:16px;pointer-events:none}
+.scan-tip{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-size:12.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.65)}
+.scan-empty{color:#c8d2e0;font-size:13px;text-align:center;padding:26px 20px;line-height:1.7}
+.scan-acts{display:flex;gap:8px;flex-wrap:wrap}
+.scan-manual{display:flex;flex-direction:column;gap:8px}
+
+
+.pg-guest{display:flex;align-items:center;gap:12px}
+.pg-guest-i{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pg-guest-i b{font-size:16px}
+.pg-guest-i span{font-size:12.5px;color:var(--text-faint)}
+

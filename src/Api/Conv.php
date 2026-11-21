@@ -14,6 +14,9 @@ use PDO;
  * 已读游标复用 members.last_read_id。
  *
  * 私聊：dm_key = "小id_大id"，两人各一行 conv_members，已读游标在 conv_members.last_read_id。
+ *
+ * 私群：kind = "pg"，dm_key 为 NULL，成员写在 conv_members 里，role = owner / admin / member。
+ * 私群不进公开大群的消息流，也不在管理员的会话列表里出现（后台审计单独查全表）。
  */
 final class Conv {
     private const COLORS = [
@@ -216,7 +219,8 @@ final class Conv {
     }
 
     /**
-     * 左侧会话列表：公开大群永远第一，其后是我参与的私聊，按最后消息时间倒序。
+     * 左侧会话列表：公开大群永远第一；其后是我参与的私群与私聊。
+     * 排序：置顶的在前（按置顶时间倒序），再按最后消息时间倒序。
      */
     public static function mine(PDO $pdo, array $scope, array $me): array {
         $sid = (int) $scope["id"];
@@ -225,28 +229,36 @@ final class Conv {
         // 互通时公开大群的摘要/未读要跨兄弟群聚合
         $pubIds = self::publicConvIds($pdo, $scope);
         $st = $pdo->prepare(
-            "SELECT c.* FROM conversations c"
+            "SELECT c.*, cm.role AS my_role, cm.pinned_at AS my_pin FROM conversations c"
             . " JOIN conv_members cm ON cm.conv_id = c.id AND cm.member_id = ?"
-            . " WHERE c.scope_id = ? AND c.is_public = 0"
-            . " ORDER BY c.last_msg_at DESC, c.id DESC LIMIT 100"
+            . " WHERE c.scope_id = ? AND c.is_public = 0 AND c.dissolved_at IS NULL"
+            . " ORDER BY (cm.pinned_at > 0) DESC, cm.pinned_at DESC, c.last_msg_at DESC, c.id DESC LIMIT 100"
         );
         $st->execute([$mid, $sid]);
         $rows = array_merge([$pub], $st->fetchAll());
         $out = [];
         foreach ($rows as $c) {
             $isPub = (int) $c["is_public"] === 1;
+            $isPg  = !$isPub && (string) ($c["kind"] ?? "") === "pg";
             $item = [
                 "id"       => (int) $c["id"],
-                "kind"     => $isPub ? "group" : "dm",
-                "title"    => $isPub ? (string) ($scope["title"] ?? "") : "",
+                "kind"     => $isPub ? "group" : ($isPg ? "pg" : "dm"),
+                "title"    => $isPub ? (string) ($scope["title"] ?? "") : (string) ($c["title"] ?? ""),
                 "isPublic" => $isPub ? 1 : 0,
                 "last"     => self::lastLine($pdo, $c, $isPub ? $pubIds : null),
                 "unread"   => self::unread($pdo, $c, $me, $isPub ? $pubIds : null),
+                "pinned"   => !empty($c["my_pin"]),
             ];
             if ($isPub) {
                 $stc = $pdo->prepare("SELECT COUNT(*) FROM members WHERE scope_id = ? AND deleted_at IS NULL");
                 $stc->execute([$sid]);
                 $item["members"] = (int) $stc->fetchColumn();
+            } elseif ($isPg) {
+                $item["title"]    = (string) ($c["title"] ?? "");
+                $item["members"]  = count(self::memberIds($pdo, $c));
+                $item["role"]     = (string) ($c["my_role"] ?? "member");
+                $item["ownerId"]  = (int) ($c["created_by"] ?? 0);
+                $item["notice"]   = (string) ($c["notice"] ?? "");
             } else {
                 $other = 0;
                 foreach (self::memberIds($pdo, $c) as $x) {
@@ -254,11 +266,140 @@ final class Conv {
                 }
                 $item["memberId"] = $other;
                 $item["member"] = self::briefOf($pdo, $other);
-                $item["title"] = $item["member"]["name"];
+                $remark = self::remarkFor($pdo, $mid, $other);
+                $item["remark"] = $remark;
+                $item["title"] = $remark !== "" ? $remark : $item["member"]["name"];
             }
             $out[] = $item;
         }
         return $out;
+    }
+
+    /** 我的私群列表（联系人 → 群聊），含角色与人数 */
+    public static function myPrivateGroups(PDO $pdo, array $scope, int $mid): array {
+        $st = $pdo->prepare(
+            "SELECT c.*, cm.role AS my_role, cm.pinned_at AS my_pin FROM conversations c"
+            . " JOIN conv_members cm ON cm.conv_id = c.id AND cm.member_id = ?"
+            . " WHERE c.scope_id = ? AND c.kind = 'pg' AND c.dissolved_at IS NULL"
+            . " ORDER BY (cm.pinned_at > 0) DESC, cm.pinned_at DESC, c.last_msg_at DESC, c.id DESC LIMIT 200"
+        );
+        $st->execute([$mid, (int) $scope["id"]]);
+        $out = [];
+        foreach ($st->fetchAll() as $c) {
+            $ids = self::memberIds($pdo, $c);
+            $out[] = [
+                "id"        => (int) $c["id"],
+                "title"     => (string) ($c["title"] ?? ""),
+                "members"   => count($ids),
+                "role"      => (string) ($c["my_role"] ?? "member"),
+                "ownerId"   => (int) ($c["created_by"] ?? 0),
+                "pinned"    => !empty($c["my_pin"]),
+                "notice"    => (string) ($c["notice"] ?? ""),
+                "last"      => self::lastLine($pdo, $c),
+                "unread"    => self::unread($pdo, $c, ["id" => $mid, "last_read_id" => 0]),
+                "lastAt"     => (int) $c["last_msg_at"],
+                "createdAt" => (int) $c["created_at"],
+            ];
+        }
+        return $out;
+    }
+
+    /** 建私群：调用方负责配额与权限校验，这里只落库 */
+    public static function createPrivate(PDO $pdo, array $scope, int $ownerId, string $title, array $memberIds): int {
+        $now = lg_now();
+        $ins = $pdo->prepare(
+            "INSERT INTO conversations (scope_id, kind, title, is_public, dm_key, created_by, created_at, last_msg_id, last_msg_at)"
+            . " VALUES (?, 'pg', ?, 0, NULL, ?, ?, 0, 0)"
+        );
+        $ins->execute([(int) $scope["id"], $title, $ownerId, $now]);
+        $cid = (int) $pdo->lastInsertId();
+        $cm = $pdo->prepare(
+            "INSERT INTO conv_members (conv_id, member_id, last_read_id, joined_at, role, pinned_at, invited_by)"
+            . " VALUES (?, ?, 0, ?, ?, 0, ?)"
+        );
+        $cm->execute([$cid, $ownerId, $now, "owner", $ownerId]);
+        foreach ($memberIds as $id) {
+            $id = (int) $id;
+            if ($id <= 0 || $id === $ownerId) continue;
+            $cm->execute([$cid, $id, $now, "member", $ownerId]);
+        }
+        return $cid;
+    }
+
+    /** 我在这个会话里的角色：owner / admin / member，空串表示不在里面 */
+    public static function roleIn(PDO $pdo, int $convId, int $memberId): string {
+        if ($convId <= 0 || $memberId <= 0) return "";
+        $st = $pdo->prepare("SELECT role FROM conv_members WHERE conv_id = ? AND member_id = ? LIMIT 1");
+        $st->execute([$convId, $memberId]);
+        $r = $st->fetchColumn();
+        return $r === false ? "" : (string) $r;
+    }
+
+    public static function setRole(PDO $pdo, int $convId, int $memberId, string $role): void {
+        $st = $pdo->prepare("UPDATE conv_members SET role = ? WHERE conv_id = ? AND member_id = ?");
+        $st->execute([$role, $convId, $memberId]);
+    }
+
+    public static function setPinned(PDO $pdo, int $convId, int $memberId, bool $on): void {
+        $st = $pdo->prepare("UPDATE conv_members SET pinned_at = ? WHERE conv_id = ? AND member_id = ?");
+        $st->execute([$on ? lg_now() : 0, $convId, $memberId]);
+    }
+
+    public static function addMember(PDO $pdo, int $convId, int $memberId, int $by): void {
+        try {
+            $st = $pdo->prepare(
+                "INSERT INTO conv_members (conv_id, member_id, last_read_id, joined_at, role, pinned_at, invited_by)"
+                . " VALUES (?, ?, 0, ?, 'member', 0, ?)"
+            );
+            $st->execute([$convId, $memberId, lg_now(), $by]);
+        } catch (Throwable $e) {
+            // 已经在群里
+        }
+    }
+
+    public static function removeMember(PDO $pdo, int $convId, int $memberId): void {
+        $st = $pdo->prepare("DELETE FROM conv_members WHERE conv_id = ? AND member_id = ?");
+        $st->execute([$convId, $memberId]);
+    }
+
+    /** 群成员 + 角色，给群资料页用（顺序：群主 → 管理员 → 成员） */
+    public static function membersWithRole(PDO $pdo, array $conv): array {
+        $st = $pdo->prepare(
+            "SELECT cm.member_id, cm.role, cm.joined_at, cm.invited_by, m.name, m.kind, m.avatar, m.deleted_at"
+            . " FROM conv_members cm LEFT JOIN members m ON m.id = cm.member_id"
+            . " WHERE cm.conv_id = ?"
+            . " ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cm.joined_at ASC"
+        );
+        $st->execute([(int) $conv["id"]]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[] = [
+                "id"   => ((string) ($r["kind"] ?? "") === "ai" ? "a_" : "h_") . (int) $r["member_id"],
+                "memberId" => (int) $r["member_id"],
+                "name" => (string) ($r["name"] ?? ""),
+                "kind" => (string) ($r["kind"] ?? ""),
+                "avatar" => (string) ($r["avatar"] ?? ""),
+                "color" => self::colorOf((int) $r["member_id"]),
+                "role" => (string) $r["role"],
+                "joined" => (int) $r["joined_at"],
+                "gone" => !empty($r["deleted_at"]),
+            ];
+        }
+        return $out;
+    }
+
+    /** 好友备注：viewer 视角下对方的名字（没有就空串） */
+    public static function remarkFor(PDO $pdo, int $viewer, int $other): string {
+        $a = min($viewer, $other);
+        $b = max($viewer, $other);
+        if ($a <= 0 || $b <= 0) return "";
+        $st = $pdo->prepare("SELECT remark_a, remark_b FROM friends WHERE a_id = ? AND b_id = ? LIMIT 1");
+        $st->execute([$a, $b]);
+        $row = $st->fetch();
+        if (!$row) return "";
+        // remark_a 属于 a_id，remark_b 属于 b_id
+        $v = $a === $viewer ? (string) ($row["remark_a"] ?? "") : (string) ($row["remark_b"] ?? "");
+        return trim($v);
     }
 
     /**

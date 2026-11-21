@@ -127,6 +127,7 @@ function item(c) {
 
   const av = h('span', 'conv-avatar');
   if (c.kind === 'dm' && c.member) av.appendChild(avatar(c.member, 44));
+  else if (c.kind === 'pg') av.appendChild(avatar({ id: 'pg' + c.id, name: convName(c) }, 44));
   else if (c.scope) av.appendChild(avatar({ id: 'scope' + c.scope, name: convName(c) }, 44));
   else av.appendChild(siteMark('conv-mark'));
   b.appendChild(av);
@@ -134,6 +135,7 @@ function item(c) {
   const meta = h('span', 'conv-meta');
   const top = h('span', 'conv-top');
   top.appendChild(h('span', 'conv-name', convName(c)));
+  if (c.pinned) top.appendChild(h('span', 'conv-cross', '置顶'));
   if (c.scope && String(c.slug || '') !== scopeSlug()) top.appendChild(h('span', 'conv-cross', '其它群'));
   top.appendChild(h('span', 'conv-time', convTime(lastTs(c))));
   meta.appendChild(top);

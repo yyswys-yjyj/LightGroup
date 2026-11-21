@@ -594,6 +594,8 @@ function editScopeDialog(s) {
       field('简介', textInput('intro', s.intro || '')),
       field('人类上限', textInput('human_cap', String(s.human_cap), '0 不限', 'number')),
       field('AI 上限', textInput('ai_cap', String(s.ai_cap), '0 不限', 'number')),
+      field('每人私群数', textInput('pg_member_cap', String(s.pg_member_cap || 0), '0 跟站点', 'number')),
+      field('单群人数上限', textInput('pg_size_cap', String(s.pg_size_cap || 0), '0 跟站点', 'number')),
       field('撤回策略', selectInput('recall_policy', [
         { value: '5m', label: '5 分钟内可撤回' },
         { value: 'until_other', label: '对方未读可撤回' },
@@ -610,6 +612,8 @@ function editScopeDialog(s) {
           intro: formValue(f, 'intro'),
           human_cap: formValue(f, 'human_cap') || '0',
           ai_cap: formValue(f, 'ai_cap') || '0',
+          pg_member_cap: formValue(f, 'pg_member_cap') || '0',
+          pg_size_cap: formValue(f, 'pg_size_cap') || '0',
           recall_policy: formValue(f, 'recall_policy'),
         });
         m.close(); toast('群组已保存'); go('scopes');
@@ -1443,7 +1447,12 @@ async function renderConvs(box) {
     return [
       el('td', {}, [div('cell-name', [
         el('b', { text: c.title || ('会话 #' + c.id) }),
-        c.isPublic ? el('span', { class: 'badge admin', text: '群聊' }) : el('span', { class: 'badge muted', text: '私聊' }),
+        c.isPublic
+          ? el('span', { class: 'badge admin', text: '大群' })
+          : (c.private
+            ? el('span', { class: 'badge', text: '私群' })
+            : el('span', { class: 'badge muted', text: '私聊' })),
+        c.dissolved ? el('span', { class: 'badge muted', text: '已解散' }) : null,
       ])]),
       el('td', { class: 'muted', text: c.scopeTitle }),
       el('td', { class: 'num', text: String(c.msgCount) }),
@@ -1475,7 +1484,8 @@ function adminMsgText(msg) {
 
 async function viewConv(c) {
   const body = div('conv-view', [loading()]);
-  const m = modal((c.isPublic ? '群聊' : '私聊') + ' · ' + (c.title || ''), [body], [btn('关闭', 'btn-ghost', function () { m.close(); })]);
+  const kindText = c.isPublic ? '大群' : (c.private ? '私群' : '私聊');
+  const m = modal(kindText + ' · ' + (c.title || '') + (c.dissolved ? '（已解散）' : ''), [body], [btn('关闭', 'btn-ghost', function () { m.close(); })]);
 
   // 每次操作后整块重画，省得自己去跟踪哪一条变了
   async function paint() {
@@ -1554,6 +1564,8 @@ async function renderSettings(box) {
   const fAi = textInput('quota.ai_total', st['quota.ai_total'] || '0', '0 不限', 'number');
   const fAiPer = textInput('quota.ai_per_human', st['quota.ai_per_human'] || '0', '0 不限', 'number');
   const fAcc = textInput('quota.account_per_oauth', st['quota.account_per_oauth'] || '0', '0 不限', 'number');
+  const fPgMember = textInput('pg.member_cap', st['pg.member_cap'] || '0', '0 不限', 'number');
+  const fPgSize = textInput('pg.size_cap', st['pg.size_cap'] || '0', '0 不限', 'number');
 
   const form = el('form', { class: 'adm-form' }, [
     div('form-grid', [
@@ -1576,6 +1588,15 @@ async function renderSettings(box) {
     ]),
   ]);
   box.append(card('注册配额', [quotaForm, div('hint', [el('p', { text: '配额在注册时校验，改小不会踢掉已有成员。' })])], { icon: 'fa-gauge' }));
+
+  // 私群配额：站点的数是兜底，群级配置非 0 时以群为准
+  const pgForm = el('form', { class: 'adm-form' }, [
+    div('form-grid', [
+      field('每人可创建的私群数', fPgMember, '0 表示不限；群级配置优先'),
+      field('单个私群人数上限', fPgSize, '0 表示不限；群级配置优先'),
+    ]),
+  ]);
+  box.append(card('私群配额', [pgForm, div('hint', [el('p', { text: '私群是成员自己拉的群，不会出现在管理员会话列表里，但后台审计能看到。' })])], { icon: 'fa-users-viewfinder' }));
 
   // ---- 语音转文字：站内没有识别引擎，得把音频交给外部 OpenAI 兼容接口 ----
   const fSttOn = el('input', { type: 'checkbox', checked: String(st['stt.enabled'] || '0') === '1' });
@@ -1648,6 +1669,8 @@ async function renderSettings(box) {
           'quota.ai_total': fAi.value.trim() || '0',
           'quota.ai_per_human': fAiPer.value.trim() || '0',
           'quota.account_per_oauth': fAcc.value.trim() || '0',
+          'pg.member_cap': fPgMember.value.trim() || '0',
+          'pg.size_cap': fPgSize.value.trim() || '0',
         });
         toast('设置已保存');
         go('settings');

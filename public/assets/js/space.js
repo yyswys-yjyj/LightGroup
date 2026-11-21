@@ -3,8 +3,9 @@ import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteNa
 import { avatar } from './avatar.js';
 import { openImage } from './msg.js';
 import { shrinkImage } from './chat.js';
+import { canScan, followScan, decodeSource, decodeFile } from './qr.js';
 
-let tab = 'feed';          // feed | mine | notice
+let tab = 'feed';          // feed | mine | notice | scan
 let tag = '';              // 只看这个标签
 let mine = false;          // 只看我发的
 let unread = 0;
@@ -41,6 +42,7 @@ let sideEl = null;
 
 export function renderSpace(host) {
   hostEl = host;
+  if (tab !== 'scan') stopScan();
   host.textContent = '';
   const body = h('div', 'page-body sp-page');
   host.appendChild(body);
@@ -60,6 +62,7 @@ export function renderSpace(host) {
   const box = h('div', 'sp-body');
   inner.appendChild(box);
   if (tab === 'notice') paintNotices(box);
+  else if (tab === 'scan') paintScanner(box);
   else paintFeed(box);
 }
 
@@ -81,6 +84,7 @@ export function renderSideList(host) {
     ['mine', 'fa-user-pen', '我的动态', 0],
     ['notice', 'fa-bell', '通知', unread],
   ];
+  if (canScan()) items.push(['scan', 'fa-qrcode', '扫描器', 0]);
   items.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || it[0] === tab;
     const b = document.createElement('button');
@@ -91,7 +95,8 @@ export function renderSideList(host) {
     b.appendChild(h('span', '', it[2]));
     if (it[3] > 0) b.appendChild(h('span', 'req-badge', it[3] > 99 ? '99+' : String(it[3])));
     b.addEventListener('click', function () {
-      if (it[0] === 'notice') { tab = 'notice'; }
+      if (it[0] === 'scan') { tab = 'scan'; mine = false; }
+      else if (it[0] === 'notice') { tab = 'notice'; }
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
       repaint();
@@ -162,15 +167,19 @@ function openComposer() {
 
 function tabs() {
   const tabs = h('div', 'sp-tabs');
-  [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']].forEach(function (it) {
-    const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine) || (it[0] === 'notice' && tab === 'notice');
+  const list = [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']];
+  if (canScan()) list.push(['scan', '扫描']);
+  list.forEach(function (it) {
+    const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine)
+      || (it[0] === 'notice' && tab === 'notice') || (it[0] === 'scan' && tab === 'scan');
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sp-tab' + (on ? ' on' : '');
     b.appendChild(h('span', '', it[1]));
     if (it[0] === 'notice' && unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
     b.addEventListener('click', function () {
-      if (it[0] === 'notice') tab = 'notice';
+      if (it[0] === 'scan') { tab = 'scan'; mine = false; }
+      else if (it[0] === 'notice') tab = 'notice';
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
       repaint();
@@ -179,6 +188,119 @@ function tabs() {
   });
   return tabs;
 }
+
+// ---------- 扫描器 ----------
+
+let scanStream = null;
+let scanTimer = 0;
+
+/** 关摄像头；离开扫描页、识别成功、切走页面时都要调 */
+export function stopScan() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = 0; }
+  if (scanStream) {
+    scanStream.getTracks().forEach(function (t) {
+      try { t.stop(); } catch (e) { void e; }
+    });
+    scanStream = null;
+  }
+}
+
+function paintScanner(box) {
+  stopScan();
+  const wrap = h('div', 'scan-wrap');
+  const stage = h('div', 'scan-stage');
+  wrap.appendChild(stage);
+  wrap.appendChild(h('div', 'page-tip', '对准二维码，认出后自动跳转。解码只在本机做，图片不会上传。'));
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.hidden = true;
+  fileInput.addEventListener('change', async function () {
+    const f = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!f) return;
+    toast('正在识别…');
+    const t = await decodeFile(f);
+    if (!t) { toast('这张图里没找到二维码'); return; }
+    stopScan();
+    await followScan(t);
+  });
+  wrap.appendChild(fileInput);
+
+  const acts = h('div', 'scan-acts');
+  acts.appendChild(btn('从相册选图片', 'btn btn-sm btn-ghost', function () { fileInput.click(); }));
+  wrap.appendChild(acts);
+
+  // 没摄像头或权限被拒时，手动粘内容还能用
+  const manual = h('details', 'scan-manual');
+  manual.appendChild(h('summary', '', '打不开摄像头？手动粘贴内容'));
+  const ta = document.createElement('textarea');
+  ta.className = 'tb';
+  ta.rows = 2;
+  ta.placeholder = 'lightgroup://user/h_1 或网址';
+  manual.appendChild(ta);
+  manual.appendChild(btn('解析', 'btn btn-sm', async function () {
+    const t = ta.value.trim();
+    if (!t) { toast('先粘贴内容'); return; }
+    stopScan();
+    await followScan(t);
+  }));
+  wrap.appendChild(manual);
+
+  box.appendChild(wrap);
+
+  function cap(msg) {
+    stage.textContent = '';
+    stage.appendChild(h('div', 'scan-empty', msg));
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    cap('这个浏览器打不开摄像头（要 https 或本机地址）。可以从相册选图片，或手动粘贴内容。');
+    return;
+  }
+
+  const video = document.createElement('video');
+  video.className = 'scan-video';
+  video.setAttribute('playsinline', '');
+  video.muted = true;
+  video.autoplay = true;
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+    .then(function (stream) {
+      if (!stage.isConnected) {
+        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { void e; } });
+        return;
+      }
+      scanStream = stream;
+      stage.textContent = '';
+      stage.appendChild(video);
+      stage.appendChild(h('div', 'scan-frame'));
+      stage.appendChild(h('div', 'scan-tip', '把二维码放进取景框里'));
+      video.srcObject = stream;
+      video.play().catch(function () {});
+      let busy = false;
+      scanTimer = setInterval(async function () {
+        if (busy || !video.videoWidth) return;
+        busy = true;
+        try {
+          const t = await decodeSource(video);
+          if (t) {
+            stopScan();
+            video.remove();
+            await followScan(t);
+          }
+        } finally {
+          busy = false;
+        }
+      }, 450);
+    })
+    .catch(function (e) {
+      cap('打不开摄像头：' + ((e && e.message) || '没有权限') + '。可以从相册选图片，或手动粘贴内容。');
+    });
+}
+
+window.addEventListener('hashchange', function () { stopScan(); });
 
 // ---------- 动态 ----------
 

@@ -58,6 +58,7 @@ final class Compat {
             case "api/wait":  self::wait($pdo, $scope); break;
             case "api/upload": self::upload($pdo, $scope); break;
             case "api/doc":   self::doc(); break;
+            case "api/qr":    self::qr(); break;
             case "api/recall":  self::recall($pdo, $scope); break;
             case "api/profile": self::profile($pdo, $scope); break;
             case "api/styles":  self::styles($pdo, $scope); break;
@@ -78,6 +79,12 @@ final class Compat {
             case "api/friends/accept":  self::friendAccept($pdo, $scope); break;
             case "api/friends/reject":  self::friendReject($pdo, $scope); break;
             case "api/friends/remove":  self::friendRemove($pdo, $scope); break;
+            case "api/conv/pin":      self::convPin($pdo, $scope); break;
+            case "api/groups":        PrivateGroup::handle($pdo, $scope, ""); break;
+            case "api/groups/create": PrivateGroup::handle($pdo, $scope, "create"); break;
+            case "api/friends/remark":  self::friendRemark($pdo, $scope); break;
+            case "api/friends/block":   self::friendBlock($pdo, $scope); break;
+            case "api/friends/unblock": self::friendUnblock($pdo, $scope); break;
             case "api/dm/open":       self::dmOpen($pdo, $scope); break;
             case "api/dm/invite":     self::dmInvite($pdo, $scope); break;
             case "api/dm/join":       self::dmJoin($pdo, $scope); break;
@@ -94,7 +101,14 @@ final class Compat {
             case "api/notices":         Notices::handle($pdo, $scope, "notices"); break;
             case "api/subscribe":       Notices::handle($pdo, $scope, "subscribe"); break;
             case "api/subscribe/verify": Notices::handle($pdo, $scope, "subscribe/verify"); break;
-            default:          Json::fail("未知接口"); break;
+            default:
+                // 私群详情：api/groups/<id>
+                if (str_starts_with($path, "api/groups/")) {
+                    PrivateGroup::handle($pdo, $scope, substr($path, 11));
+                    return;
+                }
+                Json::fail("未知接口");
+                break;
         }
     }
 
@@ -1359,6 +1373,7 @@ final class Compat {
         }
         $conv = Conv::convById($pdo, $convId);
         if ($conv === null || (int) $conv["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
+        if (!empty($conv["dissolved_at"])) Json::fail("这个群已经解散了");
         // AI 账号也走同一条成员校验：被主人或好友拉进私聊，conv_members 里就有它
         if (!Conv::isMember($pdo, $conv, (int) $me["id"])) Json::fail("不在这个会话里");
         return $conv;
@@ -1425,6 +1440,14 @@ final class Compat {
             "title"    => $isPublic ? (string) $scope["title"] : "",
             "isPublic" => $isPublic,
         ];
+        if (!$isPublic && (string) ($conv["kind"] ?? "") === "pg") {
+            $out["title"]    = (string) ($conv["title"] ?? "");
+            $out["role"]     = Conv::roleIn($pdo, (int) $conv["id"], (int) $me["id"]);
+            $out["ownerId"]  = (int) ($conv["created_by"] ?? 0);
+            $out["notice"]   = (string) ($conv["notice"] ?? "");
+            $out["noticeAt"] = (int) ($conv["notice_at"] ?? 0);
+            return $out;
+        }
         if (!$isPublic) {
             $other = 0;
             foreach (Conv::memberIds($pdo, $conv) as $x) {
@@ -1434,6 +1457,7 @@ final class Compat {
             $out["title"]     = $peer !== null ? (string) $peer["name"] : Conv::nameOf($pdo, $other);
             $out["member"]    = $peer;
             $out["memberId"]  = $peer !== null ? (string) $peer["id"] : "";
+            $out["remark"]    = Conv::remarkFor($pdo, (int) $me["id"], $other);
         }
         return $out;
     }
@@ -1477,16 +1501,25 @@ final class Compat {
                 ];
                 continue;
             }
+            $kind = (string) ($c["kind"] ?? "dm");
             $item = [
                 "id"       => (int) $c["id"],
-                "kind"     => "dm",
+                "kind"     => $kind === "pg" ? "pg" : "dm",
                 "title"    => (string) $c["title"],
                 "isPublic" => false,
                 "member"   => $c["member"] ?? null,
                 "last"     => self::lastOut($c["last"] ?? null),
                 "unread"   => (int) $c["unread"],
-                "pin"      => false,
+                "pin"      => !empty($c["pinned"]),
             ];
+            if ($kind === "pg") {
+                $item["members"] = (int) ($c["members"] ?? 0);
+                $item["role"]    = (string) ($c["role"] ?? "member");
+                $item["ownerId"] = (int) ($c["ownerId"] ?? 0);
+                $item["notice"]  = (string) ($c["notice"] ?? "");
+            } else {
+                $item["remark"] = (string) ($c["remark"] ?? "");
+            }
             $dmItems[] = $item;
         }
         if ($pubItem === null) $pubItem = self::publicConvItem($pdo, $scope);
@@ -1589,6 +1622,7 @@ final class Compat {
             if ($mem === null) continue;
             // 这条关系挂在自己的 AI 上时标出来，UI 才不会当成「我的好友」
             if (!empty($it["for"])) $mem["for"] = "a_" . (int) $it["for"];
+            if (!empty($it["remark"])) $mem["remark"] = (string) $it["remark"];
             $friends[] = $mem;
         }
         Json::ok([
@@ -1689,6 +1723,42 @@ final class Compat {
         $for = self::friendForId();
         Social::remove($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
+    }
+
+    /** POST api/friends/remark：给好友设备注（只影响自己看到的称呼） */
+    private static function friendRemark(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        $for = self::friendForId();
+        Social::remark($pdo, $scope, $me, self::friendTarget($pdo, $scope), Input::get("remark"), $for > 0 ? $for : null);
+        Json::ok(["remark" => trim(Input::get("remark"))]);
+    }
+
+    /** POST api/friends/block：拉黑（同时解除好友，之后无法再加） */
+    private static function friendBlock(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        $for = self::friendForId();
+        Social::block($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
+        Json::ok(self::friendCounts($pdo, $me));
+    }
+
+    private static function friendUnblock(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        $for = self::friendForId();
+        Social::unblock($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
+        Json::ok(self::friendCounts($pdo, $me));
+    }
+
+    /**
+     * POST api/conv/pin：会话置顶 / 取消置顶。
+     * 公开大群本来就钉在最上面，不给改；私聊与私群按人记在 conv_members.pinned_at。
+     */
+    private static function convPin(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        $conv = self::resolveConv($pdo, $scope, $me, self::convIdOfRequest(), true);
+        if ((int) $conv["is_public"] === 1) Json::fail("公开大群本来就置顶");
+        $on = Input::get("on", "1") !== "0";
+        Conv::setPinned($pdo, (int) $conv["id"], (int) $me["id"], $on);
+        Json::ok(["id" => (int) $conv["id"], "pinned" => $on]);
     }
 
     /** POST api/dm/open：先必须是好友，再复用/新建私聊 */
@@ -2722,6 +2792,28 @@ final class Compat {
             Json::fail($e->getMessage());
         }
         Json::ok($r);
+    }
+
+    /**
+     * 二维码图片。内容由调用方给（个人码、群码、好友码都是 lightgroup://…），
+     * 不要求登录：码是拿来分享的，谁都可以生成同一张。
+     */
+    private static function qr(): void {
+        $d = trim((string) Input::get("d", ""));
+        if ($d === "") Json::fail("二维码内容不能为空");
+        if (mb_strlen($d) > 400) Json::fail("二维码内容太长");
+        $px = (int) Input::get("s", "260");
+        try {
+            $svg = \LightGroup\Web\Qr::svg($d, $px);
+        } catch (\Throwable $e) {
+            Json::fail("二维码生成失败：" . $e->getMessage());
+        }
+        if (!headers_sent()) {
+            header("Content-Type: image/svg+xml; charset=utf-8");
+            header("Cache-Control: public, max-age=604800");
+            header("X-Content-Type-Options: nosniff");
+        }
+        echo $svg;
     }
 
     /** 三份手册：给用户看 HTML、给 AI 看纯文本、给客户端开发者看 API 参考 */

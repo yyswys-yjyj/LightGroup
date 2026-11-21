@@ -4,7 +4,7 @@ import {
   emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText
 } from './core.js';
 import { avatar } from './avatar.js';
-import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall } from './msg.js';
+import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall, openGroupInfo } from './msg.js';
 import * as conv from './conv.js';
 import { openProfileCard } from './people.js';
 
@@ -18,10 +18,22 @@ let hasOlder = true;
 export function isPublicConv() {
   return !S.cur || S.curId === 0 || S.cur.isPublic || S.cur.kind === 'group';
 }
+// 私群：只有群里的人看得到；头部换群名，点一下进群资料
+export function isPg() { return !!(S.cur && S.cur.kind === 'pg'); }
 export function subText() {
   if (isDm()) return '好友 · 私聊';
+  if (isPg()) {
+    const n = convMembersOf().length || (S.cur && S.cur.members) || 0;
+    return n ? '群聊 · ' + n + ' 人' : '群聊';
+  }
   const n = (S.members || []).length;
   return n ? n + ' 人' : '在线';
+}
+
+// 私群成员单独放，别覆盖大群的 S.members（成员页、建群邀请都读它）
+function convMembersOf() {
+  if (isPg()) return S.pgMembers || [];
+  return S.members || [];
 }
 export function refreshSub() {
   const sub = document.querySelector('.chat-sub');
@@ -84,6 +96,8 @@ export function mount(id) {
     S.msgs = [];
     S.lastId = 0;
     S.reply = null;
+    S.pgMembers = [];
+    S.pgSig = '';
     S.mode = (S.convApi || cid !== 0) ? 'conv' : 'legacy';
     hasOlder = true;
     olderLoading = false;
@@ -108,6 +122,8 @@ export function stop() {
   if (timer) { clearTimeout(timer); timer = 0; }
   mountedId = null;
   feedEl = null;
+  S.pgMembers = [];
+  S.pgSig = '';
 }
 
 function build() {
@@ -136,16 +152,26 @@ function buildHead() {
 
   const info = h('div', 'chat-head-info');
   const dm = isDm();
+  const pg = isPg();
   if (dm && S.cur.member) info.appendChild(avatar(S.cur.member, 34));
+  else if (pg) info.appendChild(avatar({ id: 'pg' + S.curId, name: conv.convName(S.cur) }, 34));
   else info.appendChild(siteMark('head-mark'));
   const t = h('div', 'chat-title');
-  t.appendChild(h('b', '', dm ? conv.convName(S.cur) : (siteName())));
+  t.appendChild(h('b', '', dm || pg ? conv.convName(S.cur) : (siteName())));
   t.appendChild(h('span', 'chat-sub', subText()));
   info.appendChild(t);
   if (dm && S.cur.member) {
     info.style.cursor = 'pointer';
     info.title = '点开资料';
     info.addEventListener('click', function () { openProfileCard(S.cur.member); });
+  } else if (pg) {
+    info.style.cursor = 'pointer';
+    info.title = '群资料';
+    info.addEventListener('click', function () { go('#/pg/' + S.curId); });
+  } else {
+    info.style.cursor = 'pointer';
+    info.title = '群资料';
+    info.addEventListener('click', openGroupInfo);
   }
   head.appendChild(info);
 
@@ -153,8 +179,10 @@ function buildHead() {
   if (dm) {
     acts.appendChild(iconBtn('fa-id-card', '资料', function () { openProfileCard(S.cur.member); }));
     acts.appendChild(iconBtn('fa-robot', '邀请 AI', inviteAi));
+  } else if (pg) {
+    acts.appendChild(iconBtn('fa-circle-info', '群资料', function () { go('#/pg/' + S.curId); }));
   } else {
-    acts.appendChild(iconBtn('fa-users', '成员', function () { go('#/members'); }));
+    acts.appendChild(iconBtn('fa-circle-info', '群资料', openGroupInfo));
   }
   acts.appendChild(iconBtn('fa-paintbrush', '气泡与外观', function () { go('#/appearance'); }));
   acts.appendChild(iconBtn('fa-user', '我的资料', function () { go('#/me'); }));
@@ -355,9 +383,15 @@ function appendMsgs(list) {
 function syncMembers(list) {
   if (!list || !list.length) return;
   const sig = list.map(function (m) { return m.id + ':' + m.name + ':' + (m.avatar ? 1 : 0); }).join('|');
-  if (S.memberSig === sig) return;
-  S.memberSig = sig;
-  S.members = list;
+  if (isPg()) {
+    if (S.pgSig === sig) return;
+    S.pgSig = sig;
+    S.pgMembers = list;
+  } else {
+    if (S.memberSig === sig) return;
+    S.memberSig = sig;
+    S.members = list;
+  }
   refreshSub();
   emit('members', list);
 }
@@ -425,7 +459,7 @@ function insertAtCompose(text) {
 }
 function openAtPicker() {
   closeAtPicker();
-  const list = (S.members || []).filter(function (m) { return m && m.name && (!S.me || String(m.id) !== String(S.me.id)); });
+  const list = convMembersOf().filter(function (m) { return m && m.name && (!S.me || String(m.id) !== String(S.me.id)); });
   if (!list.length) { toast('还没有其他成员'); return; }
   const pop = h('div', 'at-pop');
   pop.appendChild(h('div', 'at-pop-h', '提及'));

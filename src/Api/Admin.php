@@ -94,6 +94,9 @@ final class Admin {
             "cluster_id"    => $s["cluster_id"] === null ? null : (int) $s["cluster_id"],
             "human_cap"     => (int) $s["human_cap"],
             "ai_cap"        => (int) $s["ai_cap"],
+            // 私群配额：0 = 跟随站点设置
+            "pg_member_cap" => (int) ($s["pg_member_cap"] ?? 0),
+            "pg_size_cap"   => (int) ($s["pg_size_cap"] ?? 0),
             "archived"      => (int) $s["archived"],
             "recall_policy" => (string) $s["recall_policy"],
             "theme"         => (string) ($s["theme"] ?? ""),
@@ -210,7 +213,7 @@ final class Admin {
             }
             $intro = self::in("intro", null);
             if ($intro !== null) { $sets[] = "intro = ?"; $args[] = (string) $intro; }
-            foreach (["human_cap", "ai_cap"] as $k) {
+            foreach (["human_cap", "ai_cap", "pg_member_cap", "pg_size_cap"] as $k) {
                 $v = self::in($k, null);
                 if ($v === null) continue;
                 $n = (int) $v;
@@ -433,6 +436,9 @@ final class Admin {
             "quota.ai_total"       => "int",
             "quota.ai_per_human"   => "int",
             "quota.account_per_oauth" => "int",
+            // 私群配额：每个成员能建几个、单个私群最多多少人（0 = 不限）
+            "pg.member_cap"        => "int",
+            "pg.size_cap"          => "int",
             "oauth.enabled"        => "int",
             "oauth.ban_sync"       => "int",
             "oauth.provider"       => "provider",
@@ -862,7 +868,7 @@ final class Admin {
             $args  = [];
         }
 
-        $sql = "SELECT c.id, c.kind, c.is_public, c.scope_id, c.last_msg_id, c.last_msg_at, s.title AS scope_title,"
+        $sql = "SELECT c.id, c.kind, c.is_public, c.scope_id, c.title, c.dissolved_at, c.last_msg_id, c.last_msg_at, s.title AS scope_title,"
              . " (SELECT COUNT(*) FROM messages m WHERE m.conv_id = c.id AND m.deleted_at IS NULL AND m.sys = 0) AS msg_count"
              . " FROM conversations c JOIN scopes s ON s.id = c.scope_id"
              . " WHERE $where ORDER BY c.last_msg_at DESC, c.id DESC LIMIT 200";
@@ -875,13 +881,18 @@ final class Admin {
             $conv  = ["id" => (int) $row["id"], "scope_id" => (int) $row["scope_id"], "is_public" => (int) $row["is_public"]];
             $isPub = (int) $row["is_public"] === 1;
             $people = self::convPeople($pdo, $conv);
+            $isPg  = (string) $row["kind"] === "pg";
             $out[] = [
                 "id"         => (int) $row["id"],
                 "kind"       => (string) $row["kind"],
                 "isPublic"   => $isPub,
+                "private"    => $isPg,
+                "dissolved"  => (int) ($row["dissolved_at"] ?? 0) > 0,
                 "scopeId"    => (int) $row["scope_id"],
                 "scopeTitle" => (string) $row["scope_title"],
-                "title"      => $isPub ? (string) $row["scope_title"] : implode(" · ", array_map(fn($p) => $p["name"], $people)),
+                "title"      => $isPub
+                    ? (string) $row["scope_title"]
+                    : ($isPg ? ((string) (trim((string) $row["title"]) !== "" ? $row["title"] : "未命名群聊")) : implode(" · ", array_map(fn($p) => $p["name"], $people))),
                 "members"    => $people,
                 "msgCount"   => (int) $row["msg_count"],
                 "lastAt"     => (int) $row["last_msg_at"],
@@ -907,6 +918,7 @@ final class Admin {
 
         $msgs = Compat::fetchSince($pdo, $scope, $since, $limit, $convId);
         $isPub = (int) $conv["is_public"] === 1;
+        $isPg  = (string) $conv["kind"] === "pg";
         $people = self::convPeople($pdo, $conv);
 
         // 回看一次就留一次痕（同一人同一会话一分钟内只写一条，免得刷新刷屏）
@@ -917,7 +929,11 @@ final class Admin {
                 "id"         => (int) $conv["id"],
                 "kind"       => (string) $conv["kind"],
                 "isPublic"   => $isPub,
-                "title"      => $isPub ? (string) $scope["title"] : implode(" · ", array_map(fn($p) => $p["name"], $people)),
+                "private"    => $isPg,
+                "dissolved"  => (int) ($conv["dissolved_at"] ?? 0) > 0,
+                "title"      => $isPub
+                    ? (string) $scope["title"]
+                    : ($isPg ? ((string) (trim((string) ($conv["title"] ?? "")) !== "" ? $conv["title"] : "未命名群聊")) : implode(" · ", array_map(fn($p) => $p["name"], $people))),
                 "scopeId"    => (int) $scope["id"],
                 "scopeTitle" => (string) $scope["title"],
                 "members"    => $people,

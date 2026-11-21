@@ -1,8 +1,9 @@
 // LightGroup · 用户资料：头像悬浮卡、资料页、markdown 渲染器、markdown 简介编辑器
 // 依赖方向：people.js -> profile.js -> core.js / avatar.js。
 // profile.js 不 import people.js（会成环），好友/私聊那些能力由 people.js 用 initProfile() 注进来。
-import { S, h, icon, btn, toast, api, go, openSheet, closeSheet, pageHead, applyLayout } from './core.js';
+import { S, h, icon, btn, field, toast, api, go, openSheet, closeSheet, pageHead, applyLayout } from './core.js';
 import { avatar, uidOf } from './avatar.js';
+import { openQr } from './qr.js';
 
 // ---------- markdown 渲染器 ----------
 // 自己写的小渲染器，不引任何外部库：
@@ -402,8 +403,108 @@ function paintCard(el, member, p) {
     closeUserCard();
     goToUser(uid);
   }));
+  acts.appendChild(btn('二维码', 'btn btn-sm btn-ghost', function () {
+    closeUserCard();
+    openQr((data.name || '用户') + ' 的二维码', 'lightgroup://user/' + uid, '扫这个码能直接找到这个人的资料页。');
+  }));
   cardActions(acts, data, p);
   el.appendChild(acts);
+}
+
+// 关系细态：relation.state 比 friends 多 blockedByMe / blockedMe 与备注
+function relStateOf(p, uid) {
+  if (p && p.relation && p.relation.state) return String(p.relation.state);
+  const st = (p && p.friends) || (HOST && HOST.friendState ? HOST.friendState(uid) : 'none');
+  return String(st || 'none');
+}
+
+function relRemarkOf(p) {
+  return (p && p.relation && p.relation.remark) || '';
+}
+
+// 好友那边改完关系后：清缓存、广播给会话列表、当前资料页重画
+function afterFriendChange(uid) {
+  clearProfileCache();
+  try { window.dispatchEvent(new Event('lg:friends')); } catch (e) { void e; }
+  if (uid && uidFromHash() === uid) {
+    checkRoute(true);
+    return;
+  }
+  closeUserCard();
+}
+
+function refreshConvLoad() {
+  import('./conv.js').then(function (m) { if (m && m.load) m.load(); }).catch(function (e) { void e; });
+}
+
+function pinDm(dm, uid) {
+  api('api/conv/pin', { id: dm.convId, on: dm.pinned ? '0' : '1' }).then(function (j) {
+    if (!j || !j.ok) { toast((j && j.err) || '操作失败'); return; }
+    dm.pinned = !dm.pinned;
+    toast(dm.pinned ? '已置顶会话' : '已取消置顶');
+    closeSheet();
+    refreshConvLoad();
+    afterFriendChange(uid);
+  });
+}
+
+function openRemarkEditor(uid, cur) {
+  const wrap = h('div', 'pf-set');
+  let inp = null;
+  field(wrap, '备注（最多 32 字，只有你自己看得到）', function (row) {
+    inp = document.createElement('input');
+    inp.className = 'tb';
+    inp.type = 'text';
+    inp.maxLength = 32;
+    inp.value = cur || '';
+    inp.placeholder = '不填就是不设备注';
+    row.appendChild(inp);
+  });
+  wrap.appendChild(btn('保存备注', 'btn btn-primary btn-block', function () {
+    api('api/friends/remark', { id: uid, remark: inp ? String(inp.value).trim() : '' }).then(function (j) {
+      if (!j || !j.ok) { toast((j && j.err) || '保存失败'); return; }
+      toast('备注已保存');
+      closeSheet();
+      afterFriendChange(uid);
+    });
+  }));
+  openSheet('备注', wrap, { size: 'sm' });
+}
+
+function openFriendSettings(uid, d, p) {
+  closeUserCard();
+  const rel = (p && p.relation) || {};
+  const dm = (p && p.dm) || null;
+  const name = (d && d.name) || '对方';
+  const wrap = h('div', 'pf-set');
+  wrap.appendChild(h('div', 'pf-set-who', name + (rel.remark ? '（' + rel.remark + '）' : '')));
+  wrap.appendChild(btn(rel.remark ? '改备注' : '设备注', 'btn btn-ghost btn-block', function () {
+    openRemarkEditor(uid, rel.remark || '');
+  }));
+  if (dm && dm.convId) {
+    wrap.appendChild(btn(dm.pinned ? '取消置顶会话' : '置顶会话', 'btn btn-ghost btn-block', function () {
+      pinDm(dm, uid);
+    }));
+  }
+  wrap.appendChild(btn('拉入黑名单', 'btn btn-ghost btn-block danger', function () {
+    if (!confirm('拉黑后会自动解除好友关系，之后「' + name + '」不能再加你。确定？')) return;
+    api('api/friends/block', { id: uid }).then(function (j) {
+      if (!j || !j.ok) { toast((j && j.err) || '操作失败'); return; }
+      toast('已拉黑');
+      closeSheet();
+      afterFriendChange(uid);
+    });
+  }));
+  wrap.appendChild(btn('删除好友', 'btn btn-ghost btn-block danger', function () {
+    if (!confirm('删除好友后聊天记录还在，但要重新申请才能加回来。确定？')) return;
+    api('api/friends/remove', { id: uid }).then(function (j) {
+      if (!j || !j.ok) { toast((j && j.err) || '操作失败'); return; }
+      toast('已删除好友');
+      closeSheet();
+      afterFriendChange(uid);
+    });
+  }));
+  openSheet('好友设置', wrap, { size: 'sm' });
 }
 
 // 卡片 / 资料页共用的一排操作按钮
@@ -411,7 +512,8 @@ function cardActions(box, data, p) {
   const d = data || {};
   const uid = uidOfMember(d);
   const isMe = !!(p && p.isMe) || !!(S.me && keyOf(S.me.id) === uid);
-  const st = (p && p.friends) || (HOST && HOST.friendState ? HOST.friendState(uid) : 'none');
+  const st = relStateOf(p, uid);
+  const remark = relRemarkOf(p);
   // 圈子互通时能点到别的群的成员：加好友、私聊都只在本群内成立，这里只留一句说明
   const cross = p && p.scope && p.scope !== 'same';
   if (!isMe && cross) {
@@ -428,11 +530,35 @@ function cardActions(box, data, p) {
     }));
     return;
   }
-  if (st === 'friend' && d.kind !== 'ai') {
-    box.appendChild(btn('发消息', 'btn btn-sm', function () {
-      closeUserCard();
-      if (HOST && HOST.openDm) HOST.openDm({ id: uid, name: d.name, kind: d.kind });
+  if (st === 'friend') {
+    if (d.kind !== 'ai') {
+      box.appendChild(btn('发消息', 'btn btn-sm', function () {
+        closeUserCard();
+        if (HOST && HOST.openDm) HOST.openDm({ id: uid, name: d.name, kind: d.kind });
+      }));
+    }
+    box.appendChild(btn(remark ? '备注：' + remark : '备注', 'btn btn-sm btn-ghost', function () {
+      openRemarkEditor(uid, remark);
     }));
+    box.appendChild(btn('设置', 'btn btn-sm btn-ghost', function () {
+      openFriendSettings(uid, d, p);
+    }));
+    return;
+  }
+  if (st === 'blockedByMe') {
+    box.appendChild(h('span', 'pf-cross', '你把他拉黑了'));
+    box.appendChild(btn('解除拉黑', 'btn btn-sm btn-ghost', function () {
+      api('api/friends/unblock', { id: uid }).then(function (j) {
+        if (!j || !j.ok) { toast((j && j.err) || '操作失败'); return; }
+        toast('已解除');
+        afterFriendChange(uid);
+      });
+    }));
+    return;
+  }
+  if (st === 'blockedMe') {
+    box.appendChild(h('span', 'pf-cross', '对方不让你加好友'));
+    return;
   }
   if (st === 'incoming') {
     box.appendChild(btn('同意好友申请', 'btn btn-sm', function () {
@@ -1053,7 +1179,7 @@ function onHash(ev) {
   setTimeout(enhanceMePage, 150);
 }
 
-function checkRoute() {
+function checkRoute(force) {
   const uid = uidFromHash();
   if (!uid) {
     setTimeout(enhanceMePage, 0);
@@ -1063,7 +1189,7 @@ function checkRoute() {
   const host = hostEl();
   if (!host) { setTimeout(checkRoute, 120); return; }
   const cur = host.querySelector('.pf-page');
-  if (cur && cur.getAttribute('data-uid') === uid) return;
+  if (!force && cur && cur.getAttribute('data-uid') === uid) return;
   renderUserPage(uid);
 }
 

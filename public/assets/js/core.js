@@ -934,8 +934,8 @@ export function emit(ev, data) {
 }
 
 // ---------- 路由 ----------
-// #/c/<id>  #/friends  #/members  #/me  #/appearance
-const PAGES = ['chat', 'friends', 'members', 'me', 'appearance', 'space'];
+// #/c/<id>  #/friends  #/groups  #/pg/<id>  #/members  #/me  #/appearance
+const PAGES = ['chat', 'friends', 'groups', 'members', 'me', 'appearance', 'space'];
 
 export function parseRoute() {
   const raw = (location.hash || '').replace(/^#\/?/, '');
@@ -943,6 +943,8 @@ export function parseRoute() {
   const seg = raw.split('/');
   const head = seg[0];
   if (head === 'c') return { page: 'chat', id: parseInt(seg[1] || '0', 10) || 0 };
+  // 私群资料页：群详情、成员、公告都在这一页
+  if (head === 'pg') return { page: 'pg', id: parseInt(seg[1] || '0', 10) || 0 };
   if (PAGES.indexOf(head) >= 0) return { page: head, id: 0 };
   return { page: 'chat', id: 0 };
 }

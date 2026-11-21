@@ -1,5 +1,5 @@
 // LightGroup · 消息渲染：气泡/图片/语音/引用/撤回/卡片 + 右键菜单 + 顶部三条横幅
-import { S, h, icon, toast, api, hhmm, dayLabel, copyText, openSheet, closeSheet, emit } from './core.js';
+import { S, h, icon, toast, api, hhmm, dayLabel, copyText, openSheet, closeSheet, emit, go } from './core.js';
 import { avatar } from './avatar.js';
 
 // 超过这个字数就把消息折成「消息盒子」，默认只露前面一段
@@ -44,6 +44,8 @@ export function canModerate() {
 }
 
 export function isDm() { return !!(S.cur && S.cur.kind === 'dm'); }
+// 私群的公告/成员放在群资料页，聊天页顶部不挂大群那几条横幅
+export function isPg() { return !!(S.cur && S.cur.kind === 'pg'); }
 
 export function sameAuthor(a, b) {
   if (!a || !b) return false;
@@ -535,26 +537,8 @@ export function refreshBars() {
   const host = document.getElementById('top-bars');
   if (!host) return;
   host.textContent = '';
-  if (isDm()) return;
-  const notice = S.notice;
-  if (notice && notice.text) {
-    const bar = h('div', 'bar notice');
-    bar.appendChild(icon('fa-bullhorn'));
-    bar.appendChild(h('b', '', '公告'));
-    const tx = h('span', 'bar-t', notice.text);
-    bar.appendChild(tx);
-    if (canModerate()) {
-      const x = document.createElement('button');
-      x.type = 'button';
-      x.className = 'bar-x';
-      x.title = '取消公告';
-      x.appendChild(icon('fa-xmark'));
-      x.addEventListener('click', function () { postNotice(''); });
-      bar.appendChild(x);
-    }
-    bar.addEventListener('click', function (e) { if (e.target.closest('.bar-x')) return; openNotice(); });
-    host.appendChild(bar);
-  }
+  if (isDm() || isPg()) return;
+  // 大群公告不再常驻横幅：挪到「群资料」里看，聊天页顶部只留置顶和待办
   if (S.pins && S.pins.length) {
     const bar = h('div', 'bar pin');
     bar.appendChild(icon('fa-thumbtack'));
@@ -583,6 +567,78 @@ export function jumpTo(id) {
   row.scrollIntoView({ block: 'center', behavior: 'smooth' });
   row.classList.add('flash');
   setTimeout(function () { row.classList.remove('flash'); }, 1200);
+}
+
+/**
+ * 大群的「群资料」：公告 + 成员入口。公告从顶部横幅挪到这里，
+ * 更像 QQ 的群资料页；只有管理员/超级管理员能编辑。
+ */
+export function openGroupInfo() {
+  const body = h('div', 'sheet-body');
+  const card = h('div', 'pg-card');
+  const head = h('div', 'pg-card-h');
+  head.appendChild(h('div', 'pg-card-t', '群公告'));
+  if (canModerate()) {
+    const ed = document.createElement('button');
+    ed.type = 'button';
+    ed.className = 'btn btn-xs btn-ghost';
+    ed.textContent = '编辑';
+    ed.addEventListener('click', function () { noticeEditor(card); });
+    head.appendChild(ed);
+  }
+  card.appendChild(head);
+  const n = S.notice;
+  card.appendChild(h('div', 'pg-notice' + (n && n.text ? '' : ' empty'), (n && n.text) || '还没有群公告'));
+  if (n && n.text && (n.by || n.at)) {
+    const meta = (n.by || '') + (n.by && n.at ? ' · ' : '') + (n.at ? hhmm(n.at) : '');
+    card.appendChild(h('div', 'pg-meta', meta));
+  }
+  body.appendChild(card);
+
+  const mc = h('div', 'pg-card');
+  const mh = h('div', 'pg-card-h');
+  mh.appendChild(h('div', 'pg-card-t', '群成员'));
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'btn btn-xs btn-ghost';
+  more.textContent = '查看成员';
+  more.addEventListener('click', function () { closeSheet(); go('#/members'); });
+  mh.appendChild(more);
+  mc.appendChild(mh);
+  const cnt = (S.members && S.members.length) || (S.cur && S.cur.members) || 0;
+  mc.appendChild(h('div', 'pg-notice empty', cnt + ' 位成员'));
+  body.appendChild(mc);
+
+  openSheet('群资料', body, { size: 'md' });
+}
+
+function noticeEditor(card) {
+  card.textContent = '';
+  const head = h('div', 'pg-card-h');
+  head.appendChild(h('div', 'pg-card-t', '编辑群公告'));
+  card.appendChild(head);
+  const ta = document.createElement('textarea');
+  ta.className = 'tb';
+  ta.rows = 6;
+  ta.maxLength = 500;
+  ta.placeholder = '写点什么，最多 500 字；清空后保存就是取消公告';
+  ta.value = (S.notice && S.notice.text) || '';
+  card.appendChild(ta);
+  const acts = h('div', 'pg-ops');
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn btn-primary btn-sm';
+  save.textContent = '保存';
+  save.addEventListener('click', function () { postNotice(ta.value.trim()); });
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-ghost btn-sm';
+  cancel.textContent = '取消';
+  cancel.addEventListener('click', function () { openGroupInfo(); });
+  acts.appendChild(save);
+  acts.appendChild(cancel);
+  card.appendChild(acts);
+  ta.focus();
 }
 
 export function openNotice() {
