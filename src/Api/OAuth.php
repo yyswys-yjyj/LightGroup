@@ -470,6 +470,10 @@ final class OAuth {
      * 自己造号进主群，几个群完全隔不开。
      */
     private static function createMember(PDO $pdo, array $acct, string $name, string $invite): array {
+        // 超管是站点里唯一的那个身份，不该再挂一个业务账号
+        if ((string) ($acct["role"] ?? "") === "super") {
+            throw new RuntimeException("超级管理员在所有群都已有身份，不需要再建业务账号。");
+        }
         $name = trim(preg_replace('/\s+/u', " ", $name) ?? "");
         $invite = trim($invite);
         if ($name === "") throw new RuntimeException("先给这个业务账号起个名字。");

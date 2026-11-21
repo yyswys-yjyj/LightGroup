@@ -117,7 +117,8 @@
   /* page-host 是 flex column，不写 width:100% 的话这一层会被内容挤成窄条，
      max-width 根本轮不到生效，宽屏下卡片就缩在中间一小块 */
   width: 100%;
-  max-width: 640px;
+  /* 不再用 640 这种窄条：宽屏两栏铺开，别把内容挤成中间一柱 */
+  max-width: 1280px;
   margin: 0 auto;
   padding: 14px 14px 40px;
   /* 这一层自己就是滚动容器：page-host 是 overflow:hidden，
@@ -138,7 +139,7 @@
 /* 宽屏改成两栏：左身份卡 340，右简介吃掉剩下的宽度 */
 @media (min-width: 900px) {
   .pf-page {
-    max-width: 940px;
+    max-width: 1280px;
     padding-top: 30px;
   }
   .pf-page-body {

@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 11;
+    public const VERSION = 12;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -35,6 +35,8 @@ final class Schema {
             ],
             "members"  => [
                 "theme"        => "VARCHAR(64) NULL",
+                // AI 账号的协议适配器：xsj = 老小群协议，mcp = MCP 工具集，future: onebot11
+                "adapter"      => "VARCHAR(16) NOT NULL DEFAULT 'mcp'",
                 "bio"          => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
                 "styles_css"   => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
                 "wall"         => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
@@ -62,10 +64,20 @@ final class Schema {
         foreach ($wanted as $table => $cols) {
             foreach ($cols as $col => $ddl) {
                 if (self::hasColumn($pdo, $driver, $table, $col)) continue;
+                $added = false;
                 try {
                     $pdo->exec("ALTER TABLE " . $table . " ADD COLUMN " . $col . " " . $ddl);
+                    $added = true;
                 } catch (\Throwable $e) {
                     // 并发升级或权限不足时忽略，下次请求继续尝试
+                }
+                // members.adapter 是后加的列：加列之前建的 AI 全是小群客户端建的，
+                // 默认值 mcp 会让它们还拿着老 token 却被老接口拒掉，这里统一归到 xsj
+                if ($added && $table === "members" && $col === "adapter") {
+                    try {
+                        $pdo->exec("UPDATE members SET adapter = 'xsj' WHERE kind = 'ai'");
+                    } catch (\Throwable $e) {
+                    }
                 }
             }
         }
@@ -180,7 +192,7 @@ final class Schema {
                 . "id $pk, scope_id BIGINT NOT NULL, name $short NOT NULL, kind VARCHAR(8) NOT NULL,"
                 . " account_id BIGINT NULL, owner_id BIGINT NULL, oauth_id BIGINT NULL,"
                 . " token_hash $hash NULL, avatar $short NULL, bio $text NULL, styles_css $text NULL, wall $text NULL,"
-                . " theme VARCHAR(64) NULL, pass_hash VARCHAR(255) NULL,"
+                . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, banned TINYINT NOT NULL DEFAULT 0,"
                 . " deleted_at BIGINT NULL, deleted_name $short NULL, created_at BIGINT NOT NULL DEFAULT 0,"
                 . " last_seen_at BIGINT NULL"

@@ -10,11 +10,125 @@ import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
 import { loadMembers } from './people.js';
 
-// ---------- 我的资料 ----------
+// ---------- 个人首页 ----------
+// 功能平铺在首页，表单收进子页；移动端底栏「个人」就落在这里。
+let meHost = null;
+let meView = 'home';
+
 export function renderProfile(host) {
+  meHost = host || meHost;
+  meView = 'home';
+  paintMe();
+}
+
+function paintMe() {
+  if (!meHost) return;
+  // 三个视图共用一个 host，先清空再画；不清就会把首页叠在子页上面
+  meHost.textContent = '';
+  if (meView === 'edit') {
+    renderProfileEdit(meHost);
+    withBack(meHost);
+    return;
+  }
+  if (meView === 'ai') {
+    paintMeAi(meHost);
+    withBack(meHost);
+    return;
+  }
+  paintMeHome(meHost);
+}
+
+/** 二级页左上角补一个「返回」，不重写各页自己的头部 */
+function withBack(host) {
+  const head = host.querySelector('.chat-head');
+  if (!head) return;
+  const b = btn('返回', 'btn btn-ghost btn-sm', function () { meView = 'home'; paintMe(); });
+  b.classList.add('me-back');
+  head.insertBefore(b, head.firstChild);
+}
+
+function paintMeHome(host) {
+  const me = S.me || {};
+  const role = me.role || 'member';
+  const page = h('div', 'chat-page');
+  page.appendChild(pageHead('个人', '你的资料、AI 账号与外观'));
+  const body = h('div', 'page-body');
+  page.appendChild(body);
+  host.appendChild(page);
+
+  const card = h('div', 'me-card');
+  card.appendChild(avatar(me, 64));
+  const info = h('div', 'me-card-info');
+  info.appendChild(h('b', '', me.name || ''));
+  const bits = [me.kind === 'ai' ? 'AI 成员' : '人类成员'];
+  if (role === 'super') bits.push('超级管理员');
+  else if (role === 'admin') bits.push('管理员');
+  if (me.name) bits.push('@' + me.name);
+  info.appendChild(h('span', 'me-card-sub', bits.join(' · ')));
+  if (me.intro || me.bio) info.appendChild(h('div', 'me-card-bio', me.intro || me.bio));
+  card.appendChild(info);
+  body.appendChild(card);
+
+  const aiN = (S.members || []).filter(function (m) {
+    return m.kind === 'ai' && m.owner && me.name && m.owner === me.name;
+  }).length;
+
+  const grid = h('div', 'me-grid');
+  grid.appendChild(meEntry('fa-pen', '我的资料', '昵称、头像、介绍', function () { meView = 'edit'; paintMe(); }));
+  grid.appendChild(meEntry('fa-robot', '我的 AI 账号', aiN ? aiN + ' 个，适配器与 token' : '还没有，去建一个', function () { meView = 'ai'; paintMe(); }));
+  grid.appendChild(meEntry('fa-palette', '气泡与外观', '深浅、主题、气泡、壁纸', function () { go('#/appearance'); }));
+  if (me.oauth) {
+    grid.appendChild(meEntry('fa-users-gear', '业务账号', '进群前挑一个身份', function () {
+      location.href = '/oauth/accounts?choose=1';
+    }));
+  }
+  if (role === 'admin' || role === 'super') {
+    grid.appendChild(meEntry('fa-shield-halved', '管理后台', role === 'super' ? '站点设置与所有群' : '这个群的成员和内容', function (ev) {
+      openAdmin(ev.currentTarget);
+    }));
+  }
+  grid.appendChild(meEntry('fa-right-from-bracket', '退出登录', '这台设备不再保持登录', function () { location.href = URLS.logout; }));
+  body.appendChild(grid);
+
+  if (role === 'member' && me.kind !== 'ai') {
+    body.appendChild(btn('注销账号', 'btn btn-ghost btn-wide me-danger', function () { openDeleteAccount(); }));
+  }
+}
+
+function meEntry(ic, title, sub, fn) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'me-entry';
+  b.appendChild(icon(ic));
+  const txt = h('span', 'me-entry-txt');
+  txt.appendChild(h('b', '', title));
+  txt.appendChild(h('span', '', sub || ''));
+  b.appendChild(txt);
+  b.appendChild(icon('fa-chevron-right'));
+  b.addEventListener('click', fn);
+  return b;
+}
+
+/** AI 账号管理：适配器决定这个号能走哪套接口 */
+function paintMeAi(host) {
+  const page = h('div', 'chat-page');
+  page.appendChild(pageHead('我的 AI 账号', '每个 AI 有自己的适配器与 token'));
+  const body = h('div', 'page-body');
+  page.appendChild(body);
+  host.appendChild(page);
+
+  body.appendChild(copyNote('适配器决定这个 AI 走哪套接口：小群（xsj）只能用老接口收发消息；MCP 是完整账号。token 只在创建时显示一次，丢了就重签。'));
+  body.appendChild(myAiBlock());
+  body.appendChild(h('div', 'page-sec', 'API Key'));
+  body.appendChild(copyNote('给第三方客户端用，和 AI 的 token 不是一回事。'));
+  body.appendChild(btn('创建一把 API Key', 'btn btn-line btn-wide', createApiKey));
+}
+
+// ---------- 资料编辑 ----------
+function renderProfileEdit(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('我的资料', '昵称、头像、我的 AI 与 API Key'));
+  page.appendChild(pageHead('我的资料', '昵称、头像、介绍'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
@@ -46,55 +160,6 @@ export function renderProfile(host) {
   });
   body.appendChild(btn('保存', 'btn btn-primary btn-wide', saveProfile));
 
-  body.appendChild(h('div', 'page-sec', '主题'));
-  // 深浅模式：立刻生效 + 存本地 + 同步服务端（换设备登录还在）
-  const modeRow = h('div', 'chip-row');
-  THEME_MODES.forEach(function (m) {
-    const on = S.themeMode === m[0];
-    const label = m[0] === 'auto' ? m[1] + ' · 当前' + (effectiveMode() === 'dark' ? '深色' : '浅色') : m[1];
-    modeRow.appendChild(btn(label, 'chip' + (on ? ' on' : ''), function () {
-      setThemeMode(m[0]);
-      emit('refresh');
-    }));
-  });
-  body.appendChild(modeRow);
-  // 自定义主题包、主色都在「气泡与外观」里，这里给个入口，免得在资料页找不到
-  body.appendChild(btn('主题包与主色', 'btn btn-line btn-wide', function () { go('#/appearance'); }));
-
-  // OAuth 门禁建的群身份：主账号下可以有好几个业务账号，去专门那页挑或新建
-  if (S.me && S.me.oauth) {
-    body.appendChild(h('div', 'page-sec', '业务账号'));
-    body.appendChild(copyNote('登录用的是第三方主账号，群里说话的是业务账号。一个主账号可以建好几个，进群前自己挑。'));
-    body.appendChild(btn('管理业务账号', 'btn btn-line btn-wide', function () {
-      location.href = '/oauth/accounts?choose=1';
-    }));
-  }
-
-  body.appendChild(h('div', 'page-sec', '我的 AI'));
-  body.appendChild(copyNote('AI 用 token 接入。token 只在创建时显示一次，丢了就重签。'));
-  body.appendChild(myAiBlock());
-
-  body.appendChild(h('div', 'page-sec', 'API Key'));
-  body.appendChild(copyNote('给第三方客户端用。创建后只显示一次，记得存好。'));
-  body.appendChild(btn('创建一把 API Key', 'btn btn-line btn-wide', createApiKey));
-
-  const role = (S.me && S.me.role) || 'member';
-  if (role === 'admin' || role === 'super') {
-    body.appendChild(h('div', 'page-sec', '管理'));
-    body.appendChild(copyNote(role === 'super' ? '超管能看所有群，也能改站点设置。' : '你能管这个群的成员与内容。'));
-    body.appendChild(btn('进入管理后台', 'btn btn-ghost btn-wide', function (ev) { openAdmin(ev.currentTarget); }));
-  }
-
-  // 注销账号：人类成员自助。管理员走后台，AI 由主人处理
-  if (role === 'member' && S.me && S.me.kind !== 'ai') {
-    body.appendChild(h('div', 'page-sec', '危险操作'));
-    body.appendChild(copyNote('注销后昵称会释放给别人注册，消息显示「账号已注销」。自己撤不回来，只能找管理员恢复。'));
-    const danger = btn('注销账号', 'btn btn-ghost btn-wide', function () { openDeleteAccount(); });
-    // 不新加 css：就地染成危险色
-    danger.style.color = '#dc2626';
-    danger.style.borderColor = 'rgba(220,38,38,.35)';
-    body.appendChild(danger);
-  }
 }
 
 /**
@@ -146,11 +211,37 @@ export function openAdmin(button) {
   location.href = URLS.admin;
 }
 
+// 创建 AI 时选适配器：xsj 给小群插件，mcp 给完整账号
+let aiAdapter = 'xsj';
+
+function adapterHint(a) {
+  return a === 'xsj'
+    ? '小群（xsj）：老的小群接口，只能收发消息、看成员、等新消息。'
+    : 'MCP：完整的 AI 账号，会话、好友、空间、通知都能用。';
+}
+
 function myAiBlock() {
   const box = h('div', 'ai-box');
   const list = h('div', 'ai-list');
   paintMyAi(list);
   box.appendChild(list);
+
+  const hint = h('div', 'page-tip', adapterHint(aiAdapter));
+  const pick = h('div', 'chip-row');
+  const chips = {};
+  [['xsj', '小群（xsj）'], ['mcp', 'MCP']].forEach(function (o) {
+    const b = btn(o[1], 'chip' + (aiAdapter === o[0] ? ' on' : ''), function () {
+      aiAdapter = o[0];
+      Object.keys(chips).forEach(function (k) { chips[k].classList.toggle('on', k === aiAdapter); });
+      hint.textContent = adapterHint(aiAdapter);
+    });
+    chips[o[0]] = b;
+    pick.appendChild(b);
+  });
+  box.appendChild(h('div', 'page-sec', '新建 AI'));
+  box.appendChild(pick);
+  box.appendChild(hint);
+
   const row = h('div', 'add-row');
   const input = document.createElement('input');
   input.id = 'ai-name';
@@ -173,6 +264,8 @@ function paintMyAi(list) {
     const row = h('div', 'ai-row');
     row.appendChild(avatar(a, 30));
     row.appendChild(h('span', 'ai-name', a.name));
+    const ad = a.adapter === 'xsj' ? 'xsj' : 'mcp';
+    row.appendChild(h('span', 'ai-adapter' + (ad === 'mcp' ? ' on' : ''), ad === 'xsj' ? '小群' : 'MCP'));
     row.appendChild(btn('重签 token', 'btn btn-ghost btn-sm', function () { rekeyAi(a, row); }));
     list.appendChild(row);
   });
@@ -181,14 +274,11 @@ function paintMyAi(list) {
 function addAi(input) {
   const name = (input.value || '').trim();
   if (!name) { input.focus(); return; }
-  api('api/link', {
-    invite: (S.me && S.me.invite) || '',
-    owner: (S.me && S.me.name) || '',
-    name: name
-  }).then(function (j) {
+  const adapter = aiAdapter;
+  api('api/ai/create', { name: name, adapter: adapter }).then(function (j) {
     if (!j.ok) { toast(j.err || '创建失败'); return; }
     input.value = '';
-    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建，token 只显示这一次：', j.token || '', j.mcp || '', j.default || null);
+    keyBox('AI「' + ((j.bot && j.bot.name) || name) + '」已创建（' + (adapter === 'xsj' ? '小群适配器' : 'MCP 适配器') + '），token 只显示这一次：', j.token || '', j.mcp || '', j.default || null);
     loadMembers().then(function () {
       const l = document.querySelector('.ai-list');
       if (l) paintMyAi(l);
@@ -197,13 +287,10 @@ function addAi(input) {
 }
 
 function rekeyAi(a, row) {
-  api('api/link', {
-    invite: (S.me && S.me.invite) || '',
-    owner: (S.me && S.me.name) || '',
-    name: a.name
-  }).then(function (j) {
+  const adapter = a.adapter === 'xsj' ? 'xsj' : 'mcp';
+  api('api/ai/create', { name: a.name, adapter: adapter }).then(function (j) {
     if (!j.ok) { toast(j.err || '重签失败'); return; }
-    keyBox('AI「' + a.name + '」的新 token：', j.token || '', j.mcp || '');
+    keyBox('AI「' + a.name + '」的新 token（' + (adapter === 'xsj' ? '小群适配器' : 'MCP 适配器') + '）：', j.token || '', j.mcp || '');
     void row;
   }).catch(function (e) { toast(String((e && e.message) || e)); });
 }
@@ -250,6 +337,9 @@ function saveProfile() {
     if (j.me) S.me = j.me;
     toast('已保存');
     loadMembers().then(function () { emit('refresh'); });
+    // 保存完回个人首页，别停在表单上
+    meView = 'home';
+    paintMe();
   }).catch(function (e) { toast(String((e && e.message) || e)); });
 }
 
@@ -458,6 +548,19 @@ export function renderAppearance(host) {
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
+
+  // 深浅模式：立刻生效 + 存本地 + 同步服务端（换设备登录还在）
+  body.appendChild(h('div', 'page-sec', '深浅'));
+  const modeRow = h('div', 'chip-row');
+  THEME_MODES.forEach(function (m) {
+    const on = S.themeMode === m[0];
+    const label = m[0] === 'auto' ? m[1] + ' · 当前' + (effectiveMode() === 'dark' ? '深色' : '浅色') : m[1];
+    modeRow.appendChild(btn(label, 'chip' + (on ? ' on' : ''), function () {
+      setThemeMode(m[0]);
+      emit('refresh');
+    }));
+  });
+  body.appendChild(modeRow);
 
   body.appendChild(h('div', 'page-sec', '主题'));
   const themeBox = h('div', 'theme-box');

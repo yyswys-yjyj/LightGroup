@@ -268,35 +268,33 @@ final class Mcp
 
     private const SUPPORTED = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
-    /** 连上就先告诉 AI 这个账号怎么用，省得它只会在大群里干聊 */
-    private const INSTRUCTIONS = "这是 LightGroup 群聊站点里的一个 AI 账号。"
-        . "直接 chat_send 发文字就是在大群说话；chat_cmd 专门执行命令（不用自己加 /），"
-        . "以 / 开头的 text 也当命令。命令举例：/help（命令清单）、/dm 名字 内容（私聊）、"
-        . "/friend 名字（加好友）、/moments（看空间动态）、/notice（看站内信）、/profile（看自己的资料）。"
-        . "chat_read 的返回值里有一条 banner，永远提醒你 /help 可以查全部用法。"
-        . "看不到会话之外的任何东西：私聊、空间、通知都只属于这个账号。";
-
-    /** read 每次都带这一条，AI 忘了命令就靠它想起来 */
-    private const BANNER = "提示：发 /help 看这个 AI 账号的全部用法（私聊 /dm、好友 /friend、空间 /moments、通知 /notice、资料 /profile）。";
+    /** 连上就先告诉 AI 这个账号怎么用。只写事实，不写内部实现。 */
+    private const INSTRUCTIONS = "你在 LightGroup（一个自建的群聊站点）里有一个独立的 AI 账号，适配器是 MCP。"
+        . "先调 me 看清自己是谁、在哪个群、默认会话是哪个，再用 read 读消息、send 发消息、wait 等新消息。"
+        . "私聊用 dm，好友用 friends，空间动态用 moments，站内信用 notices，资料用 profile，"
+        . "图片和语音先用 upload 拿地址再发，撤回用 recall，群待办用 todo。"
+        . "这些工具只在这个账号的权限范围内：看不到别人的私聊，也看不到别的群。";
 
     /** @return array|null null = method not found */
     private static function dispatch(string $method, array $params): ?array
     {
         switch ($method) {
             case "initialize": {
-                // 客户端要哪个版本、我们支持就回哪个，别再硬塞一个它不认识的
                 $wanted = (string) ($params["protocolVersion"] ?? "");
                 $version = in_array($wanted, self::SUPPORTED, true) ? $wanted : self::PROTOCOL;
                 return [
                     "protocolVersion" => $version,
                     "capabilities"    => ["tools" => ["listChanged" => false]],
-                    "serverInfo"      => ["name" => "lightgroup", "version" => "1.1.0"],
+                    "serverInfo"      => ["name" => "lightgroup", "version" => "1.2.0"],
                     "instructions"    => self::INSTRUCTIONS,
                 ];
             }
             case "ping":
                 return [];
             case "tools/list":
+                // 列工具也要认人：不然 xsj 适配器或随便一个错 token 都能拿到完整清单，
+                // 客户端会以为连上了，直到第一次调用才报错
+                self::auth(Db::connect());
                 return ["tools" => self::tools()];
             case "tools/call":
                 $name = (string) ($params["name"] ?? "");
@@ -307,88 +305,174 @@ final class Mcp
         }
     }
 
-    /** 工具清单一句话一份，给 AI 读的，别写给人看的客套话 */
+    /** 工具清单：给 AI 读的一句话说明，不带客套 */
     private static function tools(): array
     {
+        $conv = ["type" => "string", "description" => "会话：不填是公开大群，私聊填会话 id（conversations 里能查到）"];
         return [
             [
-                "name" => "chat_send",
-                "description" => "发一条消息。text 以 / 开头就是命令（/help、/dm 名字 内容、/friend 名字、/moments、/notice、/profile），"
-                    . "不是命令就直接在大群说话。也可以带一条语音（voice 填语音地址，dur 填秒数），model 填你用的模型名。",
+                "name" => "me",
+                "description" => "我是谁：名字、id、身份、主人、所在群、默认会话。开头先调这个。",
+                "inputSchema" => ["type" => "object", "properties" => (object) []],
+            ],
+            [
+                "name" => "members",
+                "description" => "群成员列表：名字、id、是人还是 AI、是谁的 AI。",
+                "inputSchema" => ["type" => "object", "properties" => (object) []],
+            ],
+            [
+                "name" => "read",
+                "description" => "读消息。不填 conv 就读公开大群；since 往后读，before 往上翻。",
                 "inputSchema" => [
                     "type" => "object",
                     "properties" => [
-                        "text"  => ["type" => "string", "description" => "要说的内容"],
-                        "voice" => ["type" => "string", "description" => "语音地址（uploads/xxx.m4a 或 http 链接）"],
-                        "dur"   => ["type" => "number", "description" => "语音秒数"],
-                        "model" => ["type" => "string", "description" => "你用的模型名，比如 deepseek-v3"],
+                        "conv"   => $conv,
+                        "limit"  => ["type" => "number", "description" => "最多几条，默认 30，最大 200"],
+                        "since"  => ["type" => "number", "description" => "只读这个 id 之后的（填了就不看 before）"],
+                        "before" => ["type" => "number", "description" => "读这个 id 之前的 limit 条"],
                     ],
                 ],
             ],
             [
-                "name" => "chat_cmd",
-                "description" => "执行一条 LightGroup 命令（text 不用带 /）。先 chat_help 看全部命令。"
-                    . "例：dm 站长 在吗 / friend ok 小明 / moment 今天天气不错 #随手拍 / like 12 / profile bio 我是 AI。",
+                "name" => "send",
+                "description" => "发消息。不填 conv 就发公开大群。text 是正文；img/voice 先 upload 拿地址；card 是请客卡。",
                 "inputSchema" => [
                     "type" => "object",
                     "properties" => [
-                        "text" => ["type" => "string", "description" => "命令和参数，比如 dm 站长 在吗"],
+                        "conv"   => $conv,
+                        "text"   => ["type" => "string", "description" => "正文，最多 10000 字"],
+                        "img"    => ["type" => "string", "description" => "图片地址（upload 返回的 url）"],
+                        "voice"  => ["type" => "string", "description" => "语音地址"],
+                        "dur"    => ["type" => "number", "description" => "语音秒数"],
+                        "reply"  => ["type" => "number", "description" => "引用哪条消息的 id"],
+                        "model"  => ["type" => "string", "description" => "你用的模型名"],
+                        "card"   => [
+                            "type" => "object",
+                            "description" => "请客卡：shop / item / price / note / link",
+                            "properties" => [
+                                "shop"  => ["type" => "string"],
+                                "item"  => ["type" => "string"],
+                                "price" => ["type" => "string"],
+                                "note"  => ["type" => "string"],
+                                "link"  => ["type" => "string"],
+                            ],
+                        ],
                     ],
-                    "required" => ["text"],
                 ],
             ],
             [
-                "name" => "chat_read",
-                "description" => "读取最近的消息，每条带发言人名字、是人是 AI、消息 id。"
-                    . "返回值里的 banner 是固定提醒：/help 能查这个账号的全部用法。",
+                "name" => "wait",
+                "description" => "等新消息（最多 25 秒）。返回期间的新消息；超时返回空列表。",
                 "inputSchema" => [
                     "type" => "object",
                     "properties" => [
-                        "limit" => ["type" => "number", "description" => "最多读几条，默认 30，最大 200"],
-                        "since" => ["type" => "number", "description" => "只读这条消息 id 之后的（填了就不看 before）"],
-                        "before" => ["type" => "number", "description" => "往上翻：读这条消息 id 之前的 limit 条"],
-                    ],
-                ],
-            ],
-            [
-                "name" => "chat_wait",
-                "description" => "等群里出现新消息（最多 25 秒），返回期间的新消息；超时返回空列表。",
-                "inputSchema" => [
-                    "type" => "object",
-                    "properties" => [
+                        "conv"    => $conv,
                         "seconds" => ["type" => "number", "description" => "最多等多少秒，默认 20，上限 25"],
-                        "since"   => ["type" => "number", "description" => "从这条 id 之后开始等"],
+                        "since"   => ["type" => "number", "description" => "从这个 id 之后开始等；不填从最新一条开始"],
                     ],
                 ],
             ],
             [
-                "name" => "chat_members",
-                "description" => "列出群成员：名字、是人还是谁的 AI、id，会标出你自己和你的主人。",
+                "name" => "conversations",
+                "description" => "我的会话列表：公开大群和私聊，带最后一条和未读数。",
                 "inputSchema" => ["type" => "object", "properties" => (object) []],
             ],
             [
-                "name" => "chat_me",
-                "description" => "看看我是谁：我在群里的名字、身份、主人。",
-                "inputSchema" => ["type" => "object", "properties" => (object) []],
-            ],
-            [
-                "name" => "chat_help",
-                "description" => "命令清单。AI 账号除了在大群说话，还能私聊、加好友、看空间、看站内信、改资料，全部走 send 的 / 命令。",
-                "inputSchema" => ["type" => "object", "properties" => (object) []],
-            ],
-            [
-                "name" => "gift_card",
-                "description" => "在群里发一张请客卡（瑞幸咖啡 / 麦当劳）。卡片显示店名、点什么、多少钱、一句备注。",
+                "name" => "dm",
+                "description" => "私聊：open 打开和某人的会话，send 发一条，list 列出现有私聊。只对好友生效。",
                 "inputSchema" => [
                     "type" => "object",
                     "properties" => [
-                        "shop"  => ["type" => "string", "description" => "luckin 瑞幸，mcd 麦当劳，其他填 other"],
-                        "item"  => ["type" => "string", "description" => "点什么，比如 生椰拿铁一杯"],
-                        "price" => ["type" => "string", "description" => "多少钱，比如 9.9"],
-                        "note"  => ["type" => "string", "description" => "一句话备注"],
-                        "link"  => ["type" => "string", "description" => "你自己的点单链接，可空"],
+                        "action" => ["type" => "string", "description" => "open / send / list"],
+                        "name"   => ["type" => "string", "description" => "对方的名字"],
+                        "id"     => ["type" => "string", "description" => "对方的成员 id，如 h_12 / a_3"],
+                        "text"   => ["type" => "string", "description" => "action=send 时要发的内容"],
                     ],
-                    "required" => ["shop", "item"],
+                    "required" => ["action"],
+                ],
+            ],
+            [
+                "name" => "friends",
+                "description" => "好友：list 列表，request 申请，accept 同意，reject 拒绝，remove 删除。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "action" => ["type" => "string", "description" => "list / request / accept / reject / remove"],
+                        "name"   => ["type" => "string", "description" => "对方名字"],
+                        "id"     => ["type" => "string", "description" => "对方成员 id"],
+                    ],
+                    "required" => ["action"],
+                ],
+            ],
+            [
+                "name" => "moments",
+                "description" => "空间动态：list 看，post 发（text 最多 300 字、images 最多 9 张、tags 最多 5 个），like 点赞，comment 评论。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "action"  => ["type" => "string", "description" => "list / post / like / comment"],
+                        "text"    => ["type" => "string", "description" => "正文，可以用 #话题"],
+                        "images"  => ["type" => "array", "items" => ["type" => "string"], "description" => "图片地址"],
+                        "tags"    => ["type" => "array", "items" => ["type" => "string"], "description" => "话题"],
+                        "id"      => ["type" => "number", "description" => "动态 id（like / comment）"],
+                        "comment" => ["type" => "string", "description" => "评论内容"],
+                    ],
+                    "required" => ["action"],
+                ],
+            ],
+            [
+                "name" => "notices",
+                "description" => "站内信：list 列表（带未读数），read 标一条已读，readAll 全部已读。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "action" => ["type" => "string", "description" => "list / read / readAll"],
+                        "id"     => ["type" => "number", "description" => "站内信 id"],
+                    ],
+                ],
+            ],
+            [
+                "name" => "profile",
+                "description" => "我的资料：get 看，set 改简介（bio，最多 500 字）。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "action" => ["type" => "string", "description" => "get / set"],
+                        "bio"    => ["type" => "string", "description" => "新的简介"],
+                    ],
+                ],
+            ],
+            [
+                "name" => "upload",
+                "description" => "上传一个文件：data 是 data:image/...;base64,... 或 data:audio/...;base64,...，返回可发给 send 的地址。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "data" => ["type" => "string", "description" => "data URL"],
+                        "kind" => ["type" => "string", "description" => "image / voice / avatar，默认 image"],
+                    ],
+                    "required" => ["data"],
+                ],
+            ],
+            [
+                "name" => "recall",
+                "description" => "撤回自己发的一条消息（受群里的撤回策略限制）。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => ["id" => ["type" => "number", "description" => "消息 id"]],
+                    "required" => ["id"],
+                ],
+            ],
+            [
+                "name" => "todo",
+                "description" => "群待办：list 看，add 把一条消息设成待办，close 完成。",
+                "inputSchema" => [
+                    "type" => "object",
+                    "properties" => [
+                        "action" => ["type" => "string", "description" => "list / add / close"],
+                        "id"     => ["type" => "number", "description" => "待办 id（close）或消息 id（add）"],
+                    ],
+                    "required" => ["action"],
                 ],
             ],
         ];
@@ -397,148 +481,564 @@ final class Mcp
     private static function call(string $name, array $args): array
     {
         $pdo = Db::connect();
-        $token = self::token();
-        if ($token === "") {
-            throw new \RuntimeException("缺少 token：地址后面加 ?k=<AI 的 token>");
-        }
-
-        // 认证走 chat API 那一套（token → 成员 → 判注销/封禁），不另写一份
-        Input::inject(["token" => $token]);
-        $me = null;
-        $gate = Json::capture(function () use ($pdo, &$me): void {
-            $me = Compat::requireMemberPublic($pdo);
-        });
-        if (!$gate["ok"]) throw new \RuntimeException((string) $gate["err"]);
-        if (!is_array($me)) throw new \RuntimeException("这个 token 找不到群成员");
-
-        $scope = self::scopeOf($pdo, $me);
+        [$me, $scope] = self::auth($pdo);
 
         switch ($name) {
-            case "chat_me":
-                return self::text(self::api($pdo, $scope, "api/me", ["token" => $token]));
-
-            case "chat_help": {
-                $d = self::api($pdo, $scope, "api/send", ["token" => $token, "text" => "/help"]);
-                return self::text([
-                    "ok" => true,
-                    "text" => (string) ($d["text"] ?? ""),
-                    "commands" => $d["data"] ?? [],
-                ]);
-            }
-
-            case "chat_members": {
-                $d = self::api($pdo, $scope, "api/me", ["token" => $token]);
-                $members = is_array($d["members"] ?? null) ? $d["members"] : [];
-                return self::text(["members" => $members, "total" => count($members)]);
-            }
-
-            case "chat_read": {
-                $limit = (int) ($args["limit"] ?? 30);
-                if ($limit <= 0) $limit = 30;
-                if ($limit > 200) $limit = 200;
-                $since = (int) ($args["since"] ?? 0);
-                $before = (int) ($args["before"] ?? 0);
-                $params = ["token" => $token, "limit" => $limit];
-                // 不填 since 时服务端给「最近 limit 条」；before 用来往上翻更早
-                if ($since > 0) $params["since"] = $since;
-                elseif ($before > 0) $params["before"] = $before;
-                $d = self::api($pdo, $scope, "api/read", $params);
-                $msgs = self::lightMsgs($pdo, is_array($d["msgs"] ?? null) ? $d["msgs"] : []);
-                return self::text([
-                    "banner"   => self::BANNER,
-                    "messages" => $msgs,
-                    "lastId"   => (int) ($d["lastId"] ?? $since),
-                    "oldestId" => $msgs ? (int) $msgs[0]["id"] : 0,
-                    "more"     => !empty($d["more"]),
-                ]);
-            }
-
-            case "chat_wait": {
-                $seconds = (int) ($args["seconds"] ?? 20);
-                if ($seconds <= 0) $seconds = 20;
-                if ($seconds > 25) $seconds = 25;
-                $since = (int) ($args["since"] ?? 0);
-                // 没给游标就从现在开始等，别把历史消息当新消息立刻吐出来
-                if ($since <= 0) $since = self::maxMsgId($pdo, $scope);
-                $d = self::api($pdo, $scope, "api/wait", [
-                    "token" => $token, "since" => $since, "seconds" => $seconds,
-                ]);
-                $msgs = self::lightMsgs($pdo, is_array($d["msgs"] ?? null) ? $d["msgs"] : []);
-                return self::text([
-                    "messages" => $msgs,
-                    "lastId"   => (int) ($d["lastId"] ?? $since),
-                    "timeout"  => count($msgs) === 0,
-                ]);
-            }
-
-            case "chat_cmd": {
-                $text = trim((string) ($args["text"] ?? ""));
-                if ($text === "") throw new \RuntimeException("text 不能空");
-                if ($text[0] !== "/") $text = "/" . $text;
-                $args["text"] = $text;
-                return self::call("chat_send", $args);
-            }
-
-            case "chat_send": {
-                $text  = trim((string) ($args["text"] ?? ""));
-                $voice = trim((string) ($args["voice"] ?? ""));
-                if ($text === "" && $voice === "") {
-                    throw new \RuntimeException("text 和 voice 至少填一个");
-                }
-                $p = ["token" => $token, "text" => $text];
-                if ($voice !== "") $p["voice"] = $voice;
-                if (isset($args["dur"])) $p["dur"] = (int) $args["dur"];
-                if (isset($args["model"]) && (string) $args["model"] !== "") $p["model"] = (string) $args["model"];
-                $d = self::api($pdo, $scope, "api/send", $p);
-                // 斜杠命令（/help、/dm ...）不落库，结果直接给 AI
-                if (isset($d["cmd"])) {
-                    return self::text([
-                        "ok"   => true,
-                        "cmd"  => (string) $d["cmd"],
-                        "text" => (string) ($d["text"] ?? ""),
-                        "data" => $d["data"] ?? null,
-                    ]);
-                }
-                $msg = is_array($d["msg"] ?? null) ? $d["msg"] : [];
-                return self::text([
-                    "ok" => true,
-                    "id" => (int) ($msg["id"] ?? 0),
-                    "ts" => (int) ($msg["ts"] ?? 0),
-                ]);
-            }
-
-            case "gift_card": {
-                $item = trim((string) ($args["item"] ?? ""));
-                if ($item === "") throw new \RuntimeException("item 不能空");
-                $card = [
-                    "shop"  => mb_substr(trim((string) ($args["shop"] ?? "other")), 0, 20),
-                    "item"  => mb_substr($item, 0, 60),
-                    "price" => mb_substr((string) ($args["price"] ?? ""), 0, 20),
-                    "note"  => mb_substr((string) ($args["note"] ?? ""), 0, 80),
-                    "link"  => mb_substr((string) ($args["link"] ?? ""), 0, 300),
-                ];
-                $d = self::api($pdo, $scope, "api/send", ["token" => $token, "card" => $card]);
-                $msg = is_array($d["msg"] ?? null) ? $d["msg"] : [];
-                return self::text(["ok" => true, "id" => (int) ($msg["id"] ?? 0)]);
-            }
-
+            case "me":            return self::text(self::toolMe($pdo, $scope, $me));
+            case "members":       return self::text(self::toolMembers($pdo, $scope, $me));
+            case "read":          return self::text(self::toolRead($pdo, $scope, $me, $args));
+            case "send":          return self::text(self::toolSend($pdo, $scope, $me, $args));
+            case "wait":          return self::text(self::toolWait($pdo, $scope, $me, $args));
+            case "conversations": return self::text(["items" => Conv::mine($pdo, $scope, $me)]);
+            case "dm":            return self::text(self::toolDm($pdo, $scope, $me, $args));
+            case "friends":       return self::text(self::toolFriends($pdo, $scope, $me, $args));
+            case "moments":       return self::text(self::toolMoments($pdo, $scope, $me, $args));
+            case "notices":       return self::text(self::toolNotices($pdo, $scope, $me, $args));
+            case "profile":       return self::text(self::toolProfile($pdo, $me, $args));
+            case "upload":        return self::text(self::toolUpload($pdo, $me, $args));
+            case "recall":        return self::text(self::toolRecall($pdo, $scope, $me, (int) ($args["id"] ?? 0)));
+            case "todo":          return self::text(self::toolTodo($pdo, $scope, $me, $args));
             default:
                 throw new \RuntimeException("没有这个工具：" . $name);
         }
     }
 
-    /** 调 chat API 的同一条路由：参数进 Input，Json 的输出转成返回值 */
-    private static function api(PDO $pdo, array $scope, string $path, array $params): array
+    // ---------- 身份 ----------
+
+    /** token → 成员；必须是 AI 且适配器是 mcp */
+    private static function auth(PDO $pdo): array
     {
-        Input::inject($params);
-        $res = Json::capture(function () use ($pdo, $scope, $path): void {
-            Compat::dispatch($pdo, $scope, $path);
+        $token = self::token();
+        if ($token === "") throw new \RuntimeException("缺少 token：地址后面加 ?k=<AI 的 token>");
+        $st = $pdo->prepare("SELECT * FROM members WHERE token_hash = ? LIMIT 1");
+        $st->execute([Token::hash($token)]);
+        $me = $st->fetch();
+        if (!$me) throw new \RuntimeException("这个 token 找不到成员");
+        if ((string) ($me["kind"] ?? "") !== "ai") throw new \RuntimeException("这个 token 不是 AI 账号的");
+        if (!empty($me["deleted_at"])) throw new \RuntimeException("这个账号已经注销");
+        if ((int) ($me["banned"] ?? 0) === 1) throw new \RuntimeException("这个账号已被封禁");
+        $adapter = (string) ($me["adapter"] ?? "mcp");
+        if ($adapter !== "mcp") {
+            throw new \RuntimeException("这个账号是小群（xsj）适配器，只能用 /g/api/* 的接口；完整能力请新建一个 MCP 适配器的 AI");
+        }
+
+        $scope = self::scopeOf($pdo, $me);
+        $pdo->prepare("UPDATE members SET last_seen_at = ? WHERE id = ?")->execute([lg_now(), (int) $me["id"]]);
+        return [$me, $scope];
+    }
+
+    // ---------- 工具 ----------
+
+    private static function toolMe(PDO $pdo, array $scope, array $me): array
+    {
+        $owner = (int) ($me["owner_id"] ?? 0) > 0 ? Conv::nameOf($pdo, (int) $me["owner_id"]) : "";
+        $pub = Conv::publicConv($pdo, $scope);
+        return [
+            "id"      => self::mid($me),
+            "name"    => (string) $me["name"],
+            "kind"    => "ai",
+            "adapter" => "mcp",
+            "owner"   => $owner,
+            "bio"     => (string) ($me["bio"] ?? ""),
+            "scope"   => [
+                "id"    => (int) $scope["id"],
+                "slug"  => (string) ($scope["slug"] ?? ""),
+                "title" => (string) ($scope["title"] ?? ""),
+            ],
+            "defaultConv" => $pub ? ["id" => (int) $pub["id"], "title" => (string) ($scope["title"] ?? "")] : null,
+            "tools"   => ["me", "members", "read", "send", "wait", "conversations", "dm", "friends", "moments", "notices", "profile", "upload", "recall", "todo"],
+        ];
+    }
+
+    private static function toolMembers(PDO $pdo, array $scope, array $me): array
+    {
+        $st = $pdo->prepare("SELECT id, name, kind, owner_id, adapter, deleted_at FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY kind ASC, id ASC");
+        $st->execute([(int) $scope["id"]]);
+        $out = [];
+        foreach ($st->fetchAll() as $m) {
+            $out[] = [
+                "id"      => self::mid($m),
+                "name"    => (string) $m["name"],
+                "kind"    => (string) $m["kind"],
+                "owner"   => (int) $m["owner_id"] > 0 ? Conv::nameOf($pdo, (int) $m["owner_id"]) : "",
+                "adapter" => (string) $m["kind"] === "ai" ? (string) ($m["adapter"] ?? "mcp") : "",
+                "me"      => (int) $m["id"] === (int) $me["id"] ? 1 : 0,
+            ];
+        }
+        return ["members" => $out, "total" => count($out)];
+    }
+
+    private static function toolRead(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $target = self::pickConv($pdo, $scope, $me, (string) ($a["conv"] ?? ""));
+        $limit = max(1, min(200, (int) ($a["limit"] ?? 30)));
+        $since = (int) ($a["since"] ?? 0);
+        $before = (int) ($a["before"] ?? 0);
+        $rows = self::msgs($pdo, $target["ids"], $limit, $since, $before);
+        return [
+            "conv"     => $target["id"],
+            "title"    => $target["title"],
+            "messages" => self::lightMsgs($pdo, $rows),
+            "oldestId" => $rows ? (int) $rows[0]["id"] : 0,
+            "lastId"   => $rows ? (int) $rows[count($rows) - 1]["id"] : $since,
+            "more"     => count($rows) >= $limit,
+        ];
+    }
+
+    private static function toolSend(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $target = self::pickConv($pdo, $scope, $me, (string) ($a["conv"] ?? ""));
+        return self::insert($pdo, $scope, $me, $target, $a);
+    }
+
+    private static function toolWait(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $target = self::pickConv($pdo, $scope, $me, (string) ($a["conv"] ?? ""));
+        $seconds = max(1, min(25, (int) ($a["seconds"] ?? 20)));
+        $since = (int) ($a["since"] ?? 0);
+        if ($since <= 0) $since = self::maxId($pdo, $target["ids"]);
+        $deadline = microtime(true) + $seconds;
+        while (microtime(true) < $deadline) {
+            $rows = self::msgs($pdo, $target["ids"], 50, $since, 0);
+            if ($rows) {
+                return [
+                    "conv"     => $target["id"],
+                    "messages" => self::lightMsgs($pdo, $rows),
+                    "lastId"   => (int) $rows[count($rows) - 1]["id"],
+                    "timeout"  => false,
+                ];
+            }
+            usleep(250000);
+        }
+        return ["conv" => $target["id"], "messages" => [], "lastId" => $since, "timeout" => true];
+    }
+
+    private static function toolDm(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "")));
+        if ($action === "list") {
+            $out = [];
+            foreach (Conv::mine($pdo, $scope, $me) as $c) {
+                if ((string) $c["kind"] === "dm") $out[] = $c;
+            }
+            return ["items" => $out];
+        }
+        if ($action !== "open" && $action !== "send") self::fail("action 只认 open / send / list");
+
+        $other = self::findMember($pdo, $scope, $me, (string) ($a["name"] ?? ""), (string) ($a["id"] ?? ""));
+        if ($other === null) self::fail("找不到这个人");
+        if ((int) $other["id"] === (int) $me["id"]) self::fail("不能和自己私聊");
+        if (!self::isFriend($pdo, (int) $me["id"], (int) $other["id"])) self::fail("先加好友才能私聊");
+
+        $conv = Conv::ensureDm($pdo, $scope, (int) $me["id"], (int) $other["id"], (int) $me["id"]);
+        $target = ["id" => (int) $conv["id"], "ids" => [(int) $conv["id"]], "kind" => "dm", "title" => (string) $other["name"], "conv" => $conv];
+        if ($action === "send") {
+            $text = trim((string) ($a["text"] ?? ""));
+            if ($text === "") self::fail("text 不能空");
+            $r = self::insert($pdo, $scope, $me, $target, ["text" => $text, "model" => (string) ($a["model"] ?? "")]);
+            return $r + ["conv" => (int) $conv["id"], "with" => (string) $other["name"]];
+        }
+        return ["conv" => (int) $conv["id"], "with" => ["id" => self::mid($other), "name" => (string) $other["name"]]];
+    }
+
+    private static function toolFriends(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "list")));
+        if ($action === "list") {
+            $raw = Social::listFor($pdo, $scope, $me, false);
+            $out = ["friends" => [], "incoming" => [], "outgoing" => []];
+            foreach ($raw as $k => $list) {
+                foreach ($list as $row) {
+                    $id = (int) ($row["id"] ?? 0);
+                    if ($id <= 0) continue;
+                    $out[$k][] = [
+                        "id"   => "h_" . $id,
+                        "name" => Conv::nameOf($pdo, $id),
+                        "at"   => (int) ($row["at"] ?? 0),
+                    ];
+                }
+            }
+            return $out;
+        }
+
+        $other = self::findMember($pdo, $scope, $me, (string) ($a["name"] ?? ""), (string) ($a["id"] ?? ""));
+        if ($other === null) self::fail("找不到这个人");
+        $targetId = (int) $other["id"];
+
+        $res = Json::capture(function () use ($pdo, $scope, $me, $action, $targetId): void {
+            switch ($action) {
+                case "request": Social::request($pdo, $scope, $me, $targetId); break;
+                case "accept":  Social::accept($pdo, $scope, $me, $targetId); break;
+                case "reject":  Social::reject($pdo, $scope, $me, $targetId); break;
+                case "remove":  Social::remove($pdo, $scope, $me, $targetId); break;
+                default: Json::fail("action 只认 list / request / accept / reject / remove");
+            }
         });
-        if (!$res["ok"]) throw new \RuntimeException((string) $res["err"]);
+        if (!$res["ok"]) self::fail((string) $res["err"]);
+        return ["ok" => true, "action" => $action, "with" => (string) $other["name"]];
+    }
+
+    private static function toolMoments(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "list")));
+        $path = "moments";
+        $method = "GET";
+        $in = [];
+        if ($action === "post") {
+            $method = "POST";
+            $in = [
+                "text"   => (string) ($a["text"] ?? ""),
+                "images" => is_array($a["images"] ?? null) ? $a["images"] : [],
+                "tags"   => is_array($a["tags"] ?? null) ? $a["tags"] : [],
+            ];
+        } elseif ($action === "like") {
+            $path = "like";
+            $method = "POST";
+            $in = ["id" => (int) ($a["id"] ?? 0)];
+        } elseif ($action === "comment") {
+            $path = "comment";
+            $method = "POST";
+            $in = ["id" => (int) ($a["id"] ?? 0), "text" => (string) ($a["comment"] ?? "")];
+        } elseif ($action !== "list") {
+            self::fail("action 只认 list / post / like / comment");
+        }
+        return self::viaCapture($method, $in, function () use ($pdo, $scope, $path): void {
+            Moments::handle($pdo, $scope, $path);
+        });
+    }
+
+    private static function toolNotices(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "list")));
+        $method = "GET";
+        $in = [];
+        if ($action === "read") {
+            $method = "POST";
+            $in = ["op" => "read", "id" => (int) ($a["id"] ?? 0)];
+        } elseif ($action === "readall") {
+            $method = "POST";
+            $in = ["op" => "readAll"];
+        } elseif ($action !== "list") {
+            self::fail("action 只认 list / read / readAll");
+        }
+        return self::viaCapture($method, $in, function () use ($pdo, $scope): void {
+            Notices::handle($pdo, $scope, "notices");
+        });
+    }
+
+    private static function toolProfile(PDO $pdo, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "get")));
+        if ($action === "set") {
+            $bio = trim((string) ($a["bio"] ?? ""));
+            if (mb_strlen($bio) > 500) self::fail("简介最多 500 字");
+            $pdo->prepare("UPDATE members SET bio = ? WHERE id = ?")->execute([$bio, (int) $me["id"]]);
+            return ["ok" => true, "bio" => $bio];
+        }
+        if ($action !== "get") self::fail("action 只认 get / set");
+        return [
+            "id"      => self::mid($me),
+            "name"    => (string) $me["name"],
+            "adapter" => "mcp",
+            "bio"     => (string) ($me["bio"] ?? ""),
+            "avatar"  => self::abs((string) ($me["avatar"] ?? "")),
+            "owner"   => (int) ($me["owner_id"] ?? 0) > 0 ? Conv::nameOf($pdo, (int) $me["owner_id"]) : "",
+        ];
+    }
+
+    private static function toolUpload(PDO $pdo, array $me, array $a): array
+    {
+        $data = (string) ($a["data"] ?? "");
+        $kind = strtolower(trim((string) ($a["kind"] ?? "image")));
+        if (!preg_match('#^data:(image/(png|jpe?g|gif|webp)|audio/[a-z0-9.+-]+|video/[a-z0-9.+-]+);base64,(.+)$#i', $data, $mm)) {
+            self::fail("data 必须是 data:<类型>;base64,<内容>");
+        }
+        $raw = base64_decode($mm[3], true);
+        if ($raw === false || $raw === "") self::fail("内容解不出来");
+        if (strlen($raw) > 8 * 1024 * 1024) self::fail("文件最大 8MB");
+
+        $mime = strtolower($mm[1]);
+        $ext = match (true) {
+            $mime === "image/png"  => "png",
+            $mime === "image/jpeg" => "jpg",
+            $mime === "image/gif"  => "gif",
+            $mime === "image/webp" => "webp",
+            str_starts_with($mime, "audio/") => "m4a",
+            default => "bin",
+        };
+        $dir = PUBLIC_ROOT . "/uploads/" . date("Y") . "/" . date("m");
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) self::fail("上传目录建不出来");
+        $name = bin2hex(random_bytes(8)) . "." . $ext;
+        $target = $dir . "/" . $name;
+        if (file_put_contents($target, $raw) === false) self::fail("保存失败");
+        $url = self::abs("/uploads/" . date("Y") . "/" . date("m") . "/" . $name);
+        if ($kind === "avatar") {
+            $pdo->prepare("UPDATE members SET avatar = ? WHERE id = ?")->execute([$url, (int) $me["id"]]);
+        }
+        return ["url" => $url, "size" => strlen($raw), "kind" => $kind];
+    }
+
+    private static function toolRecall(PDO $pdo, array $scope, array $me, int $id): array
+    {
+        if ($id <= 0) self::fail("要指定消息 id");
+        $st = $pdo->prepare("SELECT * FROM messages WHERE id = ? AND scope_id = ? LIMIT 1");
+        $st->execute([$id, (int) $scope["id"]]);
+        $msg = $st->fetch();
+        if (!$msg) self::fail("消息不存在");
+        if (!empty($msg["deleted_at"])) self::fail("已经撤回过了");
+        if ((int) $msg["member_id"] !== (int) $me["id"]) self::fail("只能撤回自己的消息");
+        $up = $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = ? WHERE id = ?");
+        $up->execute([lg_now(), (int) $me["id"], $id]);
+        return ["ok" => true, "id" => $id];
+    }
+
+    private static function toolTodo(PDO $pdo, array $scope, array $me, array $a): array
+    {
+        $action = strtolower(trim((string) ($a["action"] ?? "list")));
+        if ($action === "list") {
+            $st = $pdo->prepare(
+                "SELECT t.id, t.msg_id, t.created_at, t.closed_at, m.text, m.member_id"
+                . " FROM todos t LEFT JOIN messages m ON m.id = t.msg_id"
+                . " WHERE t.scope_id = ? ORDER BY t.closed_at IS NULL DESC, t.id DESC LIMIT 50"
+            );
+            $st->execute([(int) $scope["id"]]);
+            $out = [];
+            foreach ($st->fetchAll() as $r) {
+                $out[] = [
+                    "id"     => (int) $r["id"],
+                    "msgId"  => (int) $r["msg_id"],
+                    "text"   => (string) ($r["text"] ?? ""),
+                    "done"   => empty($r["closed_at"]) ? 0 : 1,
+                    "at"     => (int) $r["created_at"],
+                ];
+            }
+            return ["items" => $out];
+        }
+        $id = (int) ($a["id"] ?? 0);
+        if ($id <= 0) self::fail("要指定 id");
+        if ($action === "add") {
+            $chk = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE id = ? AND scope_id = ? AND deleted_at IS NULL");
+            $chk->execute([$id, (int) $scope["id"]]);
+            if ((int) $chk->fetchColumn() === 0) self::fail("找不到这条消息");
+            $pdo->prepare("INSERT INTO todos (scope_id, msg_id, created_by, created_at) VALUES (?,?,?,?)")
+                ->execute([(int) $scope["id"], $id, (int) $me["id"], lg_now()]);
+            return ["ok" => true, "id" => (int) $pdo->lastInsertId()];
+        }
+        if ($action === "close") {
+            $up = $pdo->prepare("UPDATE todos SET closed_at = ? WHERE id = ? AND scope_id = ? AND closed_at IS NULL");
+            $up->execute([lg_now(), $id, (int) $scope["id"]]);
+            return ["ok" => true, "id" => $id, "closed" => $up->rowCount() > 0 ? 1 : 0];
+        }
+        self::fail("action 只认 list / add / close");
+    }
+
+    // ---------- 会话与消息 ----------
+
+    /** @return array{id:int,ids:int[],kind:string,title:string,conv:?array} */
+    private static function pickConv(PDO $pdo, array $scope, array $me, string $raw): array
+    {
+        $raw = trim($raw);
+        if ($raw === "" || $raw === "group" || $raw === "public") {
+            $c = Conv::publicConv($pdo, $scope);
+            if (!$c) self::fail("这个群还没有公开大群");
+            $ids = Conv::publicConvIds($pdo, $scope);
+            return [
+                "id"    => (int) $c["id"],
+                "ids"   => $ids ?: [(int) $c["id"]],
+                "kind"  => "group",
+                "title" => (string) ($scope["title"] ?? ""),
+                "conv"  => $c,
+            ];
+        }
+        if (str_starts_with($raw, "dm:")) {
+            $other = self::findMember($pdo, $scope, $me, substr($raw, 3), "");
+            if ($other === null) self::fail("找不到这个人");
+            if (!self::isFriend($pdo, (int) $me["id"], (int) $other["id"])) self::fail("先加好友才能私聊");
+            $c = Conv::ensureDm($pdo, $scope, (int) $me["id"], (int) $other["id"], (int) $me["id"]);
+            return ["id" => (int) $c["id"], "ids" => [(int) $c["id"]], "kind" => "dm", "title" => (string) $other["name"], "conv" => $c];
+        }
+        $cid = preg_match('/^c?_?(\d+)$/', $raw, $mm) ? (int) $mm[1] : 0;
+        $c = $cid > 0 ? Conv::convById($pdo, $cid) : null;
+        if (!$c) self::fail("会话不存在");
+        if ((int) $c["is_public"] !== 1 && !Conv::isMember($pdo, $c, (int) $me["id"])) self::fail("你不在这个会话里");
+        $title = (string) ($c["title"] ?? "");
+        if ((int) $c["is_public"] === 1) {
+            $ids = Conv::publicConvIds($pdo, $scope);
+            return ["id" => (int) $c["id"], "ids" => $ids ?: [(int) $c["id"]], "kind" => "group", "title" => (string) ($scope["title"] ?? ""), "conv" => $c];
+        }
+        foreach (Conv::memberIds($pdo, $c) as $x) {
+            if ((int) $x !== (int) $me["id"]) { $title = Conv::nameOf($pdo, (int) $x); break; }
+        }
+        return ["id" => (int) $c["id"], "ids" => [(int) $c["id"]], "kind" => "dm", "title" => $title, "conv" => $c];
+    }
+
+    private static function msgs(PDO $pdo, array $convIds, int $limit, int $since, int $before): array
+    {
+        $ids = array_values(array_filter(array_map("intval", $convIds), fn($x) => $x > 0));
+        if (!$ids) return [];
+        $in = implode(",", array_fill(0, count($ids), "?"));
+        $sql = "SELECT m.*, mem.name AS mname, mem.kind AS mkind FROM messages m"
+            . " LEFT JOIN members mem ON mem.id = m.member_id"
+            . " WHERE m.conv_id IN ($in)";
+        $args = $ids;
+        if ($since > 0) {
+            $sql .= " AND m.id > ? ORDER BY m.id ASC LIMIT " . $limit;
+            $args[] = $since;
+        } elseif ($before > 0) {
+            $sql .= " AND m.id < ? ORDER BY m.id DESC LIMIT " . $limit;
+            $args[] = $before;
+        } else {
+            $sql .= " ORDER BY m.id DESC LIMIT " . $limit;
+        }
+        $st = $pdo->prepare($sql);
+        $st->execute($args);
+        $rows = $st->fetchAll();
+        if ($since <= 0) $rows = array_reverse($rows);
+        return $rows;
+    }
+
+    private static function maxId(PDO $pdo, array $convIds): int
+    {
+        $ids = array_values(array_filter(array_map("intval", $convIds), fn($x) => $x > 0));
+        if (!$ids) return 0;
+        $in = implode(",", array_fill(0, count($ids), "?"));
+        $st = $pdo->prepare("SELECT COALESCE(MAX(id), 0) FROM messages WHERE conv_id IN ($in)");
+        $st->execute($ids);
+        return (int) $st->fetchColumn();
+    }
+
+    private static function insert(PDO $pdo, array $scope, array $me, array $target, array $a): array
+    {
+        $text  = trim((string) ($a["text"] ?? ""));
+        $img   = trim((string) ($a["img"] ?? ""));
+        $voice = trim((string) ($a["voice"] ?? ""));
+        $dur   = max(0, min(600, (int) ($a["dur"] ?? 0)));
+        $card  = is_array($a["card"] ?? null) ? $a["card"] : null;
+        $model = trim((string) ($a["model"] ?? ""));
+        if (mb_strlen($model) > 40) $model = mb_substr($model, 0, 40);
+        if ($text === "" && $img === "" && $voice === "" && !$card) self::fail("不能发空消息");
+        if (mb_strlen($text) > 10000) self::fail("单条消息最多 10000 字");
+
+        $replyTo = null;
+        $reply = (int) ($a["reply"] ?? 0);
+        if ($reply > 0) {
+            $chk = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE id = ? AND conv_id = ?");
+            $chk->execute([$reply, (int) $target["id"]]);
+            if ((int) $chk->fetchColumn() > 0) $replyTo = $reply;
+        }
+
+        $ts = lg_now();
+        $ins = $pdo->prepare(
+            "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur, model)"
+            . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        );
+        $ins->execute([
+            (int) $scope["id"], (int) $target["id"], (int) $me["id"], $ts,
+            $text,
+            $img !== "" ? $img : null,
+            $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
+            $replyTo,
+            $voice !== "" ? $voice : null,
+            $dur,
+            $model !== "" ? $model : null,
+        ]);
+        $id = (int) $pdo->lastInsertId();
+        Conv::touch($pdo, (int) $target["id"], $id, $ts);
+        return ["ok" => true, "id" => $id, "ts" => $ts, "conv" => (int) $target["id"]];
+    }
+
+    private static function lightMsgs(PDO $pdo, array $msgs): array
+    {
+        $out = [];
+        foreach ($msgs as $m) {
+            $t = (string) ($m["text"] ?? "");
+            if (!empty($m["text_auto"])) {
+                $t = trim((string) preg_replace('/(\s*\[(图片|语音|卡片)\]\([^)]*\)(\s*\d+")?)+$/u', "", $t));
+            }
+            $reply = (int) ($m["reply_to"] ?? 0);
+            $card = null;
+            if (!empty($m["card_json"])) {
+                $dec = json_decode((string) $m["card_json"], true);
+                if (is_array($dec)) $card = $dec;
+            }
+            $out[] = [
+                "id"   => (int) $m["id"],
+                "from" => (string) ($m["mname"] ?? ""),
+                "kind" => (string) ($m["mkind"] ?? "human"),
+                "text" => $t,
+                "img"  => self::abs((string) ($m["img"] ?? "")),
+                "voice" => self::abs((string) ($m["voice"] ?? "")),
+                "dur"  => (int) ($m["dur"] ?? 0),
+                "card" => $card,
+                "reply" => $reply > 0 ? $reply : null,
+                "ts"   => (int) ($m["ts_ms"] ?? 0),
+                "recalled" => empty($m["deleted_at"]) ? 0 : 1,
+            ];
+        }
+        return $out;
+    }
+
+    // ---------- 通用 ----------
+
+    private static function findMember(PDO $pdo, array $scope, array $me, string $name, string $idRaw): ?array
+    {
+        $name = trim($name);
+        if ($name === "" && $idRaw !== "") {
+            if (preg_match('/^[ha]_(\d+)$/i', trim($idRaw), $mm)) {
+                $id = (int) $mm[1];
+                $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
+                $st->execute([$id]);
+                $row = $st->fetch();
+                return $row ?: null;
+            }
+            $name = trim($idRaw);
+        }
+        if ($name === "") return null;
+        $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? AND deleted_at IS NULL LIMIT 1");
+        $st->execute([(int) $scope["id"], $name]);
+        $row = $st->fetch();
+        return $row ?: null;
+    }
+
+    private static function isFriend(PDO $pdo, int $a, int $b): bool
+    {
+        if ($a <= 0 || $b <= 0) return false;
+        [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];
+        $st = $pdo->prepare("SELECT COUNT(*) FROM friends WHERE a_id = ? AND b_id = ? AND status = 'accepted'");
+        $st->execute([$x, $y]);
+        return (int) $st->fetchColumn() > 0;
+    }
+
+    /** 在捕获模式下跑一段业务代码，并把请求方法改成指定的那个 */
+    private static function viaCapture(string $method, array $input, callable $fn): array
+    {
+        $prevMethod = $_SERVER["REQUEST_METHOD"] ?? "GET";
+        $_SERVER["REQUEST_METHOD"] = $method;
+        Input::inject($input);
+        $res = Json::capture($fn);
+        $_SERVER["REQUEST_METHOD"] = $prevMethod;
+        if (!$res["ok"]) self::fail((string) $res["err"]);
         return is_array($res["data"]) ? $res["data"] : [];
     }
 
-    // ---------- 身份 ----------
+    private static function mid(array $m): string
+    {
+        return ((string) ($m["kind"] ?? "human") === "ai" ? "a_" : "h_") . (int) $m["id"];
+    }
+
+    private static function abs(string $path): string
+    {
+        $path = trim($path);
+        if ($path === "") return "";
+        if (preg_match('#^(https?://|data:)#i', $path)) return $path;
+        if (str_starts_with($path, "//")) return "https:" . $path;
+        return Site::baseUrl() . "/" . ltrim($path, "/");
+    }
+
+    private static function fail(string $msg): void
+    {
+        throw new \RuntimeException($msg);
+    }
 
     private static function token(): string
     {
@@ -551,56 +1051,15 @@ final class Mcp
 
     private static function scopeOf(PDO $pdo, array $me): array
     {
-        $st = $pdo->prepare("SELECT * FROM scopes WHERE id = ? LIMIT 1");
+        $st = $pdo->prepare("SELECT * FROM scopes WHERE id = ? AND archived = 0 LIMIT 1");
         $st->execute([(int) $me["scope_id"]]);
         $row = $st->fetch();
-        if (!$row) throw new \RuntimeException("这个身份不属于任何群");
+        if (!$row) self::fail("这个身份不属于任何群");
         return $row;
-    }
-
-    // ---------- 输出整理 ----------
-
-    /** 公开大群当前的最大消息 id（互通时取兄弟群合并后的最大值） */
-    private static function maxMsgId(PDO $pdo, array $scope): int
-    {
-        $ids = Conv::publicConvIds($pdo, $scope);
-        if (!$ids) return 0;
-        try {
-            $in = implode(",", array_fill(0, count($ids), "?"));
-            $st = $pdo->prepare("SELECT COALESCE(MAX(id), 0) FROM messages WHERE conv_id IN ($in)");
-            $st->execute($ids);
-            return (int) $st->fetchColumn();
-        } catch (\Throwable $e) {
-            return 0;
-        }
-    }
-
-    /** 最近 limit 条从哪开始：最大 id 往前退 limit，避免首读直接回到开群第一天 */
-    private static function lightMsgs(PDO $pdo, array $msgs): array
-    {
-        $out = [];
-        foreach ($msgs as $m) {
-            $t = (string) ($m["text"] ?? "");
-            // 网页端会把媒体追加进 text 方便老客户端显示，AI 这边有 voice 字段了，不必重复
-            if (!empty($m["text_auto"])) {
-                $t = trim((string) preg_replace('/(\s*\[(图片|语音|卡片)\]\([^)]*\)(\s*\d+")?)+$/u', "", $t));
-            }
-            $out[] = [
-                "id" => (int) $m["id"],
-                "from" => (string) ($m["name"] ?? ""),
-                "kind" => (string) ($m["kind"] ?? "human"),
-                "text" => $t,
-                "voice" => (string) ($m["voice_url"] ?? ""),
-                "dur" => (int) ($m["dur"] ?? 0),
-                "ts" => (int) ($m["ts"] ?? 0),
-            ];
-        }
-        return $out;
     }
 
     private static function text(array $data): array
     {
         return ["content" => [["type" => "text", "text" => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]]];
     }
-
 }

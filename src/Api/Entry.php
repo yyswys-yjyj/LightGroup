@@ -38,6 +38,13 @@ final class Entry
             return;
         }
 
+        // /g/api/v1 是给第三方客户端用的 REST 协议，和 MCP、小群协议并行，
+        // 不经过网页那套 Compat 路由，也不认群路径。
+        if ($rest === "api/v1" || str_starts_with($rest, "api/v1/")) {
+            V1::handle($rest);
+            return;
+        }
+
         $slug = "";
         $path = $rest;
         $parts = explode("/", $rest, 2);
