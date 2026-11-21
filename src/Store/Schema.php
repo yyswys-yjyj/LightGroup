@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 14;
+    public const VERSION = 15;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -66,6 +66,10 @@ final class Schema {
                 "model"      => "VARCHAR(40) NULL",
                 // 语音转文字的缓存：转一次存下来，别人再点同一条不再重复调接口
                 "voice_text" => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
+                // 图文混排：一条消息里文字和图片的先后顺序，JSON 数组
+                // 形如 [{"t":"text","v":"..."},{"t":"img","v":"/uploads/x.png"}]
+                // 老消息没有这一列，读到 NULL 就按 text + img 渲染
+                "segs" => $mysql ? "LONGTEXT NULL" : "TEXT NULL",
             ],
             // 私群：公告挂在会话上（大群的公告仍挂在 scopes 上）
             "conversations" => [
@@ -241,7 +245,8 @@ final class Schema {
                 . " reply_to BIGINT NULL, deleted_at BIGINT NULL, deleted_by BIGINT NULL,"
                 . " voice $text NULL, dur INT NOT NULL DEFAULT 0,"
                 . " pinned_at BIGINT NULL, pinned_by BIGINT NULL, conv_id BIGINT NULL,"
-                . " sys TINYINT NOT NULL DEFAULT 0, model VARCHAR(40) NULL, voice_text $text NULL"
+                . " sys TINYINT NOT NULL DEFAULT 0, model VARCHAR(40) NULL, voice_text $text NULL,"
+                . " segs $text NULL"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_msg_scope ON messages(scope_id, id)",
             "CREATE INDEX {$idx}idx_msg_conv ON messages(conv_id, id)",

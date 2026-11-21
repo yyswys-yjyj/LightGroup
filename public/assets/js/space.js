@@ -483,6 +483,13 @@ function paintScanner(box) {
 
 window.addEventListener('hashchange', function () { stopScan(); });
 
+// 扫码后弹出的提示层关掉时（站外链接/不支持的协议/别的站点），回到取景框重新开摄像头
+window.addEventListener('lg:scan-resume', function () {
+  if (location.hash !== '#/scan') return;
+  const box = document.querySelector('.scan-page');
+  if (box && !document.querySelector('.scan-video')) paintScanner(box);
+});
+
 // ---------- 动态 ----------
 
 function paintFeed(box) {

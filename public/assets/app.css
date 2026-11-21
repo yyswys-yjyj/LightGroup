@@ -582,3 +582,17 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .scan-page{max-width:640px;margin:0 auto;padding:14px 16px 40px}
 .scan-page-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .scan-cam{margin:8px 0;font-size:13px}
+
+
+/* ---------- 输入框附件栏 / 图文混排消息 ---------- */
+/* 图片先落进草稿栏，点发送才和文字一起作为一条消息发出去 */
+.attach-bar{display:flex;flex-wrap:wrap;gap:6px;padding:0 0 8px}
+.attach-bar[hidden]{display:none}
+.attach-chip{display:inline-flex;align-items:center;gap:6px;max-width:min(240px,70vw);padding:5px 6px 5px 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font-size:12.5px;color:var(--text-dim)}
+.attach-chip>i{color:var(--text-faint);flex:none}
+.attach-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attach-x{border:0;background:transparent;color:var(--text-faint);cursor:pointer;padding:1px;display:inline-flex;align-items:center;flex:none}
+.attach-x:hover{color:var(--danger)}
+/* 一条消息里文字和图片排在同一段：图片按行内块跟着文字走，不单独占一行 */
+.txt.rich{display:block;white-space:pre-wrap;word-break:break-word}
+.txt.rich .pic.inline{display:inline-block;vertical-align:middle;max-width:min(168px,52%);max-height:112px;width:auto;margin:2px 5px 2px 0;border-radius:9px}

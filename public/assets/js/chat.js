@@ -125,6 +125,8 @@ export function stop() {
   feedEl = null;
   S.pgMembers = [];
   S.pgSig = '';
+  // 附件是当前会话的草稿，换会话就清掉，免得发到别的群里
+  attaches = [];
   side.reset();
 }
 
@@ -216,11 +218,17 @@ function buildComposer() {
   replyBar.hidden = true;
   bar.appendChild(replyBar);
 
+  // 附件栏：图片先落在这里，点发送才和文字一起作为一条消息发出去
+  const attach = h('div', 'attach-bar');
+  attach.id = 'attach-bar';
+  attach.hidden = true;
+  bar.appendChild(attach);
+
   const row = h('div', 'composer-row');
   const plus = document.createElement('button');
   plus.type = 'button';
   plus.className = 'round-btn';
-  plus.title = '发送图片';
+  plus.title = '添加图片';
   plus.appendChild(icon('fa-plus'));
   plus.addEventListener('click', pickImage);
   row.appendChild(plus);
@@ -236,6 +244,22 @@ function buildComposer() {
   });
   ta.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendText(); }
+  });
+  // Ctrl+V 粘贴图片：和点「+」一样先进附件栏，不直接发出去
+  ta.addEventListener('paste', function (e) {
+    const cd = e.clipboardData;
+    if (!cd || !cd.items) return;
+    const files = [];
+    for (let i = 0; i < cd.items.length; i++) {
+      const it = cd.items[i];
+      if (it.kind === 'file' && /^image\//i.test(it.type || '')) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(function (f) { addAttach(f); });
   });
   row.appendChild(ta);
 
@@ -265,6 +289,7 @@ function buildComposer() {
   send.addEventListener('click', sendText);
   row.appendChild(send);
   bar.appendChild(row);
+  renderAttach(attach);
   return bar;
 }
 
@@ -488,6 +513,48 @@ function openAtPicker() {
   }, 0);
 }
 
+// ---------- 附件（图片先进草稿栏，和文字一起发） ----------
+let attaches = [];
+
+function renderAttach(bar) {
+  const box = bar || document.getElementById('attach-bar');
+  if (!box) return;
+  box.textContent = '';
+  if (!attaches.length) { box.hidden = true; return; }
+  box.hidden = false;
+  attaches.forEach(function (a, i) {
+    const chip = h('div', 'attach-chip');
+    chip.title = a.name || '';
+    chip.appendChild(icon('fa-image'));
+    chip.appendChild(h('span', 'attach-name', a.name || '图片'));
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'attach-x';
+    x.title = '移除';
+    x.appendChild(icon('fa-xmark'));
+    x.addEventListener('click', function () {
+      attaches.splice(i, 1);
+      renderAttach(box);
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+
+async function addAttach(file) {
+  if (file.type && !/^image\//.test(file.type)) { toast('选一个图片文件'); return; }
+  if (attaches.length >= 9) { toast('一条消息最多 9 张图片'); return; }
+  toast('处理图片…');
+  let dataUrl;
+  try { dataUrl = await shrinkImage(file); }
+  catch (e) { toast((e && e.message) || '这张图片读不出来'); return; }
+  toast('上传中…');
+  const up = await api('api/upload', { data: dataUrl });
+  if (!up || !up.ok) { toast((up && up.err) || '上传失败'); return; }
+  attaches.push({ url: up.url, name: String(file.name || '图片').slice(0, 40) });
+  renderAttach();
+}
+
 // ---------- 发送 ----------
 async function send(payload) {
   if (S.mode === 'legacy') {
@@ -509,28 +576,40 @@ async function sendText() {
   const ta = document.getElementById('compose');
   if (!ta) return;
   const text = ta.value.trim();
-  if (!text) return;
+  const pics = attaches.slice();
+  if (!text && !pics.length) return;
   if (text.length > 10000) {
     toast('单条消息最多 10000 字，再长请分开几条发');
     return;
   }
+  // 一条消息里文字和图片按这个顺序排：先说文字，图片按附件栏的先后跟在后面
+  const segs = [];
+  if (text) segs.push({ t: 'text', v: text });
+  pics.forEach(function (a) { segs.push({ t: 'img', v: a.url }); });
+
   ta.value = '';
   ta.style.height = 'auto';
+  attaches = [];
+  renderAttach();
+
   const payload = { text: text };
+  if (pics.length) payload.segs = segs;
   const replySnap = S.reply ? { id: S.reply.id, name: S.reply.name, text: S.reply.text } : null;
   if (S.reply) payload.reply = S.reply.id;
   const j = await send(payload);
   if (!j || !j.ok) {
     toast((j && j.err) || '没发出去');
     ta.value = text;
+    attaches = pics;
+    renderAttach();
     return;
   }
   clearReply();
-  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap);
+  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap, '', 0, pics.length ? segs : null);
 }
 
 // 发送后先把这条画上去，不等下一轮轮询；轮询拉回同一条会按 id 去重跳过
-function echoMsg(id, ts, text, img, replySnap, voice, dur) {
+function echoMsg(id, ts, text, img, replySnap, voice, dur, segs) {
   const me = S.me || {};
   const m = {
     id: id, ts: ts, from: me.id || '', name: me.name || '',
@@ -538,6 +617,7 @@ function echoMsg(id, ts, text, img, replySnap, voice, dur) {
     text: text || '', mentions: [], rev: 0, voice: voice || '', dur: dur || 0,
   };
   if (img) m.img = img;
+  if (Array.isArray(segs) && segs.length) m.segs = segs;
   if (replySnap) { m.reply = replySnap; m.q = JSON.stringify(replySnap); }
   appendMsgs([m]);
   scrollBottom(true);
@@ -600,21 +680,13 @@ function pickImage() {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
-  input.addEventListener('change', async function () {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    if (file.type && !/^image\//.test(file.type)) { toast('选一个图片文件'); return; }
-    toast('处理图片…');
-    let dataUrl;
-    try { dataUrl = await shrinkImage(file); }
-    catch (e) { toast((e && e.message) || '这张图片读不出来'); return; }
-    toast('上传中…');
-    const up = await api('api/upload', { data: dataUrl });
-    if (!up.ok) { toast(up.err || '上传失败'); return; }
-    const j = await send({ text: '', img: up.url });
-    if (!j || !j.ok) { toast((j && j.err) || '没发出去'); return; }
-    if (j.msg) echoMsg(j.msg.id, j.msg.ts, '', up.url, null);
-    scrollBottom(true);
+  input.multiple = true;
+  input.addEventListener('change', function () {
+    const files = Array.prototype.slice.call(input.files || []);
+    // 串行上传，附件栏的顺序才和选图顺序一致
+    (async function () {
+      for (let i = 0; i < files.length; i++) await addAttach(files[i]);
+    })();
   });
   input.click();
 }

@@ -178,13 +178,13 @@ async function otherSite(p) {
   }
 
   const row = h('div', 'qr-acts');
-  row.appendChild(btn('关闭', 'btn btn-sm btn-ghost', function () { closeSheet(); }));
+  row.appendChild(btn('关闭', 'btn btn-sm btn-ghost', closeScanSheet));
   row.appendChild(btn('打开这个站点', 'btn btn-sm btn-primary', function () {
-    closeSheet();
+    closeScanSheet();
     window.open(origin + '/', '_blank', 'noopener,noreferrer');
   }));
   wrap.appendChild(row);
-  openSheet('扫到别的站点', wrap, { size: 'sm' });
+  openSheet('扫到别的站点', wrap, { size: 'sm', onClosed: resumeScan });
 }
 
 /** 同一个站点、不同的群 */
@@ -193,9 +193,20 @@ function otherScope(p) {
   wrap.appendChild(h('div', 'qr-warn-t', '这是别的群的二维码'));
   wrap.appendChild(h('div', 'qr-hint', '这张码属于本站的另一个群，群和群之间不互通。到那个群里再扫一次就行。'));
   const row = h('div', 'qr-acts');
-  row.appendChild(btn('知道了', 'btn btn-sm btn-primary', function () { closeSheet(); }));
+  row.appendChild(btn('知道了', 'btn btn-sm btn-primary', closeScanSheet));
   wrap.appendChild(row);
-  openSheet('扫到别的群', wrap, { size: 'sm' });
+  openSheet('扫到别的群', wrap, { size: 'sm', onClosed: resumeScan });
+}
+
+// 扫到码之后可能弹提示层（站外链接、不支持的协议、别的站点）：
+// 关掉它得回到取景框，所以通知扫描页重新开摄像头
+function resumeScan() {
+  try { window.dispatchEvent(new Event('lg:scan-resume')); } catch (e) { void e; }
+}
+
+function closeScanSheet() {
+  closeSheet();
+  resumeScan();
 }
 
 function warnExternal(url) {
@@ -206,13 +217,13 @@ function warnExternal(url) {
   wrap.appendChild(box);
   wrap.appendChild(h('div', 'qr-hint', '这个地址不是本站的，确认来源可信再继续。'));
   const row = h('div', 'qr-acts');
-  row.appendChild(btn('取消', 'btn btn-sm btn-ghost', function () { closeSheet(); }));
+  row.appendChild(btn('取消', 'btn btn-sm btn-ghost', closeScanSheet));
   row.appendChild(btn('继续访问', 'btn btn-sm btn-primary', function () {
-    closeSheet();
+    closeScanSheet();
     window.open(url, '_blank', 'noopener,noreferrer');
   }));
   wrap.appendChild(row);
-  openSheet('站外链接', wrap, { size: 'sm' });
+  openSheet('站外链接', wrap, { size: 'sm', onClosed: resumeScan });
 }
 
 function unsupported(raw) {
@@ -232,7 +243,7 @@ function unsupported(raw) {
   });
   row.appendChild(toggle);
   wrap.appendChild(row);
-  openSheet('二维码无法识别', wrap, { size: 'sm' });
+  openSheet('二维码无法识别', wrap, { size: 'sm', onClosed: resumeScan });
 }
 
 /** 要不要在「空间」里显示扫描器：移动端显示；UA 说不清时只看有没有摄像头 */

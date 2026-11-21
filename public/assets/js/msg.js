@@ -121,31 +121,55 @@ export function msgNode(m, prev) {
       }
       bub.appendChild(q);
     }
-    // text_auto：服务端给老客户端补的媒体行，网页已经有图/语音气泡了，剔掉再渲染
-    const shown = displayText(m);
-    if (shown) {
-      // 长文渲染成消息卡片：气泡里只露个摘要，点开在弹层里读全文
-      if (shown.length > LONG_TEXT) {
-        bub.classList.add('bub-long');
-        bub.appendChild(longCard(shown));
-      } else {
-        const p = h('div', 'txt');
-        paintText(p, shown);
-        bub.appendChild(p);
+    // 图文混排：一条消息里文字和图片按发送时的顺序排在同一个气泡里
+    const segs = Array.isArray(m.segs) && m.segs.length ? m.segs : null;
+    if (segs) {
+      const box = h('div', 'txt rich');
+      segs.forEach(function (sg) {
+        if (!sg) return;
+        if (sg.t === 'img') {
+          const src = imgSrc(sg.v);
+          const im = document.createElement('img');
+          im.className = 'pic inline';
+          im.src = src;
+          im.alt = '图片';
+          im.loading = 'lazy';
+          im.addEventListener('click', function () { openImage(src); });
+          box.appendChild(im);
+        } else if (sg.v) {
+          paintText(box, String(sg.v));
+        }
+      });
+      bub.appendChild(box);
+      if (m.voice) bub.appendChild(voiceNode(m));
+      if (m.card) bub.appendChild(cardNode(m.card));
+    } else {
+      // text_auto：服务端给老客户端补的媒体行，网页已经有图/语音气泡了，剔掉再渲染
+      const shown = displayText(m);
+      if (shown) {
+        // 长文渲染成消息卡片：气泡里只露个摘要，点开在弹层里读全文
+        if (shown.length > LONG_TEXT) {
+          bub.classList.add('bub-long');
+          bub.appendChild(longCard(shown));
+        } else {
+          const p = h('div', 'txt');
+          paintText(p, shown);
+          bub.appendChild(p);
+        }
       }
+      if (m.img) {
+        const src = imgSrc(m.img);
+        const im = document.createElement('img');
+        im.className = 'pic';
+        im.src = src;
+        im.alt = '图片';
+        im.loading = 'lazy';
+        im.addEventListener('click', function () { openImage(src); });
+        bub.appendChild(im);
+      }
+      if (m.voice) bub.appendChild(voiceNode(m));
+      if (m.card) bub.appendChild(cardNode(m.card));
     }
-    if (m.img) {
-      const src = imgSrc(m.img);
-      const im = document.createElement('img');
-      im.className = 'pic';
-      im.src = src;
-      im.alt = '图片';
-      im.loading = 'lazy';
-      im.addEventListener('click', function () { openImage(src); });
-      bub.appendChild(im);
-    }
-    if (m.voice) bub.appendChild(voiceNode(m));
-    if (m.card) bub.appendChild(cardNode(m.card));
   }
   body.appendChild(bub);
   row.appendChild(body);

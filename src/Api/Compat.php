@@ -1199,7 +1199,7 @@ final class Compat {
             $convIds = self::convReadIds($pdo, $scope, $convId);
             if (count($convIds) > 1) $inC = implode(",", array_fill(0, count($convIds), "?"));
         }
-        $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
+        $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.segs, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
              . " m.voice, m.dur, m.voice_text, m.pinned_at, m.sys, m.model,"
              . " u.id AS author_id, u.name AS author, u.kind AS author_kind, u.avatar AS author_avatar,"
              . " u.deleted_at AS author_deleted, o.name AS owner_name,"
@@ -1266,6 +1266,21 @@ final class Compat {
                 $msg["recalled"] = true;
             } else {
                 if ($r["img"] !== null && $r["img"] !== "") $msg["img"] = self::imgOut((string) $r["img"]);
+                // 图文混排的原始顺序：图片段换成绝对地址，前端按顺序排在同一段里
+                if (($r["segs"] ?? null) !== null && $r["segs"] !== "") {
+                    $parsed = json_decode((string) $r["segs"], true);
+                    if (is_array($parsed) && $parsed !== []) {
+                        $segsOut = [];
+                        foreach ($parsed as $sg) {
+                            if (!is_array($sg)) continue;
+                            $t = (string) ($sg["t"] ?? "");
+                            $v = (string) ($sg["v"] ?? "");
+                            if ($t === "img") $segsOut[] = ["t" => "img", "v" => self::absUrl(self::stripImg($v))];
+                            elseif ($t === "text" && $v !== "") $segsOut[] = ["t" => "text", "v" => $v];
+                        }
+                        if ($segsOut !== []) $msg["segs"] = $segsOut;
+                    }
+                }
                 if ($r["card_json"] !== null && $r["card_json"] !== "") $msg["card"] = json_decode($r["card_json"], true);
                 if ($r["voice"] !== null && $r["voice"] !== "") $msg["voice"] = (string) $r["voice"];
                 $msg["dur"] = (int) $r["dur"];
@@ -2036,9 +2051,46 @@ final class Compat {
     }
 
     /** send 与 api/conv/send 共用：校验 → 落库（带 conv_id）→ 刷新会话摘要 */
+    /**
+     * 图文混排的段：[{t:"text",v:"..."},{t:"img",v:"/uploads/..."}]。
+     * 没有图片时返回 null，按老的单段消息存，老客户端行为完全不变。
+     */
+    private static function normSegs(array $raw): ?array {
+        if ($raw === [] || count($raw) > 30) return null;
+        $out = [];
+        $textLen = 0;
+        $imgs = 0;
+        foreach ($raw as $sg) {
+            if (!is_array($sg)) continue;
+            $t = (string) ($sg["t"] ?? "");
+            $v = is_scalar($sg["v"] ?? null) ? trim((string) $sg["v"]) : "";
+            if ($t === "text") {
+                $v = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', "", $v) ?? $v;
+                if ($v === "") continue;
+                $textLen += mb_strlen($v);
+                if ($textLen > 10000) Json::fail("单条消息最多 10000 字，再长请分开几条发");
+                $last = count($out) - 1;
+                if ($last >= 0 && $out[$last]["t"] === "text") $out[$last]["v"] .= "\n" . $v;
+                else $out[] = ["t" => "text", "v" => $v];
+            } elseif ($t === "img") {
+                if ($v === "") continue;
+                if (str_starts_with($v, "[img]")) $v = substr($v, 5);
+                // 只收本站上传的路径和 http(s) 图片，别的协议一律不落库
+                if (!preg_match('#^(/uploads/|https?://)#i', $v)) Json::fail("图片地址不对");
+                $imgs++;
+                if ($imgs > 9) Json::fail("一条消息最多 9 张图片");
+                $out[] = ["t" => "img", "v" => $v];
+            }
+        }
+        if ($imgs === 0 || $out === []) return null;
+        return $out;
+    }
+
     private static function insertMessage(PDO $pdo, array $scope, array $m, ?array $conv): void {
         $text = Input::get("text");
         $img  = Input::get("img");
+        // 图文混排：网页端按输入顺序把文字和图片塞进 segs，一条消息里一起发
+        $segs = self::normSegs(Input::raw("segs"));
         $card = Input::raw("card");
         $voice = Input::get("voice");
         $dur   = Input::int("dur", 0);
@@ -2048,6 +2100,18 @@ final class Compat {
 
         // 站长的图片带 [img] 前缀，我们库里只存路径
         if (str_starts_with($img, "[img]")) $img = substr($img, 5);
+
+        if ($segs !== null) {
+            $textParts = [];
+            $firstImg = "";
+            foreach ($segs as $sg) {
+                if ($sg["t"] === "text") $textParts[] = $sg["v"];
+                elseif ($firstImg === "") $firstImg = $sg["v"];
+            }
+            // 顶层 text / img 仍是老客户端的兜底字段：文字拼接，图片取第一张
+            $text = implode("\n", $textParts);
+            if ($firstImg !== "") $img = $firstImg;
+        }
 
         if ($text === "" && $img === "" && $voice === "" && !$card) Json::fail("不能发空消息");
         if (mb_strlen($text) > 10000) Json::fail("单条消息最多 10000 字，再长请分开几条发");
@@ -2059,34 +2123,37 @@ final class Compat {
         $replyTo = self::replyId($pdo, $scope, $convId);
 
         $ts = lg_now();
+        $segsJson = $segs === null ? null : json_encode($segs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $base = [
+            (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
+            $img !== "" ? $img : null,
+            $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
+            $replyTo,
+            $voice !== "" ? $voice : null,
+            $dur,
+        ];
         try {
             $ins = $pdo->prepare(
-                "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur, model)"
-                . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur, model, segs)"
+                . " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
             );
-            $ins->execute([
-                (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
-                $img !== "" ? $img : null,
-                $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
-                $replyTo,
-                $voice !== "" ? $voice : null,
-                $dur,
-                $model !== "" ? $model : null,
-            ]);
+            $ins->execute([...$base, $model !== "" ? $model : null, $segsJson]);
         } catch (\Throwable $e) {
-            // 还没跑到 Schema VERSION 10 的老库没有 model 列，退回落库
-            $ins = $pdo->prepare(
-                "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur)"
-                . " VALUES (?,?,?,?,?,?,?,?,?,?)"
-            );
-            $ins->execute([
-                (int) $scope["id"], $convId, (int) $m["id"], $ts, $text,
-                $img !== "" ? $img : null,
-                $card ? json_encode($card, JSON_UNESCAPED_UNICODE) : null,
-                $replyTo,
-                $voice !== "" ? $voice : null,
-                $dur,
-            ]);
+            try {
+                // 还没补上 segs 列的老库
+                $ins = $pdo->prepare(
+                    "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur, model)"
+                    . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                );
+                $ins->execute([...$base, $model !== "" ? $model : null]);
+            } catch (\Throwable $e2) {
+                // 再老一点的库连 model 列都没有
+                $ins = $pdo->prepare(
+                    "INSERT INTO messages (scope_id, conv_id, member_id, ts_ms, text, img, card_json, reply_to, voice, dur)"
+                    . " VALUES (?,?,?,?,?,?,?,?,?,?)"
+                );
+                $ins->execute($base);
+            }
         }
         $id = (int) $pdo->lastInsertId();
 
