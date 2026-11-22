@@ -781,8 +781,10 @@ final class Compat {
             "invite" => (string) $scope["invite"],
             "recall_policy" => (string) ($scope["recall_policy"] ?? "5m"),
             "notice" => self::noticeOf($pdo, $scope),
-            "pins"   => self::pinsOf($pdo, $scope),
-            "todos"  => self::todosOf($pdo, $scope, (int) $m["id"]),
+            // 置顶和待办属于会话，由 api/conv 进入会话时带回；me 是登录时的全局快照，
+            // 这里再带一份就会让切换后的会话（尤其是大群）看到别的会话的置顶和待办
+            "pins"   => [],
+            "todos"  => [],
             "gcss"   => "",
             "style"  => (string) ($m["styles_css"] ?? ""),
             "wall"   => (string) ($m["wall"] ?? ""),
@@ -814,16 +816,16 @@ final class Compat {
         return ["text" => $text, "at" => (int) ($scope["notice_at"] ?? 0), "by" => $by, "byId" => $byId];
     }
 
-    /** 本群所有置顶消息，按置顶时间倒序 */
-    private static function pinsOf(PDO $pdo, array $scope): array {
+    /** 某个会话里的置顶消息，按置顶时间倒序 */
+    private static function pinsOf(PDO $pdo, array $scope, int $convId): array {
         $ids = self::scopeIds($pdo, $scope);
         $in = implode(",", array_fill(0, count($ids), "?"));
         $st = $pdo->prepare(
             "SELECT id, ts_ms, text, img, voice, dur, card_json, member_id, pinned_at FROM messages"
-            . " WHERE scope_id IN ($in) AND pinned_at IS NOT NULL AND deleted_at IS NULL"
+            . " WHERE scope_id IN ($in) AND conv_id = ? AND pinned_at IS NOT NULL AND deleted_at IS NULL"
             . " ORDER BY pinned_at DESC LIMIT 20"
         );
-        $st->execute($ids);
+        $st->execute([...$ids, $convId]);
         $rows = $st->fetchAll();
         if (!$rows) return [];
         $names = [];
@@ -859,8 +861,8 @@ final class Compat {
         return $out;
     }
 
-    /** 未关闭的群待办，带上我自己完成没完成 */
-    private static function todosOf(PDO $pdo, array $scope, int $meId): array {
+    /** 某个会话里未关闭的群待办，带上我自己完成没完成 */
+    private static function todosOf(PDO $pdo, array $scope, int $meId, int $convId): array {
         $ids = self::scopeIds($pdo, $scope);
         $in = implode(",", array_fill(0, count($ids), "?"));
         $st = $pdo->prepare(
@@ -869,12 +871,17 @@ final class Compat {
             . " FROM todos t"
             . " JOIN messages m ON m.id = t.msg_id AND m.deleted_at IS NULL"
             . " JOIN members u ON u.id = m.member_id"
-            . " WHERE t.scope_id IN ($in) AND t.closed_at IS NULL"
+            . " WHERE t.scope_id IN ($in) AND m.conv_id = ? AND t.closed_at IS NULL"
             . " ORDER BY t.id DESC LIMIT 50"
         );
-        $st->execute($ids);
+        $st->execute([...$ids, $convId]);
         $rows = $st->fetchAll();
         if (!$rows) return [];
+        // 完成度的分母跟着会话走：大群是作用域人数，私群是群里的人
+        $conv = Conv::convById($pdo, $convId);
+        $total = $conv !== null && (int) $conv["is_public"] !== 1
+            ? count(Conv::memberIds($pdo, $conv))
+            : self::memberCount($pdo, $scope);
         $out = [];
         foreach ($rows as $r) {
             $todoId = (int) $r["id"];
@@ -902,7 +909,7 @@ final class Compat {
                 "mine"   => (int) $r["created_by"] === $meId,
                 "at"     => (int) $r["created_at"],
                 "done"   => $done,
-                "total"  => self::memberCount($pdo, $scope),
+                "total"  => $total,
                 "meDone" => (bool) $mine->fetch(),
             ];
             $last = $out[count($out) - 1];
@@ -928,6 +935,20 @@ final class Compat {
         return $m;
     }
 
+    /**
+     * 待办/置顶这类「消息操作」要落在消息所在的会话里：
+     * 客户端带了 conv 就必须对上，而且操作者得能读那个会话（私群外的人不能动）。
+     */
+    private static function convOfMessageOp(PDO $pdo, array $scope, array $me, int $convId): int {
+        if ($convId <= 0) Json::fail("这条消息不在任何会话里");
+        $want = self::optionalConvId();
+        if ($want > 0 && $want !== $convId) Json::fail("这条消息不在当前会话");
+        $conv = Conv::convById($pdo, $convId);
+        if ($conv === null || (int) $conv["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
+        if (!Conv::isMember($pdo, $conv, (int) $me["id"])) Json::fail("不在这个会话里");
+        return $convId;
+    }
+
     private static function noticeSet(PDO $pdo, array $scope): void {
         $m = self::requireModerator($pdo);
         $text = trim(Input::get("text"));
@@ -949,10 +970,12 @@ final class Compat {
         if ($id <= 0) Json::fail("要置顶哪一条");
         $ids = self::scopeIds($pdo, $scope);
         $in = implode(",", array_fill(0, count($ids), "?"));
-        $st = $pdo->prepare("SELECT id, pinned_at FROM messages WHERE id = ? AND scope_id IN ($in) AND deleted_at IS NULL LIMIT 1");
+        $st = $pdo->prepare("SELECT id, conv_id FROM messages WHERE id = ? AND scope_id IN ($in) AND deleted_at IS NULL LIMIT 1");
         $st->execute([$id, ...$ids]);
         $row = $st->fetch();
         if (!$row) Json::fail("消息不在了");
+        // 置顶挂在消息所在的会话上，私群的置顶不会跑到大群
+        $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
         $on = Input::get("on") !== "0";
         if ($on) {
             $st2 = $pdo->prepare("UPDATE messages SET pinned_at = ?, pinned_by = ? WHERE id = ?");
@@ -961,13 +984,14 @@ final class Compat {
             $st2 = $pdo->prepare("UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = ?");
             $st2->execute([$id]);
         }
-        Json::ok(["pinned" => $on, "pins" => self::pinsOf($pdo, $scope)]);
+        Json::ok(["pinned" => $on, "pins" => self::pinsOf($pdo, $scope, $convId)]);
     }
 
     private static function todoOp(PDO $pdo, array $scope): void {
         $m = self::requireMember($pdo);
         $op = Input::get("op");
         $id = Input::int("id", 0);
+        $convId = 0;
         if ($op === "create") {
             $role = self::roleOf($pdo, $m);
             if ($role !== "admin" && $role !== "super") Json::fail("只有管理员能设群待办");
@@ -975,23 +999,27 @@ final class Compat {
             if ($msgId <= 0) Json::fail("要拿哪条消息做待办");
             $ids = self::scopeIds($pdo, $scope);
             $in = implode(",", array_fill(0, count($ids), "?"));
-            $st = $pdo->prepare("SELECT id FROM messages WHERE id = ? AND scope_id IN ($in) AND deleted_at IS NULL LIMIT 1");
+            $st = $pdo->prepare("SELECT id, conv_id FROM messages WHERE id = ? AND scope_id IN ($in) AND deleted_at IS NULL LIMIT 1");
             $st->execute([$msgId, ...$ids]);
-            if (!$st->fetch()) Json::fail("消息不在了");
+            $row = $st->fetch();
+            if (!$row) Json::fail("消息不在了");
+            $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
             $dup = $pdo->prepare("SELECT id FROM todos WHERE msg_id = ? AND closed_at IS NULL LIMIT 1");
             $dup->execute([$msgId]);
             if ($dup->fetch()) Json::fail("这条已经是待办了");
             $ins = $pdo->prepare("INSERT INTO todos (scope_id, msg_id, created_by, created_at) VALUES (?,?,?,?)");
             $ins->execute([(int) $scope["id"], $msgId, (int) $m["id"], lg_now()]);
         } elseif ($op === "done") {
-            $st = $pdo->prepare("SELECT id, scope_id FROM todos WHERE id = ? AND closed_at IS NULL LIMIT 1");
-            $st->execute([$id]);
+            $ids = self::scopeIds($pdo, $scope);
+            $in = implode(",", array_fill(0, count($ids), "?"));
+            $st = $pdo->prepare(
+                "SELECT t.id, m.conv_id FROM todos t JOIN messages m ON m.id = t.msg_id"
+                . " WHERE t.id = ? AND t.scope_id IN ($in) AND t.closed_at IS NULL LIMIT 1"
+            );
+            $st->execute([$id, ...$ids]);
             $row = $st->fetch();
             if (!$row) Json::fail("待办不在了");
-            $in = implode(",", array_fill(0, count(self::scopeIds($pdo, $scope)), "?"));
-            $chk = $pdo->prepare("SELECT id FROM todos WHERE id = ? AND scope_id IN ($in) LIMIT 1");
-            $chk->execute([$id, ...self::scopeIds($pdo, $scope)]);
-            if (!$chk->fetch()) Json::fail("待办不在了");
+            $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
             try {
                 // SQLite 用 INSERT OR REPLACE，MySQL 只有 REPLACE INTO；写死一种会在另一种库上直接语法错
                 $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === "mysql"
@@ -1006,10 +1034,14 @@ final class Compat {
             // 管理员能撤任意待办，发起人能撤自己发起的
             $ids = self::scopeIds($pdo, $scope);
             $in = implode(",", array_fill(0, count($ids), "?"));
-            $st = $pdo->prepare("SELECT created_by FROM todos WHERE id = ? AND scope_id IN ($in) AND closed_at IS NULL LIMIT 1");
+            $st = $pdo->prepare(
+                "SELECT t.created_by, m.conv_id FROM todos t JOIN messages m ON m.id = t.msg_id"
+                . " WHERE t.id = ? AND t.scope_id IN ($in) AND t.closed_at IS NULL LIMIT 1"
+            );
             $st->execute([$id, ...$ids]);
             $row = $st->fetch();
             if (!$row) Json::fail("待办不在了");
+            $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
             $role = self::roleOf($pdo, $m);
             $isAdmin = $role === "admin" || $role === "super";
             if (!$isAdmin && (int) $row["created_by"] !== (int) $m["id"]) {
@@ -1020,10 +1052,13 @@ final class Compat {
         } else {
             Json::fail("未知操作");
         }
-        Json::ok([
-            "todos" => self::todosOf($pdo, $scope, (int) $m["id"]),
-            "notice" => self::noticeOf($pdo, $scope),
-        ]);
+        $out = ["todos" => self::todosOf($pdo, $scope, (int) $m["id"], $convId)];
+        // 公告是作用域级的：私群/私聊没有群公告，别把大群的公告带回当前会话
+        $conv = Conv::convById($pdo, $convId);
+        if ($conv !== null && (int) $conv["is_public"] === 1) {
+            $out["notice"] = self::noticeOf($pdo, $scope);
+        }
+        Json::ok($out);
     }
 
     private static function scopeIds(PDO $pdo, array $scope): array {
@@ -1607,7 +1642,7 @@ final class Compat {
         // 往上翻历史时游标不动，别把已读位置写回旧消息
         if ($msgs && ($before <= 0 || $since > 0)) Conv::markRead($pdo, $conv, $me, $lastId);
 
-        Json::ok([
+        $out = [
             "msgs"    => $msgs,
             "recalled" => Conv::recalledIds($pdo, (int) $conv["id"], null, 200, self::convReadIds($pdo, $scope, (int) $conv["id"])),
             "members" => self::convMembers($pdo, $scope, $conv),
@@ -1617,7 +1652,11 @@ final class Compat {
             "now"     => lg_now(),
             "tick"    => self::tick(),
             "conv"    => self::convOut($pdo, $scope, $conv, $me, self::memberMap($pdo, $scope)),
-        ]);
+        ];
+        // 置顶/待办属于会话：跟着每次拉取带回，切会话既不会串也不会漏
+        $out["pins"]  = self::pinsOf($pdo, $scope, (int) $conv["id"]);
+        $out["todos"] = self::todosOf($pdo, $scope, (int) $me["id"], (int) $conv["id"]);
+        Json::ok($out);
     }
 
 

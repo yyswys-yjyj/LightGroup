@@ -561,7 +561,8 @@ export function refreshBars() {
   const host = document.getElementById('top-bars');
   if (!host) return;
   host.textContent = '';
-  if (isDm() || isPg()) return;
+  // 私群也有置顶和待办，只是公告放在群资料页；私聊没有这类设施
+  if (isDm()) return;
   // 大群公告不再常驻横幅：挪到「群资料」里看，聊天页顶部只留置顶和待办
   if (S.pins && S.pins.length) {
     const bar = h('div', 'bar pin');
@@ -716,7 +717,7 @@ function setNotice(m) {
 }
 
 async function togglePin(m, on) {
-  const j = await api('api/pin', { id: m.id, on: on ? 1 : 0 });
+  const j = await api('api/pin', { id: m.id, on: on ? 1 : 0, conv: S.curId });
   if (!j.ok) { toast(j.err || '置顶失败'); return; }
   S.pins = j.pins || [];
   refreshBars();
@@ -724,7 +725,7 @@ async function togglePin(m, on) {
 }
 
 async function makeTodo(m) {
-  const j = await api('api/todo', { op: 'create', msgId: m.id });
+  const j = await api('api/todo', { op: 'create', msgId: m.id, conv: S.curId });
   if (!j.ok) { toast(j.err || '设待办失败'); return; }
   S.todos = j.todos || [];
   if (j.notice) S.notice = j.notice;
@@ -733,7 +734,7 @@ async function makeTodo(m) {
 }
 
 async function todoDone(t) {
-  const j = await api('api/todo', { op: 'done', id: t.id });
+  const j = await api('api/todo', { op: 'done', id: t.id, conv: S.curId });
   if (!j.ok) { toast(j.err || '操作失败'); return; }
   S.todos = j.todos || [];
   if (j.notice) S.notice = j.notice;
@@ -742,7 +743,7 @@ async function todoDone(t) {
 }
 
 async function todoClose(t) {
-  const j = await api('api/todo', { op: 'close', id: t.id });
+  const j = await api('api/todo', { op: 'close', id: t.id, conv: S.curId });
   if (!j.ok) { toast(j.err || '撤不掉'); return; }
   S.todos = j.todos || [];
   if (j.notice) S.notice = j.notice;
