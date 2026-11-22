@@ -109,9 +109,10 @@ export function mount(id) {
     S.reply = null;
     S.pgMembers = [];
     S.pgSig = '';
-    // 置顶/待办属于会话：先清空，等这个会话的响应回来再填，别把上一个会话的挂上去
+    // 置顶/待办/公告属于会话：先清空，等这个会话的响应回来再填，别把上一个会话的挂上去
     S.pins = [];
     S.todos = [];
+    S.notice = null;
     barsSig = '';
     S.mode = (S.convApi || cid !== 0) ? 'conv' : 'legacy';
     hasOlder = true;
@@ -526,22 +527,23 @@ async function initLoad() {
   renderError((j && j.err) || '读不到消息');
 }
 
-// 顶部横幅（置顶/待办）的内容指纹：轮询带回同样内容就不重建 DOM，避免闪
+// 顶部横幅（公告/置顶/待办）的内容指纹：轮询带回同样内容就不重建 DOM，避免闪
 let barsSig = '';
-function barsSigOf(pins, todos) {
+function barsSigOf(pins, todos, notice) {
   const a = (pins || []).map(function (p) { return p.id + ':' + p.at; }).join(',');
   const b = (todos || []).map(function (t) { return t.id + ':' + t.done + ':' + (t.meDone ? 1 : 0); }).join(',');
-  return a + '|' + b;
+  const c = (notice && notice.text) ? notice.text : '';
+  return a + '|' + b + '|' + c;
 }
 
 function apply(j) {
   if (j.conv && j.conv.id) S.cur = Object.assign({}, S.cur || {}, j.conv);
   if (typeof j.title === 'string' && j.title) S.cur.title = j.title;
   if (!isDm()) syncMembers(j.members);
-  S.notice = j.notice || S.notice;
+  S.notice = j.notice || null;
   if (j.pins) S.pins = j.pins;
   if (j.todos) S.todos = j.todos;
-  barsSig = barsSigOf(S.pins, S.todos);
+  barsSig = barsSigOf(S.pins, S.todos, S.notice);
   S.msgs = [];
   S.lastId = 0;
   hasOlder = !!j.more;
@@ -662,11 +664,12 @@ async function tick() {
     } else if (j.lastId && j.lastId > S.lastId) {
       S.lastId = j.lastId;
     }
-    // 置顶/待办跟着轮询走：别人改了也能在这台设备上看到，内容没变就不动 DOM
+    // 公告/置顶/待办跟着轮询走：别人改了也能在这台设备上看到，内容没变就不动 DOM
     if (j.pins) S.pins = j.pins;
     if (j.todos) S.todos = j.todos;
-    if (j.pins || j.todos) {
-      const sig = barsSigOf(S.pins, S.todos);
+    if (j.notice) S.notice = j.notice;
+    if (j.pins || j.todos || j.notice) {
+      const sig = barsSigOf(S.pins, S.todos, S.notice);
       if (sig !== barsSig) { barsSig = sig; refreshBars(); }
     }
     // 撤回是「旧消息的状态变更」，id 游标拉不回来，只能靠服务端每轮带回的 recalled 列表

@@ -561,9 +561,21 @@ export function refreshBars() {
   const host = document.getElementById('top-bars');
   if (!host) return;
   host.textContent = '';
-  // 私群也有置顶和待办，只是公告放在群资料页；私聊没有这类设施
+  // 私聊没有群设施；大群和私群各自显示自己的公告、置顶和待办
   if (isDm()) return;
-  // 大群公告不再常驻横幅：挪到「群资料」里看，聊天页顶部只留置顶和待办
+  const n = S.notice;
+  if (n && n.text) {
+    const bar = h('div', 'bar notice');
+    bar.appendChild(icon('fa-bullhorn'));
+    bar.appendChild(h('b', '', '公告'));
+    bar.appendChild(h('span', 'bar-t', n.text));
+    bar.addEventListener('click', function () {
+      // 私群的公告在群管理页编辑，大群的在「群资料」里
+      if (isPg()) { go('#/pg/' + S.curId); return; }
+      openGroupInfo();
+    });
+    host.appendChild(bar);
+  }
   if (S.pins && S.pins.length) {
     const bar = h('div', 'bar pin');
     bar.appendChild(icon('fa-thumbtack'));

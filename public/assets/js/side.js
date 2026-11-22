@@ -99,7 +99,15 @@ function paintGroup(body) {
   body.appendChild(mc);
 
   const nc = card('群公告');
-  if (canModerate()) {
+  if (pg) {
+    // 私群的公告属于会话本身，编辑在群管理页；这里只负责显示和跳转
+    const mg = document.createElement('button');
+    mg.type = 'button';
+    mg.className = 'btn btn-xs btn-ghost';
+    mg.textContent = '管理';
+    mg.addEventListener('click', function () { close(); go('#/pg/' + S.curId); });
+    nc.querySelector('.cs-card-h').appendChild(mg);
+  } else if (canModerate()) {
     const ed = document.createElement('button');
     ed.type = 'button';
     ed.className = 'btn btn-xs btn-ghost';

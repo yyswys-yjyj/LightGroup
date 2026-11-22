@@ -1653,9 +1653,33 @@ final class Compat {
             "tick"    => self::tick(),
             "conv"    => self::convOut($pdo, $scope, $conv, $me, self::memberMap($pdo, $scope)),
         ];
-        // 置顶/待办属于会话：跟着每次拉取带回，切会话既不会串也不会漏
+        // 置顶/待办/公告都属于会话：跟着每次拉取带回，切会话既不会串也不会漏
         $out["pins"]  = self::pinsOf($pdo, $scope, (int) $conv["id"]);
         $out["todos"] = self::todosOf($pdo, $scope, (int) $me["id"], (int) $conv["id"]);
+        if ((int) $conv["is_public"] === 1) {
+            $out["notice"] = self::noticeOf($pdo, $scope);
+        } elseif ((string) $conv["kind"] === "pg") {
+            $byId = (int) ($conv["notice_by"] ?? 0);
+            $by = "";
+            $byKey = "";
+            if ($byId > 0) {
+                $stn = $pdo->prepare("SELECT name, kind FROM members WHERE id = ? LIMIT 1");
+                $stn->execute([$byId]);
+                $row = $stn->fetch();
+                if ($row) {
+                    $by = (string) $row["name"];
+                    $byKey = ((string) $row["kind"] === "ai" ? "a_" : "h_") . $byId;
+                }
+            }
+            $out["notice"] = [
+                "text" => (string) ($conv["notice"] ?? ""),
+                "at"   => (int) ($conv["notice_at"] ?? 0),
+                "by"   => $by,
+                "byId" => $byKey,
+            ];
+        } else {
+            $out["notice"] = ["text" => "", "at" => 0, "by" => "", "byId" => ""];
+        }
         Json::ok($out);
     }
 

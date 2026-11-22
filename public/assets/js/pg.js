@@ -1,6 +1,7 @@
 // LightGroup · 私群详情：公告、成员、权限操作
 import { S, h, icon, iconBtn, btn, field, toast, api, go, openSheet, closeSheet } from './core.js';
 import { avatar } from './avatar.js';
+import { refreshBars } from './msg.js';
 import { openQr, linkFor } from './qr.js';
 import * as conv from './conv.js';
 
@@ -126,7 +127,8 @@ function noticeCard(g, role, members) {
   if (g.notice) {
     card.appendChild(h('div', 'pg-notice', g.notice));
     if (g.noticeBy || g.noticeAt) {
-      const d = g.noticeAt ? new Date(g.noticeAt * 1000) : null;
+      // 后端存的是毫秒；老数据可能是秒，两种都认
+      const d = g.noticeAt ? new Date(g.noticeAt > 1e12 ? g.noticeAt : g.noticeAt * 1000) : null;
       const when = d ? (d.getMonth() + 1) + '-' + d.getDate() + ' ' +
         String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') : '';
       const nid = String(g.noticeBy || '');
@@ -193,9 +195,17 @@ async function op(action, extra) {
   const body = Object.assign({ op: action }, extra || {});
   const j = await api('api/groups/' + curId, body);
   if (!j.ok) { toast(j.err || '操作失败'); return false; }
+  if (action === 'notice') {
+    // 私群公告属于这个会话：改完立刻同步聊天页的公告条，不用切页
+    const text = (j.notice || '').trim();
+    S.notice = text
+      ? { text: text, at: Date.now(), by: (S.me && S.me.name) || '', byId: (S.me && S.me.id) || '' }
+      : { text: '', at: 0, by: '', byId: '' };
+    refreshBars();
+  }
   if (conv && conv.load) conv.load();
   await reload();
-  return true;
+  return j;
 }
 
 function renameSheet() {
