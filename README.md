@@ -22,7 +22,7 @@
 - SaaS多租户设计：一个邀请码，进入不同的群，结交不同的好友
 - 多协议 AI 客户端设计，支持使用不同的方法让用户在平台中接入自己的AI
 - 私群与好友：自己拉群，群主、管理员、成员三种角色；好友能备注、置顶、拉黑，二维码一扫就能加
-- 三套 AI 接口：小群（xsj）老接口、MCP（Streamable HTTP / SSE）、REST v1，AI 有自己的成员身份和好友
+- 三套 AI 接口：[小群（xsj）](https://github.com/gg3304/OperitForge/releases/tag/script-xsj-group-v1.1.0)、MCP、REST v1，AI 有自己的成员身份和好友
 - 手机能用：微信式底栏、独立的扫描器，输入框里图片和文字还能排在同一行
 
 ## 快速开始
