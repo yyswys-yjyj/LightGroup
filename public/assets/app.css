@@ -108,8 +108,13 @@ body.has-wall .chat-page{background:color-mix(in srgb, var(--surface) 84%, trans
 .composer-row{display:flex;align-items:flex-end;gap:8px}
 .round-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);background:var(--surface-2);color:var(--text-dim);cursor:pointer;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .round-btn:hover{color:var(--accent-ink);border-color:var(--accent)}
-.compose{flex:1;min-height:40px;max-height:132px;padding:9px 13px;border-radius:12px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text);font:inherit;font-size:14.5px;line-height:1.5;resize:none;outline:none;transition:border-color .15s,background .15s}
+.compose{flex:1;min-height:40px;max-height:132px;padding:9px 13px;border-radius:12px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text);font:inherit;font-size:14.5px;line-height:1.5;outline:none;overflow-y:auto;white-space:pre-wrap;word-break:break-word;transition:border-color .15s,background .15s}
+.compose:empty::before{content:attr(data-ph);color:var(--text-faint);pointer-events:none}
 .compose:focus{border-color:var(--accent);background:var(--input-bg-focus)}
+/* 输入框里的图片块：跟文字同一行，能整体删掉，也能跟着文字一起选中 */
+.ph-img{display:inline-flex;align-items:center;gap:4px;max-width:min(220px,60vw);margin:0 2px;padding:2px 7px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);font-size:13px;line-height:1.4;color:var(--text-dim);vertical-align:baseline;user-select:all;cursor:default}
+.ph-img>i{font-size:12px;color:var(--text-faint);flex:none}
+.ph-img .ph-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .send-btn{height:40px;padding:0 18px;border-radius:12px;border:0;background:var(--accent);color:var(--accent-text);font-size:14px;font-weight:500;cursor:pointer;flex:none}
 .send-btn:hover{filter:brightness(1.05)}
 
@@ -586,13 +591,6 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 
 /* ---------- 输入框附件栏 / 图文混排消息 ---------- */
 /* 图片先落进草稿栏，点发送才和文字一起作为一条消息发出去 */
-.attach-bar{display:flex;flex-wrap:wrap;gap:6px;padding:0 0 8px}
-.attach-bar[hidden]{display:none}
-.attach-chip{display:inline-flex;align-items:center;gap:6px;max-width:min(240px,70vw);padding:5px 6px 5px 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font-size:12.5px;color:var(--text-dim)}
-.attach-chip>i{color:var(--text-faint);flex:none}
-.attach-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.attach-x{border:0;background:transparent;color:var(--text-faint);cursor:pointer;padding:1px;display:inline-flex;align-items:center;flex:none}
-.attach-x:hover{color:var(--danger)}
 /* 一条消息里文字和图片排在同一段：图片按行内块跟着文字走，不单独占一行 */
 .txt.rich{display:block;white-space:pre-wrap;word-break:break-word}
 .txt.rich .pic.inline{display:inline-block;vertical-align:middle;max-width:min(168px,52%);max-height:112px;width:auto;margin:2px 5px 2px 0;border-radius:9px}

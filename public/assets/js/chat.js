@@ -125,8 +125,7 @@ export function stop() {
   feedEl = null;
   S.pgMembers = [];
   S.pgSig = '';
-  // 附件是当前会话的草稿，换会话就清掉，免得发到别的群里
-  attaches = [];
+  // 输入框是当前会话的草稿，换会话时整页重建，草稿不会带到别的会话
   side.reset();
 }
 
@@ -218,50 +217,40 @@ function buildComposer() {
   replyBar.hidden = true;
   bar.appendChild(replyBar);
 
-  // 附件栏：图片先落在这里，点发送才和文字一起作为一条消息发出去
-  const attach = h('div', 'attach-bar');
-  attach.id = 'attach-bar';
-  attach.hidden = true;
-  bar.appendChild(attach);
-
   const row = h('div', 'composer-row');
   const plus = document.createElement('button');
   plus.type = 'button';
   plus.className = 'round-btn';
   plus.title = '添加图片';
   plus.appendChild(icon('fa-plus'));
+  plus.addEventListener('mousedown', saveCaret);
   plus.addEventListener('click', pickImage);
   row.appendChild(plus);
 
-  const ta = document.createElement('textarea');
-  ta.className = 'compose';
-  ta.id = 'compose';
-  ta.placeholder = '说点什么…';
-  ta.rows = 1;
-  ta.addEventListener('input', function () {
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(132, ta.scrollHeight) + 'px';
+  // 输入框是 contenteditable：图片插在文字中间，和字一样能删、能跟着一起选中
+  const box = document.createElement('div');
+  box.className = 'compose';
+  box.id = 'compose';
+  box.setAttribute('contenteditable', 'true');
+  box.setAttribute('role', 'textbox');
+  box.setAttribute('aria-multiline', 'true');
+  box.setAttribute('data-ph', '说点什么…');
+  box.addEventListener('input', function () {
+    composeSize();
+    saveCaret();
+    if (!isDm() && caretBefore() === '@') openAtPicker();
   });
-  ta.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendText(); }
+  box.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.isComposing) return;
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); insertTextAtCaret('\n'); return; }
+    if (e.key === 'Enter') { e.preventDefault(); sendText(); }
   });
-  // Ctrl+V 粘贴图片：和点「+」一样先进附件栏，不直接发出去
-  ta.addEventListener('paste', function (e) {
-    const cd = e.clipboardData;
-    if (!cd || !cd.items) return;
-    const files = [];
-    for (let i = 0; i < cd.items.length; i++) {
-      const it = cd.items[i];
-      if (it.kind === 'file' && /^image\//i.test(it.type || '')) {
-        const f = it.getAsFile();
-        if (f) files.push(f);
-      }
-    }
-    if (!files.length) return;
-    e.preventDefault();
-    files.forEach(function (f) { addAttach(f); });
-  });
-  row.appendChild(ta);
+  box.addEventListener('paste', onComposePaste);
+  box.addEventListener('keyup', saveCaret);
+  box.addEventListener('mouseup', saveCaret);
+  box.addEventListener('focus', saveCaret);
+  box.addEventListener('blur', saveCaret);
+  row.appendChild(box);
 
   if (!isDm()) {
     const at = document.createElement('button');
@@ -269,11 +258,9 @@ function buildComposer() {
     at.className = 'round-btn';
     at.title = '提及成员';
     at.appendChild(icon('fa-at'));
+    at.addEventListener('mousedown', saveCaret);
     at.addEventListener('click', function () { openAtPicker(); });
     row.appendChild(at);
-    ta.addEventListener('input', function () {
-      if (ta.value.charAt(ta.selectionStart - 1) === '@') openAtPicker();
-    });
   }
 
   const mic = document.createElement('button');
@@ -289,8 +276,188 @@ function buildComposer() {
   send.addEventListener('click', sendText);
   row.appendChild(send);
   bar.appendChild(row);
-  renderAttach(attach);
   return bar;
+}
+
+// ---------- 输入框（图文混排） ----------
+// 图片是插在文字中间的行内块：能被 del 掉，也能跟着文字一起选中，复制出来就是文件名
+let composeCaret = null;
+
+function composeEl() { return document.getElementById('compose'); }
+
+function composeSize() {
+  const el = composeEl();
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = Math.min(132, el.scrollHeight) + 'px';
+}
+
+function saveCaret() {
+  const el = composeEl();
+  const sel = window.getSelection();
+  if (!el || !sel || !sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  if (!el.contains(r.startContainer)) return;
+  composeCaret = r.cloneRange();
+}
+
+function ensureCaret() {
+  const el = composeEl();
+  if (!el) return null;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount) {
+    const cur = sel.getRangeAt(0);
+    if (el.contains(cur.startContainer)) return cur;
+  }
+  const r = document.createRange();
+  if (composeCaret && el.contains(composeCaret.startContainer)) {
+    r.setStart(composeCaret.startContainer, composeCaret.startOffset);
+    r.setEnd(composeCaret.endContainer, composeCaret.endOffset);
+  } else {
+    r.selectNodeContents(el);
+    r.collapse(false);
+  }
+  if (sel) { sel.removeAllRanges(); sel.addRange(r); }
+  return r;
+}
+
+// 光标前一个字符，用来判断是不是刚打了「@」
+function caretBefore() {
+  const el = composeEl();
+  const sel = window.getSelection();
+  if (!el || !sel || !sel.rangeCount) return '';
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed || !el.contains(r.startContainer)) return '';
+  const n = r.startContainer;
+  if (n.nodeType !== 3) return '';
+  return String(n.nodeValue || '').slice(Math.max(0, r.startOffset - 1), r.startOffset);
+}
+
+function insertNodeAt(node, spot) {
+  const el = composeEl();
+  if (!el) return;
+  el.focus();
+  let r = spot;
+  if (!r || !el.contains(r.startContainer)) r = ensureCaret();
+  if (!r || !el.contains(r.startContainer)) {
+    r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+  }
+  r.deleteContents();
+  r.insertNode(node);
+  const after = document.createRange();
+  after.setStartAfter(node);
+  after.collapse(true);
+  const sel = window.getSelection();
+  if (sel) { sel.removeAllRanges(); sel.addRange(after); }
+  composeCaret = after.cloneRange();
+  composeSize();
+}
+
+function insertTextAtCaret(str) {
+  const el = composeEl();
+  if (!el) return;
+  el.focus();
+  ensureCaret();
+  let ok = false;
+  try { ok = document.execCommand('insertText', false, str); } catch (e) { ok = false; }
+  if (!ok) {
+    const r = ensureCaret();
+    if (!r) return;
+    const tn = document.createTextNode(str);
+    r.deleteContents();
+    r.insertNode(tn);
+    const after = document.createRange();
+    after.setStartAfter(tn);
+    after.collapse(true);
+    const sel = window.getSelection();
+    if (sel) { sel.removeAllRanges(); sel.addRange(after); }
+  }
+  saveCaret();
+  composeSize();
+}
+
+// 按 DOM 里的真实先后顺序收：文字段、图片段交替
+function composeSegs() {
+  const el = composeEl();
+  const segs = [];
+  let buf = '';
+  let pics = 0;
+  const flush = function () {
+    const t = buf.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
+    if (t.trim()) segs.push({ t: 'text', v: t });
+    buf = '';
+  };
+  const walk = function (node) {
+    const kids = node.childNodes;
+    for (let i = 0; i < kids.length; i++) {
+      const n = kids[i];
+      if (n.nodeType === 3) { buf += n.nodeValue; continue; }
+      if (n.nodeType !== 1) continue;
+      const tag = n.tagName;
+      if (tag === 'BR') { buf += '\n'; continue; }
+      if (n.classList && n.classList.contains('ph-img')) {
+        flush();
+        const url = n.getAttribute('data-url') || '';
+        if (url) {
+          segs.push({ t: 'img', v: url, n: n.getAttribute('data-name') || '图片' });
+          pics++;
+        }
+        continue;
+      }
+      const block = tag === 'DIV' || tag === 'P' || tag === 'LI';
+      if (block && buf && !/\n$/.test(buf)) buf += '\n';
+      walk(n);
+      if (block && !/\n$/.test(buf)) buf += '\n';
+    }
+  };
+  if (el) walk(el);
+  flush();
+  const text = segs.filter(function (x) { return x.t === 'text'; })
+    .map(function (x) { return x.v; }).join('\n');
+  return { text: text, segs: segs, pics: pics };
+}
+
+// 发送失败时把内容放回输入框
+function restoreCompose(segs) {
+  const el = composeEl();
+  if (!el) return;
+  el.textContent = '';
+  (segs || []).forEach(function (x) {
+    if (x.t === 'img') el.appendChild(picNode(x.v, x.n || '图片'));
+    else if (x.t === 'text' && x.v) el.appendChild(document.createTextNode(x.v));
+  });
+  composeSize();
+  el.focus();
+  saveCaret();
+}
+
+function onComposePaste(e) {
+  const cd = e.clipboardData;
+  if (!cd) return;
+  const files = [];
+  if (cd.items) {
+    for (let i = 0; i < cd.items.length; i++) {
+      const it = cd.items[i];
+      if (it.kind === 'file' && /^image\//i.test(it.type || '')) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+  }
+  if (files.length) {
+    e.preventDefault();
+    (async function () {
+      for (let i = 0; i < files.length; i++) await addPic(files[i]);
+    })();
+    return;
+  }
+  const plain = cd.getData('text/plain');
+  if (plain) {
+    e.preventDefault();
+    insertTextAtCaret(plain);
+  }
 }
 
 function renderError(msg) {
@@ -466,19 +633,26 @@ export function closeAtPicker() {
   atPop = null;
 }
 function insertAtCompose(text) {
-  const ta = document.getElementById('compose');
-  if (!ta) return;
-  const s = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
-  const e = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
-  let before = ta.value.slice(0, s);
-  if (before.charAt(before.length - 1) === '@') before = before.slice(0, -1);
-  const after = ta.value.slice(e);
-  ta.value = before + text + after;
-  const pos = before.length + text.length;
-  ta.focus();
-  ta.setSelectionRange(pos, pos);
-  ta.style.height = 'auto';
-  ta.style.height = Math.min(132, ta.scrollHeight) + 'px';
+  const el = composeEl();
+  if (!el) return;
+  el.focus();
+  const sel = window.getSelection();
+  const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (r && r.collapsed && el.contains(r.startContainer)) {
+    const n = r.startContainer;
+    if (n.nodeType === 3 && String(n.nodeValue || '').slice(0, r.startOffset).endsWith('@')) {
+      const cut = document.createRange();
+      cut.setStart(n, r.startOffset - 1);
+      cut.setEnd(n, r.startOffset);
+      cut.deleteContents();
+      const put = document.createRange();
+      put.setStart(cut.startContainer, cut.startOffset);
+      put.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(put);
+    }
+  }
+  insertTextAtCaret(text);
 }
 function openAtPicker() {
   closeAtPicker();
@@ -513,37 +687,31 @@ function openAtPicker() {
   }, 0);
 }
 
-// ---------- 附件（图片先进草稿栏，和文字一起发） ----------
-let attaches = [];
+// ---------- 图片块：插在文字中间 ----------
+const PIC_MAX = 9;
 
-function renderAttach(bar) {
-  const box = bar || document.getElementById('attach-bar');
-  if (!box) return;
-  box.textContent = '';
-  if (!attaches.length) { box.hidden = true; return; }
-  box.hidden = false;
-  attaches.forEach(function (a, i) {
-    const chip = h('div', 'attach-chip');
-    chip.title = a.name || '';
-    chip.appendChild(icon('fa-image'));
-    chip.appendChild(h('span', 'attach-name', a.name || '图片'));
-    const x = document.createElement('button');
-    x.type = 'button';
-    x.className = 'attach-x';
-    x.title = '移除';
-    x.appendChild(icon('fa-xmark'));
-    x.addEventListener('click', function () {
-      attaches.splice(i, 1);
-      renderAttach(box);
-    });
-    chip.appendChild(x);
-    box.appendChild(chip);
-  });
+function picNode(url, name) {
+  const n = document.createElement('span');
+  n.className = 'ph-img';
+  n.setAttribute('contenteditable', 'false');
+  n.setAttribute('data-url', url);
+  n.setAttribute('data-name', name);
+  n.title = name;
+  n.appendChild(icon('fa-image'));
+  n.appendChild(h('span', 'ph-name', name));
+  return n;
 }
 
-async function addAttach(file) {
+function picCount() {
+  const el = composeEl();
+  return el ? el.querySelectorAll('.ph-img').length : 0;
+}
+
+async function addPic(file) {
   if (file.type && !/^image\//.test(file.type)) { toast('选一个图片文件'); return; }
-  if (attaches.length >= 9) { toast('一条消息最多 9 张图片'); return; }
+  if (picCount() >= PIC_MAX) { toast('一条消息最多 9 张图片'); return; }
+  const spot = ensureCaret();
+  const saved = spot ? spot.cloneRange() : null;
   toast('处理图片…');
   let dataUrl;
   try { dataUrl = await shrinkImage(file); }
@@ -551,8 +719,9 @@ async function addAttach(file) {
   toast('上传中…');
   const up = await api('api/upload', { data: dataUrl });
   if (!up || !up.ok) { toast((up && up.err) || '上传失败'); return; }
-  attaches.push({ url: up.url, name: String(file.name || '图片').slice(0, 40) });
-  renderAttach();
+  if (picCount() >= PIC_MAX) { toast('一条消息最多 9 张图片'); return; }
+  const name = String(file.name || '图片').slice(0, 40);
+  insertNodeAt(picNode(up.url, name), saved);
 }
 
 // ---------- 发送 ----------
@@ -573,39 +742,35 @@ async function send(payload) {
 }
 
 async function sendText() {
-  const ta = document.getElementById('compose');
-  if (!ta) return;
-  const text = ta.value.trim();
-  const pics = attaches.slice();
-  if (!text && !pics.length) return;
+  const el = composeEl();
+  if (!el) return;
+  const got = composeSegs();
+  const text = got.text.trim();
+  if (!text && !got.pics) return;
   if (text.length > 10000) {
     toast('单条消息最多 10000 字，再长请分开几条发');
     return;
   }
-  // 一条消息里文字和图片按这个顺序排：先说文字，图片按附件栏的先后跟在后面
-  const segs = [];
-  if (text) segs.push({ t: 'text', v: text });
-  pics.forEach(function (a) { segs.push({ t: 'img', v: a.url }); });
+  if (got.pics > PIC_MAX) { toast('一条消息最多 9 张图片'); return; }
+  const segs = got.segs.map(function (x) {
+    return x.t === 'img' ? { t: 'img', v: x.v } : { t: 'text', v: x.v };
+  });
 
-  ta.value = '';
-  ta.style.height = 'auto';
-  attaches = [];
-  renderAttach();
+  el.textContent = '';
+  composeSize();
 
   const payload = { text: text };
-  if (pics.length) payload.segs = segs;
+  if (got.pics) payload.segs = segs;
   const replySnap = S.reply ? { id: S.reply.id, name: S.reply.name, text: S.reply.text } : null;
   if (S.reply) payload.reply = S.reply.id;
   const j = await send(payload);
   if (!j || !j.ok) {
     toast((j && j.err) || '没发出去');
-    ta.value = text;
-    attaches = pics;
-    renderAttach();
+    restoreCompose(got.segs);
     return;
   }
   clearReply();
-  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap, '', 0, pics.length ? segs : null);
+  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap, '', 0, got.pics ? segs : null);
 }
 
 // 发送后先把这条画上去，不等下一轮轮询；轮询拉回同一条会按 id 去重跳过
@@ -683,9 +848,9 @@ function pickImage() {
   input.multiple = true;
   input.addEventListener('change', function () {
     const files = Array.prototype.slice.call(input.files || []);
-    // 串行上传，附件栏的顺序才和选图顺序一致
+    // 串行上传，插图顺序才和选图顺序一致
     (async function () {
-      for (let i = 0; i < files.length; i++) await addAttach(files[i]);
+      for (let i = 0; i < files.length; i++) await addPic(files[i]);
     })();
   });
   input.click();
