@@ -451,7 +451,6 @@ export function msgMenu(m, x, y) {
     if (!isDm() && canModerate()) {
       const pinned = (S.pins || []).some(function (p) { return p.id === m.id; });
       items.push([pinned ? '取消置顶' : '置顶这条', 'fa-thumbtack', () => togglePin(m, !pinned)]);
-      items.push(['设为群公告', 'fa-bullhorn', () => setNotice(m)]);
       items.push(['设为群待办', 'fa-list-check', () => makeTodo(m)]);
     }
   }
@@ -719,13 +718,6 @@ export async function postNotice(text) {
   refreshBars();
   closeSheet();
   emit('conv:touch');
-}
-
-function setNotice(m) {
-  const cur = (S.notice && S.notice.text) || '';
-  const t = window.prompt('群公告内容（留空取消公告）', m.text || cur);
-  if (t === null) return;
-  postNotice(t.trim());
 }
 
 async function togglePin(m, on) {
