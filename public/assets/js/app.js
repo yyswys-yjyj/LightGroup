@@ -2,7 +2,8 @@
 import {
   S, BOOT, LSK, URLS, h, icon, iconBtn, btn, toast, api, toLogin,
   siteName, applyThemeMode, applyScopeCss, applyWall, refreshThemes,
-  startRouter, parseRoute, go, on, onLayout, applyLayout, setListOpen, closeSheet, openSheet
+  startRouter, parseRoute, go, on, onLayout, applyLayout, setListOpen, closeSheet, openSheet,
+  pageStart, pageStop
 } from './core.js';
 import { avatar } from './avatar.js';
 import * as conv from './conv.js';
@@ -192,6 +193,7 @@ function openRailMenu(anchor) {
 
 // ---------- 路由 ----------
 function renderRoute() {
+  pageStart();
   const r = parseRoute();
   const prev = S.page;
   // 整页重渲染会把滚动位置清零：点头像框样式、换主题这类按钮不该把人弹回顶部
@@ -222,6 +224,8 @@ function renderRoute() {
     else me.renderAppearance(host);
   }
   layout();
+  // 聊天页的数据是异步来的，这里先记一版「骨架画完」的耗时，消息到齐后由 chat.js 再覆盖一次
+  pageStop();
   if (keepY || keepHostY || keepInnerY) {
     const put = function () {
       if (hostEl) hostEl.scrollTop = keepHostY;

@@ -1,7 +1,7 @@
 // LightGroup · 会话页：头部 + 三条横幅 + 消息流 + 输入区 + @ + 轮询
 import {
   S, BOOT, h, icon, iconBtn, toast, api, apiMissing, hhmm, dayLabel,
-  emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText
+  emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText, pageStop
 } from './core.js';
 import { avatar } from './avatar.js';
 import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall } from './msg.js';
@@ -11,6 +11,9 @@ import { openProfileCard } from './people.js';
 
 let feedEl = null;
 let mountedId = null;
+// 会话代数：每换一次会话 +1。异步请求回来先对一下代数，对不上就丢掉，
+// 否则慢请求会把上一个会话的消息画到当前会话里（「串会话」）。
+let gen = 0;
 let timer = 0;
 // 往上翻历史：首屏只拿最新一页，滚到顶再要更早的
 let olderLoading = false;
@@ -56,17 +59,20 @@ async function loadOlder() {
   const oldest = S.msgs[0].id;
   if (!oldest) return;
   olderLoading = true;
+  const my = gen;
+  const id = S.curId;
   const beforeHeight = feedEl.scrollHeight;
   const beforeTop = feedEl.scrollTop;
   let j = null;
   try {
     j = S.mode === 'legacy'
       ? await api('fetch?before=' + oldest + '&limit=50')
-      : await api('api/conv?id=' + S.curId + '&before=' + oldest + '&limit=50');
+      : await api('api/conv?id=' + id + '&before=' + oldest + '&limit=50');
   } catch (e) {
     j = null;
   }
   olderLoading = false;
+  if (my !== gen || S.curId !== id) return;
   if (!j || !j.ok) return;
   const older = (j.msgs || []).filter(function (m) { return !S.msgs.some(function (x) { return x.id === m.id; }); });
   if (!older.length) { hasOlder = false; return; }
@@ -93,6 +99,10 @@ export function mount(id) {
   S.curId = cid;
   S.cur = c;
   if (mountedId !== cid) {
+    gen++;
+    // 旧会话的轮询先停掉，等新会话的首页消息回来再重启（startLoop）
+    S.polling = false;
+    if (timer) { clearTimeout(timer); timer = 0; }
     mountedId = cid;
     S.msgs = [];
     S.lastId = 0;
@@ -110,16 +120,32 @@ export function mount(id) {
     return;
   }
   if (!S.msgs.length && !S.lastId) {
+    showLoading();
     initLoad();
   } else {
     renderFeed();
     scrollBottom(false);
     refreshBars();
+    startLoop();
   }
+}
+
+// 切会话先出一张「加载中」的中间页：不要留着上一屏的空壳，也避免旧消息先闪一下
+function showLoading() {
+  if (!feedEl) return;
+  feedEl.textContent = '';
+  const box = h('div', 'feed-loading');
+  const sp = icon('fa-spinner');
+  sp.classList.add('fa-spin');
+  box.appendChild(sp);
+  box.appendChild(h('span', '', '正在加载消息…'));
+  feedEl.appendChild(box);
 }
 
 export function stop() {
   S.polling = false;
+  // 离开聊天页：还在路上的请求回来后不能往别的页面里画
+  gen++;
   if (timer) { clearTimeout(timer); timer = 0; }
   mountedId = null;
   feedEl = null;
@@ -469,7 +495,10 @@ function renderError(msg) {
 // ---------- 拉数据 ----------
 async function initLoad() {
   const id = S.curId;
+  const my = gen;
   const j = await api('api/conv?id=' + id + '&since=0&limit=50');
+  // 等接口的这段时间可能已经点到别的会话了：这次结果直接作废
+  if (my !== gen || S.curId !== id) return;
   if (j && j.ok) {
     S.convApi = true;
     S.mode = 'conv';
@@ -479,6 +508,7 @@ async function initLoad() {
   }
   if (isPublicConv() && (apiMissing(j) || S.mode === 'legacy')) {
     const k = await api('fetch?since=0&limit=50');
+    if (my !== gen || S.curId !== id) return;
     if (k && k.ok) {
       S.convApi = false;
       S.mode = 'legacy';
@@ -513,11 +543,14 @@ function apply(j) {
   renderFeed();
   scrollBottom(false);
   refreshBars();
+  // 消息真正画出来才算这次切页走完，底栏的「页面: Xms」用这个数
+  pageStop();
 }
 
-async function pull(since) {
+async function pull(since, id) {
+  const cid = typeof id === 'number' ? id : S.curId;
   if (S.mode === 'legacy') return api('fetch?since=' + since);
-  const j = await api('api/conv?id=' + S.curId + '&since=' + since);
+  const j = await api('api/conv?id=' + cid + '&since=' + since);
   if (j && j.ok) return j;
   if (isPublicConv() && apiMissing(j)) {
     S.mode = 'legacy';
@@ -596,10 +629,17 @@ export function startLoop() {
 async function tick() {
   if (!S.polling) return;
   if (document.hidden) { timer = setTimeout(tick, 4000); return; }
+  const my = gen;
+  const id = S.curId;
   let j;
-  try { j = await pull(S.lastId); }
+  try { j = await pull(S.lastId, id); }
   catch (e) { timer = setTimeout(tick, 3000); return; }
   if (!S.polling) return;
+  if (my !== gen || S.curId !== id) {
+    // 这一轮问的是上一个会话，结果不能往新会话里塞；让新会话的轮询接着跑
+    timer = setTimeout(tick, 200);
+    return;
+  }
   if (j && j.ok) {
     if (j.conv && j.conv.id) S.cur = Object.assign({}, S.cur || {}, j.conv);
     if (!isDm()) syncMembers(j.members);

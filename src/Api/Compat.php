@@ -53,7 +53,8 @@ final class Compat {
             case "api/ai/delete": self::aiDelete($pdo, $scope); break;
             case "api/me":    self::me($pdo, $scope); break;
             case "api/read":  self::read($pdo, $scope); break;
-            case "api/fetch": self::fetch($pdo, $scope); break;
+            // 会话页每秒都会打一次读接口：先放掉会话锁，否则切会话的请求要排在轮询后面
+            case "api/fetch": lg_session_release(); self::fetch($pdo, $scope); break;
             case "api/send":  self::send($pdo, $scope); break;
             case "api/wait":  self::wait($pdo, $scope); break;
             case "api/upload": self::upload($pdo, $scope); break;
@@ -72,7 +73,7 @@ final class Compat {
             case "api/pin":     self::pinSet($pdo, $scope); break;
             case "api/todo":    self::todoOp($pdo, $scope); break;
             case "api/conversations": self::conversations($pdo, $scope); break;
-            case "api/conv":          self::convGet($pdo, $scope); break;
+            case "api/conv":          lg_session_release(); self::convGet($pdo, $scope); break;
             case "api/conv/send":     self::convSend($pdo, $scope); break;
             case "api/friends":       self::friendsList($pdo, $scope); break;
             case "api/friends/poll":  self::friendsPoll($pdo, $scope); break;

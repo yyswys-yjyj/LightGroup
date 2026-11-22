@@ -943,6 +943,25 @@ export function readDataUrl(file) {
   });
 }
 
+// ---------- 底部耗时 ----------
+// 首屏那行「页面: Xms」是服务端算的；进了 SPA 之后每次切页、聊天数据到齐都由这里重算，
+// 不然切一百次会话，底栏还是开机时那一个数字。
+let pageT0 = 0;
+export function pageStart() { pageT0 = performance.now(); }
+export function pageStop() {
+  if (!pageT0) return;
+  const ms = Math.max(1, Math.round(performance.now() - pageT0));
+  const foot = document.querySelector('.site-foot');
+  if (!foot) return;
+  const spans = foot.querySelectorAll('span');
+  for (let i = 0; i < spans.length; i++) {
+    if (/^页面\s*[:：]/.test(spans[i].textContent || '')) {
+      spans[i].textContent = '页面: ' + ms + 'ms';
+      return;
+    }
+  }
+}
+
 // ---------- 事件总线（模块之间不互相 import 页面逻辑） ----------
 const bus = new Map();
 export function on(ev, fn) {
