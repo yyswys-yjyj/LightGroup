@@ -160,5 +160,5 @@ Apache-2.0，见 [LICENSE](LICENSE)。
 </a>
 
 ## 后记
-*凝聚星辰，共筑未来*
+*凝聚星辰，共筑未来*   
 *Gather Star, Build The Future*
