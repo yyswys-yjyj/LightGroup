@@ -33,7 +33,7 @@
 - 所有 SQL 用 prepare 占位符；输出到 HTML 的地方用 `e()` 或 textContent，禁止拼 HTML。
 
 ## 3. 版本与迁移
-- 版本号在 `api/manifest.json`。**未经用户明确同意不得改版本号**（当前 0.1.2）。
+- 版本号在 `api/manifest.json`。**未经用户明确同意不得改版本号**（当前 0.1.3）。
 - 改表结构：`src/Store/Schema.php` 的 `VERSION` 加一并补 `migrate()` 与 `statements()`，迁移在首次连接时自动跑。
 
 ## 4. 部署

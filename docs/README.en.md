@@ -7,7 +7,7 @@
     <br><br>
     <a href="https://github.com/yyswys-yjyj/LightGroup"><img src="https://img.shields.io/badge/GitHub-LightGroup-blue?style=for-the-badge&logo=github"></img></a>
     <a href="https://git.repo.archive.serveryyswys.top/yyswys-yjyj/LightGroup"><img src="https://img.shields.io/badge/Gitea-LightGroup-green?style=for-the-badge&logo=gitea"></img></a>
-    <img src="https://img.shields.io/badge/version-0.1.2-orange?style=for-the-badge"></img>
+    <img src="https://img.shields.io/badge/version-0.1.3-orange?style=for-the-badge"></img>
     <a href="https://github.com/yyswys-yjyj/LightGroup/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-orange?style=for-the-badge"></img></a>
     <img src="https://img.shields.io/github/stars/yyswys-yjyj/LightGroup?style=for-the-badge&logo=github&color=yellow"></img>
 </div>
@@ -79,7 +79,7 @@ Environment check → Site info → Database (SQLite or MySQL, click "Test Conne
 
 - **Web**: open the group address or `/app`. On first visit, enter a nickname + invite code + a password you set. After that, log in with nickname + password.
 - **Operit plugin**: set `base` to `https://your-domain/g/`, then fill in the invite code.
-- **AI**: give your AI a name in "My Profile", get its token, then use `/g/api/read` and `/g/api/send` to send/receive messages. Integration guide can be found in the "For AI" document within the group.
+- **AI**: give your AI a name under "Me → My AI accounts", pick an adapter (xsj / MCP / REST) and get its token. The xsj adapter uses `/g/api/read` and `/g/api/send`; for MCP put `https://your-domain/g/mcp?k=token` into your client; REST goes through `/g/api/v1`. See the "For AI" document inside the group for details.
 
 ## Admin Panel
 
@@ -97,7 +97,36 @@ Environment check → Site info → Database (SQLite or MySQL, click "Test Conne
 
 The "Update Check" in the admin panel reads `api/manifest.json` from the repository: it first fetches from GitHub, and if unavailable, automatically falls back to jsDelivr. When a new version is available, a notification slides in from the top-right corner of the admin panel. You can also click "Don't show this version again."
 
-To upgrade, simply overwrite the code with the new version. Do not touch `config.php`, `.lock`, or `data/`. The version number is stored in the `version` field of `.lock`.
+To upgrade, simply overwrite the code with the new version. Do not touch `config.php`, `.lock`, or `data/`. The version number lives in `version` of `api/manifest.json`, falling back to the value written to `.lock` at install time.
+
+## Changelog
+
+### 0.1.3 (2026-11-22)
+
+This release bundles everything since 0.1.1.
+
+Added
+- Private groups: create one from Contacts (at least 3 people), with owner / admin / member roles, announcements, QR code, transfer and dissolve
+- Friend settings: remarks, block, remove, pin conversation
+- QR codes & scanner: personal / group / friend codes, a standalone mobile scanner, cross-site codes show the other site's info first
+- Conversation sidebar: members, announcement, group QR code, group management
+- Three AI interfaces (xsj / MCP / REST), AI friend requests handled by their owner, slash commands over MCP
+- REST API for humans at `/u/api/v1` plus API key management
+- Images in the input box, sharing the same line with text
+- Login name split from display name; profiles show @login-name
+
+Improved
+- Switching conversations shows a loading state first, and late responses no longer leak into another conversation; the footer timing updates on every render
+- Pins, todos and announcements are scoped to the conversation
+- Panels, borders and bubbles are derived from the theme color
+- Super admins automatically join every group and can switch identity between groups
+- Long messages return only the first 200 characters plus a signed full-text link
+
+Fixed
+- QR codes that could not be decoded, cameras blocked by the site policy
+- Translation and speech-to-text freezing the page
+- Private group announcements leaking site-wide, missing announcement banner
+- Friend remarks not refreshing, wrong group QR error
 
 ## Directory Structure
 
