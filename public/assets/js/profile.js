@@ -269,7 +269,7 @@ function fmtDay(ts) {
   return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
 }
 
-/** AI 走哪套协议：xsj=小群老接口，mcp=MCP，api=REST */
+/** AI 走哪套接入：xsj=小群接口，mcp=MCP，api=REST */
 function adapterText(a) {
   if (a === 'xsj') return '小群适配器';
   if (a === 'api') return 'API 适配器';

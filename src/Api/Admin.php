@@ -112,6 +112,7 @@ final class Admin {
             "perm_group_id" => isset($s["perm_group_id"]) && $s["perm_group_id"] !== null ? (int) $s["perm_group_id"] : 0,
             "pg_create"     => self::setting($pdo, "pg.create." . $id, "1") !== "0",
             // 消息存储：空串表示跟随站点总配置
+            "msg_mode"      => self::setting($pdo, "msg." . $id . ".mode", ""),
             "msg_keep_days" => self::setting($pdo, "msg." . $id . ".keep_days", ""),
             "msg_keep_per_conv" => self::setting($pdo, "msg." . $id . ".keep_per_conv", ""),
             "msg_local"     => self::setting($pdo, "msg." . $id . ".local", ""),
@@ -263,6 +264,17 @@ final class Admin {
                     // 一页条数至少 1、最多 100；保留天数和条数 0 表示不限
                     $n = $suffix === "page_size" ? max(1, min(100, (int) $raw)) : max(0, (int) $raw);
                     self::putSetting($pdo, "msg." . $id . "." . $suffix, (string) $n);
+                }
+            }
+            $msgMode = self::in("msg_mode", null);
+            if ($msgMode !== null) {
+                $msgTouched = true;
+                $raw = trim((string) $msgMode);
+                if ($raw === "") {
+                    $pdo->prepare("DELETE FROM settings WHERE k = ?")->execute(["msg." . $id . ".mode"]);
+                } else {
+                    if (!in_array($raw, ["server", "keep"], true)) Json::fail("消息存储只能是 server / keep");
+                    self::putSetting($pdo, "msg." . $id . ".mode", $raw);
                 }
             }
             $msgLocal = self::in("msg_local", null);
@@ -535,8 +547,6 @@ final class Admin {
             "mail.pass"               => "secret",
             "mail.from"               => "email",
             "mail.from_name"          => "text",
-            // MCP：给 AI 用的 JSON-RPC 端点，默认开着；关掉后建 AI 不再下发地址
-            "mcp.enabled"             => "int",
             // 语音转文字：站内没有识别引擎，走外部 OpenAI 兼容接口，默认关闭
             "stt.enabled"             => "int",
             "stt.url"                 => "url",
@@ -567,8 +577,6 @@ final class Admin {
             foreach (Features::KEYS as $fk => $m) {
                 $out["feature." . $fk] = self::setting($pdo, "feature." . $fk, (string) $m[1]);
             }
-            // 默认值不是空串，得单独取，否则后台开关会显示成「关」
-            $out["mcp.enabled"] = self::setting($pdo, "mcp.enabled", "1");
             // 本机保存默认开；不单独取默认值的话，后台会把没配过的项显示成「关」
             $out["msg.local"] = self::setting($pdo, "msg.local", "1");
             // 一页多少条：不配就是 20
@@ -644,6 +652,8 @@ final class Admin {
                 if ($v !== "" && !self::isHttpUrl($v)) Json::fail("「" . $k . "」必须是以 http:// 或 https:// 开头的地址");
             } elseif ($kind === "provider") {
                 if ($v !== "" && !preg_match('/^[a-z0-9][a-z0-9_-]{0,31}$/', $v)) Json::fail("提供方标识只能用 1-32 位小写字母、数字、- 和 _（例如 google）");
+            } elseif ($kind === "msgmode") {
+                if (!in_array($v, ["server", "keep"], true)) Json::fail("消息存储只能是 server / keep");
             } elseif ($kind === "theme") {
                 if (!in_array($v, ["auto", "light", "dark"], true)) Json::fail("外观模式只能是 auto / light / dark");
             } elseif ($kind === "authmode") {
@@ -970,6 +980,32 @@ final class Admin {
         if ($conv === null) Json::fail("会话不存在");
         if ($role !== "super" && (int) $conv["scope_id"] !== $myScope) Json::fail("没有权限操作这个会话");
 
+        if ($sub === "perm_group") {
+            if ((string) $conv["kind"] !== "pg") Json::fail("只有私群能单独设权限组");
+            $gid = (int) self::in("group", "0");
+            Perm::assignConv($pdo, $convId, $gid);
+            $fresh = Conv::convById($pdo, $convId);
+            $name = "";
+            if ($gid > 0) {
+                $q = $pdo->prepare("SELECT name FROM perm_groups WHERE id = ? LIMIT 1");
+                $q->execute([$gid]);
+                $name = (string) ($q->fetchColumn() ?: "");
+            }
+            self::noteAdmin(
+                $pdo,
+                (int) $conv["scope_id"],
+                $convId,
+                $gid > 0 ? "把这个私群的权限组改成「" . $name . "」" : "把这个私群的权限组改回跟随主群"
+            );
+            self::log($pdo, "conv.perm", "会话 #" . $convId . " 权限组 -> " . ($gid > 0 ? $gid : "跟随主群"));
+            Json::ok([
+                "permGroupId"   => $gid,
+                "permGroupName" => $gid > 0 ? $name : "默认权限组",
+                "perm"          => Perm::forClientConv($pdo, $fresh ?? $conv),
+            ]);
+            return;
+        }
+
         if ($sub === "clear") {
             $now = lg_now();
             $st = $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = 0 WHERE conv_id = ? AND deleted_at IS NULL");
@@ -1029,20 +1065,51 @@ final class Admin {
             $args  = [];
         }
 
-        $sql = "SELECT c.id, c.kind, c.is_public, c.scope_id, c.title, c.dissolved_at, c.last_msg_id, c.last_msg_at, s.title AS scope_title,"
-             . " (SELECT COUNT(*) FROM messages m WHERE m.conv_id = c.id AND m.deleted_at IS NULL AND m.sys = 0) AS msg_count"
-             . " FROM conversations c JOIN scopes s ON s.id = c.scope_id"
+        // 类型筛选：大群 / 私群 / 私聊
+        $kind = (string) self::in("kind", "");
+        if ($kind === "public") $where .= " AND c.is_public = 1";
+        elseif ($kind === "pg") $where .= " AND c.kind = 'pg'";
+        elseif ($kind === "dm") $where .= " AND c.is_public = 0 AND c.kind <> 'pg'";
+
+        $sql = "SELECT c.id, c.kind, c.is_public, c.scope_id, c.title, c.dissolved_at, c.created_by, c.perm_group_id,"
+             . " c.created_at, c.last_msg_id, c.last_msg_at, s.title AS scope_title, s.perm_group_id AS scope_pg,"
+             . " mc.name AS creator_name,"
+             . " (SELECT COUNT(*) FROM messages m WHERE m.conv_id = c.id AND m.deleted_at IS NULL AND m.sys = 0) AS msg_count,"
+             . " (SELECT COUNT(*) FROM conv_members cm WHERE cm.conv_id = c.id) AS member_count"
+             . " FROM conversations c JOIN scopes s ON s.id = c.scope_id LEFT JOIN members mc ON mc.id = c.created_by"
              . " WHERE $where ORDER BY c.last_msg_at DESC, c.id DESC LIMIT 200";
         $st = $pdo->prepare($sql);
         $st->execute($args);
         $rows = $st->fetchAll();
 
+        $names = [];
+        $groupName = function (int $gid) use ($pdo, &$names): string {
+            if ($gid <= 0) return "默认权限组";
+            if (!array_key_exists($gid, $names)) {
+                $q = $pdo->prepare("SELECT name FROM perm_groups WHERE id = ? LIMIT 1");
+                $q->execute([$gid]);
+                $names[$gid] = (string) ($q->fetchColumn() ?: "");
+            }
+            return $names[$gid] !== "" ? $names[$gid] : "默认权限组";
+        };
+
+        $kw = mb_strtolower(trim((string) self::in("q", "")));
         $out = [];
         foreach ($rows as $row) {
             $conv  = ["id" => (int) $row["id"], "scope_id" => (int) $row["scope_id"], "is_public" => (int) $row["is_public"]];
             $isPub = (int) $row["is_public"] === 1;
             $people = self::convPeople($pdo, $conv);
             $isPg  = (string) $row["kind"] === "pg";
+            $title = $isPub
+                ? (string) $row["scope_title"]
+                : ($isPg ? ((string) (trim((string) $row["title"]) !== "" ? $row["title"] : "未命名群聊")) : implode(" · ", array_map(fn($p) => $p["name"], $people)));
+
+            if ($kw !== "") {
+                $hay = mb_strtolower($title . " " . (string) $row["scope_title"] . " " . (string) ($row["creator_name"] ?? "") . " " . implode(" ", array_map(fn($p) => $p["name"], $people)));
+                if (mb_strpos($hay, $kw) === false) continue;
+            }
+
+            $gid = (int) $row["perm_group_id"] > 0 ? (int) $row["perm_group_id"] : (int) $row["scope_pg"];
             $out[] = [
                 "id"         => (int) $row["id"],
                 "kind"       => (string) $row["kind"],
@@ -1051,14 +1118,19 @@ final class Admin {
                 "dissolved"  => (int) ($row["dissolved_at"] ?? 0) > 0,
                 "scopeId"    => (int) $row["scope_id"],
                 "scopeTitle" => (string) $row["scope_title"],
-                "title"      => $isPub
-                    ? (string) $row["scope_title"]
-                    : ($isPg ? ((string) (trim((string) $row["title"]) !== "" ? $row["title"] : "未命名群聊")) : implode(" · ", array_map(fn($p) => $p["name"], $people))),
+                "title"      => $title,
                 "members"    => $people,
+                "memberCount" => (int) $row["member_count"],
                 "msgCount"   => (int) $row["msg_count"],
                 "lastAt"     => (int) $row["last_msg_at"],
+                "createdAt"  => (int) $row["created_at"],
+                "creator"    => (string) ($row["creator_name"] ?? ""),
+                "permGroupId"   => $gid,
+                "permGroupName" => $groupName($gid),
+                "permOwn"       => (int) $row["perm_group_id"] > 0,
             ];
         }
+
         Json::ok(["convs" => $out, "scope" => $scopeId, "role" => $role]);
     }
 
@@ -1082,6 +1154,40 @@ final class Admin {
         $isPg  = (string) $conv["kind"] === "pg";
         $people = self::convPeople($pdo, $conv);
 
+        // 私群成员带角色（群主/管理员/成员），大群和私聊没有角色
+        $memberRows = [];
+        if ($isPg) {
+            foreach (Conv::membersWithRole($pdo, $conv) as $m) {
+                $memberRows[] = [
+                    "id" => (int) ($m["memberId"] ?? 0), "name" => (string) $m["name"],
+                    "kind" => (string) $m["kind"], "role" => (string) $m["role"],
+                ];
+            }
+        } else {
+            foreach ($people as $m) $memberRows[] = ["id" => (int) $m["id"], "name" => $m["name"], "kind" => $m["kind"], "role" => ""];
+        }
+
+        $creator = "";
+        if ((int) ($conv["created_by"] ?? 0) > 0) {
+            $q = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $q->execute([(int) $conv["created_by"]]);
+            $creator = (string) ($q->fetchColumn() ?: "");
+        }
+
+        $gid = Perm::convGroupId($pdo, $conv);
+        $gname = "";
+        if ($gid > 0) {
+            $q = $pdo->prepare("SELECT name FROM perm_groups WHERE id = ? LIMIT 1");
+            $q->execute([$gid]);
+            $gname = (string) ($q->fetchColumn() ?: "");
+        }
+        $groups = [];
+        foreach (Perm::groups($pdo, (int) $conv["scope_id"], $role === "super") as $g) {
+            $groups[] = ["id" => (int) $g["id"], "name" => (string) $g["name"], "is_default" => (bool) $g["is_default"]];
+        }
+
+        $notice = $isPub ? (string) ($scope["notice"] ?? "") : ($isPg ? (string) ($conv["notice"] ?? "") : "");
+
         // 回看一次就留一次痕（同一人同一会话一分钟内只写一条，免得刷新刷屏）
         self::auditMark($pdo, $conv, (int) $scope["id"], $role);
 
@@ -1098,6 +1204,15 @@ final class Admin {
                 "scopeId"    => (int) $scope["id"],
                 "scopeTitle" => (string) $scope["title"],
                 "members"    => $people,
+                "memberRows" => $memberRows,
+                "creator"    => $creator,
+                "createdAt"  => (int) ($conv["created_at"] ?? 0),
+                "notice"     => $notice,
+                "permGroupId"   => $gid,
+                "permGroupName" => $gname !== "" ? $gname : "默认权限组",
+                "permOwn"       => (int) ($conv["perm_group_id"] ?? 0) > 0,
+                "perm"          => Perm::forClientConv($pdo, $conv),
+                "permGroups"    => $groups,
             ],
             "msgs" => $msgs,
             "now"  => lg_now(),

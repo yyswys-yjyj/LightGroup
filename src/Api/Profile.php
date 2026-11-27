@@ -210,7 +210,7 @@ final class Profile {
     }
 
     /**
-     * 对外资料。id 仍是内部数字（老接口一直这么给，别改坏第三方客户端），
+     * 对外资料。id 仍是内部数字（一开始就这么给，别改坏第三方客户端），
      * 另外多给一个 uid（h_1 / a_2），前端路由用它。
      */
     private static function out(PDO $pdo, array $m): array {

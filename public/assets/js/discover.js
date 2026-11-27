@@ -23,7 +23,7 @@ export function renderDiscover(host) {
     }
     const mine = j.mine || {};
     if (j.items && j.items.length) {
-      body.appendChild(h('div', 'page-tip', '匹配度由年龄、标签、性别、签名一起算出来，点进去可以加好友。'));
+      body.appendChild(h('div', 'page-tip', '点进去可以加好友。'));
     }
 
     if (!mine.age || !(mine.tags && mine.tags.length)) {

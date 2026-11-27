@@ -35,7 +35,7 @@ export function lastLine(c) {
 }
 function lastTs(c) { return (c && c.last && c.last.ts) || 0; }
 
-// 老接口兜底：conversations 还没上线时，至少有一个公开大群可进
+// 兜底：conversations 还没上线时，至少有一个公开大群可进
 function legacyList() {
   const id = (S.me && S.me.publicConv) ? S.me.publicConv : 0;
   return [{ id: id, kind: 'group', title: siteName(), isPublic: 1, last: null, unread: 0 }];

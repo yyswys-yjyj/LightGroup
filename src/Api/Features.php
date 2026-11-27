@@ -72,6 +72,7 @@ final class Features {
     public static function msg(PDO $pdo, int $scopeId): array {
         $pol = Pruner::policy($pdo, $scopeId);
         return [
+            "mode"      => (string) $pol["mode"],
             "local"     => (bool) $pol["local"],
             "keepDays"  => (int) $pol["days"],
             "keepPerConv" => (int) $pol["per_conv"],

@@ -968,7 +968,7 @@ function subscribeCard(s, box) {
   if (!s) { card.appendChild(h('div', 'sp-empty', '邮件提醒暂时用不了')); return card; }
   if (!s.available) {
     card.appendChild(h('b', '', '邮件提醒'));
-    card.appendChild(h('div', 'sp-empty', '站点还没开邮件提醒，需要超管在后台配好邮箱'));
+    card.appendChild(h('div', 'sp-empty', '邮件提醒暂时不可用'));
     return card;
   }
   card.appendChild(h('b', '', '邮件提醒'));

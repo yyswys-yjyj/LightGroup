@@ -10,6 +10,7 @@ import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
 import { openQr, linkFor } from './qr.js';
 import { loadMembers } from './people.js';
+import { mdHtml } from './profile.js';
 import { clearAll } from './store.js';
 
 // ---------- 个人首页 ----------
@@ -186,12 +187,29 @@ function renderProfileEdit(host) {
 
   // 介绍：默认纯文本（普通用户不用记 Markdown），点「高级模式」才换成 Markdown 框
   let mdMode = me.bioMode === 'markdown';
+  // 切换模式会重建输入框，草稿得单独留着，不然写到一半的东西会没
+  let bioDraft = typeof me.bio === 'string' ? me.bio : '';
   const introWrap = h('div', 'bio-edit');
   body.appendChild(introWrap);
   function paintIntro() {
     introWrap.textContent = '';
     const head = h('div', 'bio-edit-h');
     head.appendChild(h('b', '', '介绍'));
+    const pv = h('div', 'bio-preview');
+    pv.hidden = true;
+    if (mdMode) {
+      const pvBtn = btn('预览', 'btn btn-ghost btn-xs', function () {
+        if (pv.hidden) {
+          pv.innerHTML = mdHtml(bioDraft);
+          pv.hidden = false;
+          pvBtn.textContent = '收起预览';
+        } else {
+          pv.hidden = true;
+          pvBtn.textContent = '预览';
+        }
+      });
+      head.appendChild(pvBtn);
+    }
     head.appendChild(btn(mdMode ? '用纯文本' : '高级模式（Markdown）', 'btn btn-ghost btn-xs', function () {
       mdMode = !mdMode;
       paintIntro();
@@ -201,11 +219,16 @@ function renderProfileEdit(host) {
     const ta = document.createElement('textarea');
     ta.id = 'f-bio';
     ta.className = 'tb';
-    ta.value = me.bio || '';
+    ta.value = bioDraft;
+    ta.addEventListener('input', function () {
+      bioDraft = ta.value;
+      if (!pv.hidden) pv.innerHTML = mdHtml(bioDraft);
+    });
     if (mdMode) {
       ta.rows = 8;
       ta.placeholder = '支持 Markdown：**粗体**、# 标题、- 列表、[链接](https://…)、行内代码';
       introWrap.appendChild(ta);
+      introWrap.appendChild(pv);
       introWrap.appendChild(copyNote('按 Markdown 排版显示在资料页。'));
     } else {
       ta.rows = 5;
@@ -384,7 +407,7 @@ function myAiBlock() {
   });
   if (!adList.length) {
     box.appendChild(h('div', 'page-sec', '新建 AI'));
-    box.appendChild(h('div', 'page-tip', '站点没有开放任何 AI 适配器。'));
+    box.appendChild(h('div', 'page-tip', '暂时没有可用的 AI 适配器。'));
     return box;
   }
   if (!adList.some(function (o) { return o[0] === aiAdapter; })) aiAdapter = adList[0][0];

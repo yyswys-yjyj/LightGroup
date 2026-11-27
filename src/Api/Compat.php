@@ -415,7 +415,7 @@ final class Compat {
             "role"     => $role,
             "badge"    => $role,
             "model"    => "",
-            // AI 的接入适配器：xsj=小群老接口，mcp=完整 MCP；人类成员没有
+            // AI 的接入适配器：xsj=小群接口（基础收发），mcp=完整 MCP；人类成员没有
             "adapter"  => $isAi ? (string) ($m["adapter"] ?? "mcp") : "",
         ];
         if ($isAi && $ownerName !== null) {
@@ -745,11 +745,10 @@ final class Compat {
     }
 
     /**
-     * 给 AI 用的 MCP 地址。站点关掉 MCP 时给空串，前端就不显示这一段。
-     * token 每次签发都不一样，所以地址只能现拼，不能存库。
+     * 给 AI 用的 MCP 地址。token 每次签发都不一样，所以地址只能现拼，不能存库。
+     * 开不开 MCP 由「AI 与适配器」的功能开关决定，这里不再单独设开关。
      */
     private static function mcpUrl(PDO $pdo, string $token): string {
-        if (self::setting($pdo, "mcp.enabled", "1") !== "1") return "";
         return Site::baseUrl() . "mcp?k=" . rawurlencode($token);
     }
 
@@ -1262,16 +1261,26 @@ final class Compat {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        // 网页端一页多少条由站点策略定：客户端传大了不认，传 0 就用策略值。
-        // 「加载更多」也只是要下一页，不能一次把全部历史拖走。
-        $page = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
-        if ($page <= 0) $page = 20;
+        // 由站点下发：一页多少条看策略，「加载更多」只翻下一页；保留模式不做懒加载
+        $pol = \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"]);
         $limit = Input::int("limit", 0);
-        if ($limit <= 0 || $limit > $page) $limit = $page;
+        if ((int) $pol["page_size"] > 0) {
+            $page = (int) $pol["page_size"];
+            if ($limit <= 0 || $limit > $page) $limit = $page;
+        } elseif ($limit <= 0) {
+            $limit = 200;
+        }
         if ($limit > 200) $limit = 200;
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
-        $msgs = self::fetchSince($pdo, $scope, $since, $limit, $convId, $before);
+        $keepMode = $pol["mode"] === "keep";
+        $cursor = 0;
+        if ($keepMode && $since <= 0 && $before <= 0) {
+            $cursor = self::latestVisibleId($pdo, $scope, $conv);
+        }
+        $msgs = ($keepMode && $since <= 0 && $before <= 0)
+            ? []
+            : self::fetchSince($pdo, $scope, $since, $limit, $convId, $before);
         Json::ok([
             "msgs"    => $msgs,
             "recalled" => Conv::recalledIds(
@@ -1288,6 +1297,25 @@ final class Compat {
             "now"     => lg_now(),
             "tick"    => self::tick(),
         ]);
+    }
+
+    /**
+     * 消息保留模式下第一次进来不回历史，只给当前最新 id 当起点游标；
+     * 之后前端带着这个游标来，就只拿它之后的新消息。
+     */
+    private static function latestVisibleId(PDO $pdo, array $scope, ?array $conv): int {
+        if ($conv === null) {
+            $ids = self::scopeIds($pdo, $scope);
+            $in = implode(",", array_fill(0, count($ids), "?"));
+            $st = $pdo->prepare("SELECT MAX(m.id) FROM messages m WHERE m.scope_id IN ($in)");
+            $st->execute($ids);
+            return (int) $st->fetchColumn();
+        }
+        $cids = self::convReadIds($pdo, $scope, (int) $conv["id"]);
+        $in = implode(",", array_fill(0, count($cids), "?"));
+        $st = $pdo->prepare("SELECT MAX(m.id) FROM messages m WHERE m.conv_id IN ($in)");
+        $st->execute($cids);
+        return (int) $st->fetchColumn();
     }
 
     private static function tick(): int {
@@ -1727,16 +1755,27 @@ final class Compat {
 
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        // 网页端一页多少条由站点策略定：客户端传大了不认，传 0 就用策略值。
-        // 「加载更多」也只是要下一页，不能一次把全部历史拖走。
-        $page = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
-        if ($page <= 0) $page = 20;
+        // 由站点下发：一页多少条看策略，「加载更多」只翻下一页。
+        // 消息保留：站点只发新消息，历史在客户端本机。
+        $pol = \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"]);
+        $keepMode = $pol["mode"] === "keep";
         $limit = Input::int("limit", 0);
-        if ($limit <= 0 || $limit > $page) $limit = $page;
+        if ((int) $pol["page_size"] > 0) {
+            $page = (int) $pol["page_size"];
+            if ($limit <= 0 || $limit > $page) $limit = $page;
+        } elseif ($limit <= 0) {
+            $limit = 80;
+        }
         if ($limit > 200) $limit = 200;
 
-        $msgs   = self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"], $before);
-        $lastId = $msgs ? (int) $msgs[count($msgs) - 1]["id"] : $since;
+        $cursor = 0;
+        if ($keepMode && $since <= 0 && $before <= 0) {
+            $cursor = self::latestVisibleId($pdo, $scope, $conv);
+        }
+        $msgs = ($keepMode && $since <= 0)
+            ? []
+            : self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"], $before);
+        $lastId = $msgs ? (int) $msgs[count($msgs) - 1]["id"] : ($cursor > 0 ? $cursor : $since);
         // 往上翻历史时游标不动，别把已读位置写回旧消息
         if ($msgs && ($before <= 0 || $since > 0)) Conv::markRead($pdo, $conv, $me, $lastId);
 

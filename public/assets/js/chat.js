@@ -59,9 +59,11 @@ function onUserScroll() {
   userScrolled = true;
 }
 
-// 一页多少条由管理员配（站点总配置，群可覆盖；没配就是 20）
+// 一页多少条由管理员配（站点总配置，群可覆盖；没配就是 20）。
+// 返回 0 = 消息保留模式：不做懒加载，历史上翻由本机库负责。
 function pageSize() {
   const m = S.me && S.me.features && S.me.features.msg;
+  if (m && m.mode === 'keep') return 0;
   const n = m && m.pageSize ? Number(m.pageSize) : 20;
   return n > 0 ? n : 20;
 }
@@ -75,7 +77,7 @@ function setMoreBusy(on) {
 
 // 滚到顶：拿更早的一页塞到前面，并把视口按原来的相对位置挪回去
 async function loadOlder() {
-  if (olderLoading || !hasOlder || !feedEl) return;
+  if (olderLoading || !hasOlder || !feedEl || pageSize() === 0) return;
   if (!S.msgs.length) return;
   const oldest = S.msgs[0].id;
   if (!oldest) return;
@@ -534,7 +536,7 @@ async function initLoad() {
   let since = 0;
   if (localEnabled() && S.mode !== 'legacy') {
     try {
-      const cached = await getMsgs(id, pageSize());
+      const cached = await getMsgs(id, pageSize() || 500);
       if (my !== gen || S.curId !== id) return;
       if (cached.length) {
         S.msgs = cached;
@@ -667,11 +669,14 @@ function renderFeed() {
   if (!feedEl) return;
   feedEl.textContent = '';
   // 还有更早的消息就在最上面放一颗按钮；点一下才向服务端要下一段
-  if (hasOlder && S.msgs.length) {
+  if (hasOlder && S.msgs.length && pageSize() > 0) {
     const more = h('button', 'load-more', '加载更多消息');
     more.type = 'button';
     more.addEventListener('click', function () { loadOlder(); });
     feedEl.appendChild(more);
+  }
+  if (!S.msgs.length && pageSize() === 0) {
+    feedEl.appendChild(h('div', 'feed-tip', '消息只保存在这台设备上，这里显示的是新消息。'));
   }
   S.msgs.forEach(function (m, i) {
     const prev = i > 0 ? S.msgs[i - 1] : null;
@@ -683,6 +688,11 @@ function renderFeed() {
 
 function appendMsgs(list) {
   if (!list || !list.length) return;
+  // 保留模式首屏那条「只显示新消息」的提示，来了消息就该让位
+  if (feedEl) {
+    const tip = feedEl.querySelector('.feed-tip');
+    if (tip) tip.parentNode.removeChild(tip);
+  }
   const nearBottom = isNearBottom();
   list.forEach(function (m) {
     if (S.msgs.some(function (x) { return x.id === m.id; })) return;

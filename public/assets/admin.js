@@ -610,6 +610,11 @@ function editScopeDialog(s) {
       div('span2', [el('label', { class: 'switch' }, [fPgCreate, el('span', { text: '允许成员在这个群创建私群' })])]),
     ]),
   ]);
+  const fMsgMode = selectInput('msg_mode', [
+    { value: '', label: '跟随站点总配置' },
+    { value: 'server', label: '由站点下发' },
+    { value: 'keep', label: '消息保留' },
+  ], String(s.msg_mode ?? ''));
   const fMsgDays = textInput('msg_keep_days', String(s.msg_keep_days ?? ''), '留空跟随站点总配置', 'number');
   const fMsgPer = textInput('msg_keep_per_conv', String(s.msg_keep_per_conv ?? ''), '留空跟随站点总配置', 'number');
   const fMsgLocal = selectInput('msg_local', [
@@ -619,6 +624,7 @@ function editScopeDialog(s) {
   ], String(s.msg_local ?? ''));
   const fMsgPage = textInput('msg_page_size', String(s.msg_page_size ?? ''), '留空跟随站点总配置', 'number');
   f.append(div('form-grid', [
+    field('消息存储', fMsgMode, '由站点下发=按页拉、可懒加载；消息保留=只发新增、存在成员设备上'),
     field('消息保留天数', fMsgDays, '0 表示本群不按时间删；留空跟随站点'),
     field('每会话保留条数', fMsgPer, '0 表示本群不按条数删；留空跟随站点'),
     field('本机保存', fMsgLocal, '成员把消息缓存在自己设备上；留空跟随站点'),
@@ -638,6 +644,7 @@ function editScopeDialog(s) {
           recall_policy: formValue(f, 'recall_policy'),
           pg_create: fPgCreate.checked ? 1 : 0,
           perm_group_id: formValue(f, 'perm_group_id') || '0',
+          msg_mode: fMsgMode.value,
           msg_keep_days: fMsgDays.value.trim(),
           msg_keep_per_conv: fMsgPer.value.trim(),
           msg_page_size: fMsgPage.value.trim(),
@@ -685,7 +692,7 @@ async function archiveScope(s) {
 
 /**
  * 权限组：一套群功能开关（群公告、邀请、设管理员、改群名、群待办、置顶、成员列表、群二维码）。
- * 和「站点设置 → 功能开关」不是一回事：那边管全站能力（注册、AI、空间），这里只管一个群里的设施。
+ * 群和私群都能单独套组；私群不套就跟主群。和站点设置里的「AI 与适配器 / 空间 / 社交」无关。
  */
 async function renderPermGroups(box) {
   box.append(loading());
@@ -699,7 +706,7 @@ async function renderPermGroups(box) {
   }), cur) : null;
 
   box.innerHTML = '';
-  box.append(pageHead('权限组', '一个权限组就是一套群功能开关；群没单独套组时，全部跟着平台默认组走', [
+  box.append(pageHead('权限组', '一套群功能开关。群可以单独套组，私群也能单独套；不套就跟着平台默认组。', [
     scopeSel ? el('span', { class: 'field-inline' }, [el('span', { class: 'field-hint', text: '选择群组' }), scopeSel]) : null,
   ]));
 
@@ -781,9 +788,9 @@ async function renderPermGroups(box) {
     footActs.push(btn('新建权限组', 'btn-ghost', function () { permGroupDialog(null, meta, scopeId, function () { paint(scopeId); }); }, 'fa-plus'));
     holder.append(card('说明', [
       div('hint', [
-        el('p', { text: '群公告、邀请成员、设管理员、改群名、群待办、置顶、成员列表、群二维码，这 8 项就是权限组能控的全部。' }),
+        el('p', { text: '权限组只管群里的设施：群公告、邀请成员、设管理员、改群名、群待办、置顶、成员列表、群二维码。' }),
         el('p', { text: '普通管理员只能动本群的组；平台默认组只有超级管理员能改。' }),
-        el('p', { text: '注册、AI 账号、适配器、MCP 连接方式、空间与社交这些全站开关，在「站点设置 → 功能开关」里。' }),
+        el('p', { text: '注册在「账号与注册」；AI 账号、适配器、MCP 连接方式在「AI 与适配器」；空间与社交各自成卡。' }),
       ]),
       div('form-foot', footActs),
     ], { icon: 'fa-circle-info' }));
@@ -1639,32 +1646,56 @@ function clusterScopeDialog(c) {
 // ---------------------------------------------------------------- 会话审计
 
 async function renderConvs(box) {
-  box.append(loading());
-  const d = await api('convs');
-  box.innerHTML = '';
-  box.append(pageHead('会话审计', '可以看、可以删单条、可以清空整个会话；每次操作都会在会话里留一条系统提示，查看本身也留痕（同一会话一分钟内只记一次）'));
+  const filter = { kind: '', kw: '' };
 
-  const rows = (d.convs || []).map(function (c) {
-    return [
-      el('td', {}, [div('cell-name', [
-        el('b', { text: c.title || ('会话 #' + c.id) }),
-        c.isPublic
-          ? el('span', { class: 'badge admin', text: '大群' })
-          : (c.private
-            ? el('span', { class: 'badge', text: '私群' })
-            : el('span', { class: 'badge muted', text: '私聊' })),
-        c.dissolved ? el('span', { class: 'badge muted', text: '已解散' }) : null,
-      ])]),
-      el('td', { class: 'muted', text: c.scopeTitle }),
-      el('td', { class: 'num', text: String(c.msgCount) }),
-      el('td', { class: 'muted', text: c.lastAt ? ago(c.lastAt) : '—' }),
-      el('td', {}, [btn('查看', 'btn-ghost btn-sm', function () { viewConv(c); }, 'fa-eye')]),
-    ];
-  });
+  async function paint() {
+    box.innerHTML = '';
+    box.append(loading());
+    const d = await api('convs?kind=' + encodeURIComponent(filter.kind) + '&q=' + encodeURIComponent(filter.kw));
+    box.innerHTML = '';
+    box.append(pageHead('会话审计', '大群、私群、私聊都在这里；点「查看」看消息、成员和权限组。'));
 
-  box.append(card('最近 200 个会话', [table(['会话', '群组', '消息数', '最后活跃', '操作'], rows, '还没有会话', 'fa-comments')], {
-    icon: 'fa-magnifying-glass-chart', flush: true,
-  }));
+    const kindSel = selectInput('kind', [
+      { value: '', label: '全部会话' },
+      { value: 'public', label: '大群' },
+      { value: 'pg', label: '私群' },
+      { value: 'dm', label: '私聊' },
+    ], filter.kind);
+    kindSel.addEventListener('change', function () { filter.kind = kindSel.value; paint(); });
+    const kwInp = el('input', { class: 'adm-input', type: 'search', placeholder: '搜群名、成员、创建者', value: filter.kw });
+    kwInp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { filter.kw = kwInp.value.trim(); paint(); }
+    });
+    box.append(div('conv-filter', [
+      kindSel,
+      kwInp,
+      btn('筛选', 'btn-primary btn-sm', function () { filter.kw = kwInp.value.trim(); paint(); }, 'fa-magnifying-glass'),
+    ]));
+
+    const rows = (d.convs || []).map(function (c) {
+      return [
+        el('td', {}, [div('cell-name', [
+          el('b', { text: c.title || ('会话 #' + c.id) }),
+          c.isPublic
+            ? el('span', { class: 'badge admin', text: '大群' })
+            : (c.private ? el('span', { class: 'badge', text: '私群' }) : el('span', { class: 'badge muted', text: '私聊' })),
+          c.dissolved ? el('span', { class: 'badge muted', text: '已解散' }) : null,
+        ])]),
+        el('td', { class: 'muted', text: c.scopeTitle }),
+        el('td', {}, [el('span', { text: c.permGroupName || '默认权限组' }), c.permOwn ? el('span', { class: 'badge', text: '单独' }) : null]),
+        el('td', { class: 'num', text: String(c.memberCount) }),
+        el('td', { class: 'num', text: String(c.msgCount) }),
+        el('td', { class: 'muted', text: c.lastAt ? ago(c.lastAt) : '—' }),
+        el('td', {}, [btn('查看', 'btn-ghost btn-sm', function () { viewConv(c, paint); }, 'fa-eye')]),
+      ];
+    });
+
+    box.append(card('会话', [table(['会话', '群组', '权限组', '成员', '消息数', '最后活跃', '操作'], rows, '没有符合条件的会话', 'fa-comments')], {
+      icon: 'fa-magnifying-glass-chart', flush: true,
+    }));
+  }
+
+  await paint();
 }
 
 /** 会话审计里的一条消息预览：没有文字不等于撤回，语音/卡片/图片各自有标签 */
@@ -1683,7 +1714,14 @@ function adminMsgText(msg) {
   return '[消息]';
 }
 
-async function viewConv(c) {
+function convMetaItem(label, value) {
+  return div('conv-meta-i', [
+    el('span', { class: 'conv-meta-l', text: label }),
+    el('span', { class: 'conv-meta-v', text: value || '—' }),
+  ]);
+}
+
+async function viewConv(c, refresh) {
   const body = div('conv-view', [loading()]);
   const kindText = c.isPublic ? '大群' : (c.private ? '私群' : '私聊');
   const m = modal(kindText + ' · ' + (c.title || '') + (c.dissolved ? '（已解散）' : ''), [body], [btn('关闭', 'btn-ghost', function () { m.close(); })]);
@@ -1692,13 +1730,74 @@ async function viewConv(c) {
   async function paint() {
     try {
       const d = await api('convs/' + c.id);
+      const cv = d.conv || {};
+      const rows = cv.memberRows || [];
       body.innerHTML = '';
+
+      body.append(div('conv-meta', [
+        convMetaItem('群组', cv.scopeTitle),
+        convMetaItem('类型', kindText),
+        convMetaItem('创建者', cv.creator),
+        convMetaItem('创建时间', cv.createdAt ? fmtDT(cv.createdAt) : ''),
+        convMetaItem('成员', String(rows.length)),
+      ]));
+
+      if (cv.private) {
+        const opts = [{ value: '0', label: '跟随主群' }].concat((cv.permGroups || []).map(function (g) {
+          return { value: String(g.id), label: g.name + (g.is_default ? '（平台默认）' : '') };
+        }));
+        const sel = selectInput('perm_group', opts, cv.permOwn ? String(cv.permGroupId) : '0');
+        const savePerm = btn('保存权限组', 'btn-primary btn-sm', async function () {
+          try {
+            await api('convs/' + c.id + '/perm_group', { group: sel.value });
+            toast('权限组已保存');
+            paint();
+            if (refresh) refresh();
+          } catch (e) { toast(e.message, 'err'); }
+        }, 'fa-floppy-disk');
+        body.append(div('conv-perm', [
+          el('span', { class: 'conv-perm-t', text: '这个私群的权限组' }),
+          sel,
+          savePerm,
+        ]));
+        const on = Object.keys(cv.perm || {}).filter(function (k) { return cv.perm[k]; });
+        const off = Object.keys(cv.perm || {}).filter(function (k) { return !cv.perm[k]; });
+        if (off.length) {
+          body.append(el('p', { class: 'conv-perm-hint', text: '关掉的功能：' + off.join('、') }));
+        } else {
+          body.append(el('p', { class: 'conv-perm-hint', text: '群功能全部开着。' }));
+        }
+      } else {
+        body.append(div('conv-perm', [
+          el('span', { class: 'conv-perm-t', text: '权限组' }),
+          el('span', { class: 'muted', text: cv.permGroupName || '默认权限组' }),
+        ]));
+      }
+
+      if (cv.notice) {
+        body.append(div('conv-notice', [
+          el('b', { text: '群公告' }),
+          el('div', { class: 'conv-notice-t', text: cv.notice }),
+        ]));
+      }
+
+      if (rows.length) {
+        body.append(div('conv-sec', [
+          el('b', { text: '成员' }),
+          div('conv-members', rows.map(function (x) {
+            return el('span', { class: 'conv-member' }, [
+              el('span', { text: x.name }),
+              x.role === 'owner' ? badge('admin', '群主') : (x.role === 'admin' ? badge('admin', '管理员') : null),
+            ]);
+          })),
+        ]));
+      }
+
       const info = div('conv-info', [
-        el('span', { class: 'muted', text: (d.conv.members || []).map(function (x) { return x.name; }).join(' · ') }),
         el('span', { class: 'muted', text: '共 ' + (d.msgs || []).length + ' 条' }),
         div('conv-info-sp'),
         btn('清空历史', 'btn-danger btn-sm', async function () {
-          if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。这个动作会留下系统提示。', true))) return;
+          if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。', true))) return;
           try {
             const r = await api('convs/' + c.id + '/clear', {});
             toast('已清空 ' + r.cleared + ' 条');
@@ -1772,6 +1871,10 @@ async function renderSettings(box) {
   const fKeepPer = textInput('msg.keep_per_conv', String(pruneInfo.keep_per_conv || st['msg.keep_per_conv'] || '0'), '0 不限', 'number');
   const fKeepPage = textInput('msg.page_size', String(pruneInfo.page_size || st['msg.page_size'] || '20'), '1-100，默认 20', 'number');
   const fMsgLocal = el('input', { type: 'checkbox', checked: String(st['msg.local'] || '1') !== '0' });
+  const fMsgMode = selectInput('msg.mode', [
+    { value: 'server', label: '由站点下发' },
+    { value: 'keep', label: '消息保留' },
+  ], String(st['msg.mode'] || 'server'));
 
   const form = el('form', { class: 'adm-form' }, [
     div('form-grid', [
@@ -1804,17 +1907,31 @@ async function renderSettings(box) {
   ]);
   box.append(card('私群配额', [pgForm, div('hint', [el('p', { text: '私群是成员自己拉的群，不会出现在管理员会话列表里，但后台审计能看到。' })])], { icon: 'fa-users-viewfinder' }));
 
-  // ---- 消息保留：不依赖系统计划任务，请求时按间隔自己跑 ----
-  const pruneForm = el('form', { class: 'adm-form' }, [
-    div('form-grid', [
-      field('只保留最近几天', fKeepDays, '0 表示不按时间删'),
-      field('每个会话最多保留几条', fKeepPer, '0 表示不按条数删'),
-      field('每次加载条数', fKeepPage, '成员点「加载更多消息」才会继续往前翻'),
-    ]),
-    div('oauth-switches', [
-      el('label', { class: 'switch' }, [fMsgLocal, el('span', { text: '允许成员把消息留一份在自己设备上' })]),
-    ]),
+  // ---- 消息存储：两套策略二选一，界面跟着模式换 ----
+  const serverBox = div('form-grid', [
+    field('每次加载条数', fKeepPage, '成员点「加载更多消息」才会继续往前翻'),
   ]);
+  const keepBox = div('form-grid', [
+    field('只保留最近几天', fKeepDays, '0 表示不按时间删'),
+    field('每个会话最多保留几条', fKeepPer, '0 表示不按条数删'),
+  ]);
+  const localBox = div('oauth-switches', [
+    el('label', { class: 'switch' }, [fMsgLocal, el('span', { text: '允许成员把消息留一份在自己设备上' })]),
+  ]);
+  function paintMode() {
+    const keep = fMsgMode.value === 'keep';
+    serverBox.style.display = keep ? 'none' : '';
+    keepBox.style.display = keep ? '' : 'none';
+    localBox.style.display = keep ? '' : 'none';
+  }
+  fMsgMode.addEventListener('change', paintMode);
+  const pruneForm = el('form', { class: 'adm-form' }, [
+    div('form-grid', [field('存储方式', fMsgMode, '由站点下发=按页拉取、可选懒加载；消息保留=只发新增、存在成员设备上')]),
+    serverBox,
+    keepBox,
+    localBox,
+  ]);
+  paintMode();
   const pruneStats = el('p', {
     class: 'hint-p',
     text: '当前 ' + (pruneInfo.messages || 0) + ' 条消息' +
@@ -1829,12 +1946,13 @@ async function renderSettings(box) {
       go('settings');
     } catch (e) { toast(e.message, 'err'); }
   }, 'fa-scissors');
-  box.append(card('消息保留', [
+  box.append(card('消息存储', [
     pruneForm,
     div('hint', [
       pruneStats,
       el('p', { text: '策略保存后不用配系统定时任务：站点有请求进来时会自己按小时检查一次。置顶消息、还有未完成群待办的消息不会被删。' }),
-      el('p', { text: '每次加载条数决定打开会话时先拉多少条；成员点「加载更多消息」才会继续往前翻。' }),
+      el('p', { text: '由站点下发：打开会话先拉一页，成员点「加载更多消息」才继续往前翻。' }),
+      el('p', { text: '消息保留：站点只发新消息，历史留在成员设备上；保留天数与条数只在这套下生效。' }),
     ]),
     div('form-foot', [pruneNowBtn]),
   ], { icon: 'fa-box-archive' }));
@@ -1876,33 +1994,23 @@ async function renderSettings(box) {
     div('form-foot', [saveStt]),
   ], { icon: 'fa-align-left' }));
 
-  const fMcpOn = el('input', { type: 'checkbox', checked: String(st['mcp.enabled'] || '0') === '1' });
   const mcpHint = d.mcp_url
-    ? 'AI 那边填「' + d.mcp_url + '?k=<它自己的 token>」。token 在「我的资料」里给 AI 建身份时只显示一次。'
-    : '站点地址没配好，暂时拼不出完整端点。';
-  box.append(card('MCP 接入', [
-    div('oauth-switches', [
-      el('label', { class: 'switch' }, [fMcpOn, el('span', { text: '允许 AI 通过 MCP 接入这个群' })]),
-    ]),
+    ? 'AI 那边填「' + d.mcp_url + '?k=<它自己的 token>」。'
+    : '';
+  box.append(card('MCP 端点', [
     div('form-grid', [div('span2', [field('端点', el('input', { value: d.mcp_url || '', disabled: true, readOnly: true }), mcpHint)])]),
-    div('hint', [el('p', { text: '关掉之后，新建 AI 不再下发地址；已经连上的 AI 请求会被拒。' })]),
-    div('form-foot', [
-      btn('保存 MCP 设置', 'btn-primary', async function () {
-        try {
-          await api('settings', { 'mcp.enabled': fMcpOn.checked ? '1' : '0' });
-          toast('已保存');
-        } catch (e) { toast(e.message, 'err'); }
-      }, 'fa-floppy-disk'),
-    ]),
+    div('hint', [el('p', { text: 'MCP 是否可用由「AI 与适配器」里的开关决定。' })]),
   ], { icon: 'fa-plug' }));
 
-  // ---- 功能开关：站点级能力（注册、AI、适配器、空间、社交），和权限组（群功能）不是一回事 ----
-  const featDefs = [
-    ['register', '允许新用户自助注册'],
+  // ---- AI 与适配器：只有这一片是 AI 工作台的开关，别的卡不再混在一起 ----
+  const aiDefs = [
     ['ai', '启用 AI 账号'],
     ['adapter.xsj', '小群（xsj）适配器'],
     ['adapter.mcp', 'MCP 适配器'],
     ['adapter.api', 'REST（api）适配器'],
+  ];
+  const accountDefs = [
+    ['register', '允许新用户自助注册'],
   ];
   const spaceDefs = [
     ['space', '启用空间'],
@@ -1915,7 +2023,7 @@ async function renderSettings(box) {
     ['social.dm', '允许私聊'],
     ['social.scan', '扫一扫'],
     ['social.qr', '个人与群二维码'],
-    ['social.discover', '「发现」'],
+    ['social.discover', '发现'],
   ];
   const featCbs = {};
   function featSwitches(defs) {
@@ -1926,35 +2034,40 @@ async function renderSettings(box) {
     });
   }
   const fTransport = selectInput('feature.mcp.transport', [
-    { value: 'both', label: '两种都支持（SSE + HTTP Stream）' },
-    { value: 'stream', label: '只支持 HTTP Stream' },
-    { value: 'sse', label: '只支持 SSE（旧协议）' },
+    { value: 'both', label: 'SSE 与 HTTP Stream' },
+    { value: 'stream', label: '只接受 HTTP Stream' },
+    { value: 'sse', label: '只接受 SSE' },
   ], st['feature.mcp.transport'] || 'both');
-  const saveFeatures = btn('保存功能开关', 'btn-primary', async function () {
-    const body = { 'feature.mcp.transport': fTransport.value };
-    featDefs.concat(spaceDefs, socialDefs).forEach(function (d) {
-      body['feature.' + d[0]] = featCbs[d[0]].checked ? '1' : '0';
-    });
-    try {
-      await api('settings', body);
-      toast('功能开关已保存');
-    } catch (e) { toast(e.message, 'err'); }
-  }, 'fa-floppy-disk');
-  box.append(card('功能开关', [
-    div('hint', [el('p', { text: '这些是全站能力，默认全开；关掉后对应入口消失，接口也会直接拒绝。权限组管的是单个群里的设施，两者互不影响。' })]),
-    el('div', { class: 'adm-subhead', text: '站点与 AI' }),
-    div('adm-switch-grid', featSwitches(featDefs)),
-    div('form-grid', [div('span2', [field('MCP 连接方式', fTransport, 'HTTP Stream 兼容性更好；SSE 是旧协议，只给老客户端用')])]),
-    el('div', { class: 'adm-subhead', text: '空间' }),
+  function saveFeatBtn(defs, withTransport) {
+    return btn('保存', 'btn-primary', async function () {
+      const body = {};
+      defs.forEach(function (d) { body['feature.' + d[0]] = featCbs[d[0]].checked ? '1' : '0'; });
+      if (withTransport) body['feature.mcp.transport'] = fTransport.value;
+      try {
+        await api('settings', body);
+        toast('已保存');
+      } catch (e) { toast(e.message, 'err'); }
+    }, 'fa-floppy-disk');
+  }
+  box.append(card('AI 与适配器', [
+    div('adm-switch-grid', featSwitches(aiDefs)),
+    div('form-grid', [div('span2', [field('MCP 连接方式', fTransport, '按客户端支持的连接方式来选')])]),
+    div('hint', [el('p', { text: 'AI 总开关关掉后，已创建的 AI 账号一律不可用。' })]),
+    div('form-foot', [saveFeatBtn(aiDefs, true)]),
+  ], { icon: 'fa-robot' }));
+  box.append(card('账号与注册', [
+    div('adm-switch-grid', featSwitches(accountDefs)),
+    div('form-foot', [saveFeatBtn(accountDefs, false)]),
+  ], { icon: 'fa-user-plus' }));
+  box.append(card('空间', [
     div('adm-switch-grid', featSwitches(spaceDefs)),
-    el('div', { class: 'adm-subhead', text: '社交' }),
+    div('form-foot', [saveFeatBtn(spaceDefs, false)]),
+  ], { icon: 'fa-compass' }));
+  box.append(card('社交', [
     div('adm-switch-grid', featSwitches(socialDefs)),
-    div('hint', [
-      el('p', { text: 'AI 总开关关掉后，已创建的 AI 账号请求一律返回 403，连 MCP 与 REST 都进不来。' }),
-      el('p', { text: '私群创建是按群配的：到「群组管理 → 编辑」里单独开关。' }),
-    ]),
-    div('form-foot', [saveFeatures]),
-  ], { icon: 'fa-toggle-on' }));
+    div('form-foot', [saveFeatBtn(socialDefs, false)]),
+  ], { icon: 'fa-user-group' }));
+
   box.append(card('保存', [
     btn('保存全部设置', 'btn-primary', async function () {
       try {
@@ -1971,7 +2084,8 @@ async function renderSettings(box) {
           'quota.account_per_oauth': fAcc.value.trim() || '0',
           'pg.member_cap': fPgMember.value.trim() || '0',
           'pg.size_cap': fPgSize.value.trim() || '0',
-          'msg.keep_days': fKeepDays.value.trim() || '0',
+          'msg.mode': fMsgMode.value,
+    'msg.keep_days': fKeepDays.value.trim() || '0',
           'msg.keep_per_conv': fKeepPer.value.trim() || '0',
           'msg.page_size': fKeepPage.value.trim() || '20',
           'msg.local': fMsgLocal.checked ? '1' : '0',

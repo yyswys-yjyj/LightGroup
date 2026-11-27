@@ -150,7 +150,7 @@ final class V1
             if ($kind !== "ai") self::fail("这是给 AI 账号的接口；人类账号用 /u/api/v1");
             if ($adapter !== "api") {
                 $label = $adapter === "xsj" ? "小群（xsj）" : ($adapter === "mcp" ? "MCP" : $adapter);
-                $hint = $adapter === "mcp" ? "请连 /g/mcp" : "请用 /g/api/read、/g/api/send 这些老接口";
+                $hint = $adapter === "mcp" ? "请连 /g/mcp" : "请用 /g/api/read、/g/api/send 这套接口";
                 self::fail("这个 AI 是「" . $label . "」适配器，不能走 REST；" . $hint
                     . "。要用 REST 请新建一个 API 适配器的 AI");
             }

@@ -8,18 +8,23 @@ use PDO;
 /**
  * 消息存储策略：站点给总配置，每个群（作用域）可以覆盖；群没覆盖时跟着总配置走。
  *
- * 三种策略：
+ * 两套策略，一次只走一套：
+ *   msg.mode = server  由站点下发：客户端每次要一页，翻历史靠「加载更多」（msg.page_size）
+ *   msg.mode = keep    消息保留：只在客户端本机留一份，站点只回新增；保留天数/条数在这套里配
+ *
+ * 另外几项（只有保留模式才生效）：
  *   msg.keep_days      只留最近 N 天（0 = 不限）
  *   msg.keep_per_conv  每个会话只留最近 N 条（0 = 不限）
  *   msg.local          是否允许成员把消息留一份在自己设备上
  *
- * 作用域覆盖写在 settings 里：msg.<scopeId>.keep_days / .keep_per_conv / .local，
+ * 作用域覆盖写在 settings 里：msg.<scopeId>.mode / .keep_days / .keep_per_conv / .local / .page_size，
  * 空值表示「跟随总配置」。剪枝不依赖系统计划任务：请求时按小时惰性触发 + 文件锁。
  *
  * 永远不剪：置顶消息、还有未完成群待办挂着的消息。
  */
 final class Pruner
 {
+    public const MODE = "msg.mode";
     public const KEEP_DAYS = "msg.keep_days";
     public const KEEP_PER_CONV = "msg.keep_per_conv";
     public const LOCAL = "msg.local";
@@ -54,26 +59,50 @@ final class Pruner
     /** 有效策略：群有覆盖就用自己的，没覆盖就跟总配置 */
     public static function policy(PDO $pdo, int $scopeId = 0): array
     {
+        $gMode = self::modeOf(self::setting($pdo, self::MODE, "server"));
         $gDays = (int) self::setting($pdo, self::KEEP_DAYS, "0");
         $gPer = (int) self::setting($pdo, self::KEEP_PER_CONV, "0");
         $gLocal = self::setting($pdo, self::LOCAL, "1") !== "0";
-        // 一页多少条：翻历史靠用户点「加载更多」，不点就不多给
+        // 由站点下发时一页多少条；翻历史靠用户点「加载更多」，不点就不多给
         $gPage = (int) self::setting($pdo, self::PAGE_SIZE, (string) self::PAGE_DEFAULT);
         if ($gPage <= 0) $gPage = self::PAGE_DEFAULT;
         $gPage = max(1, min(100, $gPage));
         if ($scopeId <= 0) {
-            return ["days" => $gDays, "per_conv" => $gPer, "local" => $gLocal, "page_size" => $gPage, "inherited" => true];
+            return self::pack($gMode, $gDays, $gPer, $gLocal, $gPage, true);
         }
+        $sm = self::setting($pdo, "msg." . $scopeId . ".mode", "");
+        $mode = $sm === "" ? $gMode : self::modeOf($sm);
         $sd = self::setting($pdo, "msg." . $scopeId . ".keep_days", "");
         $sp = self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", "");
         $sl = self::setting($pdo, "msg." . $scopeId . ".local", "");
         $sq = self::setting($pdo, "msg." . $scopeId . ".page_size", "");
+        return self::pack(
+            $mode,
+            $sd === "" ? $gDays : max(0, (int) $sd),
+            $sp === "" ? $gPer : max(0, (int) $sp),
+            $sl === "" ? $gLocal : ($sl !== "0"),
+            $sq === "" ? $gPage : max(1, min(100, (int) $sq)),
+            ($sm === "" && $sd === "" && $sp === "" && $sl === "" && $sq === "")
+        );
+    }
+
+    private static function modeOf(string $v): string
+    {
+        return $v === "keep" ? "keep" : "server";
+    }
+
+    /** 两套策略的差别都在这里：保留模式不做懒加载，站点只发新增 */
+    private static function pack(string $mode, int $days, int $per, bool $local, int $page, bool $inherited): array
+    {
+        $keep = $mode === "keep";
         return [
-            "days" => $sd === "" ? $gDays : max(0, (int) $sd),
-            "per_conv" => $sp === "" ? $gPer : max(0, (int) $sp),
-            "local" => $sl === "" ? $gLocal : ($sl !== "0"),
-            "page_size" => $sq === "" ? $gPage : max(1, min(100, (int) $sq)),
-            "inherited" => ($sd === "" && $sp === "" && $sl === "" && $sq === ""),
+            "mode" => $mode,
+            "days" => $keep ? $days : 0,
+            "per_conv" => $keep ? $per : 0,
+            // 由站点下发时也把拉过的消息在本机留一份，下次先画缓存、只补增量（漫游）
+            "local" => $keep ? $local : true,
+            "page_size" => $keep ? 0 : max(1, min(100, $page)),
+            "inherited" => $inherited,
         ];
     }
 
@@ -138,6 +167,7 @@ final class Pruner
             $st = $pdo->query("SELECT COUNT(*) FROM messages");
         }
         return [
+            "mode" => (string) $pol["mode"],
             "keep_days" => (int) $pol["days"],
             "keep_per_conv" => (int) $pol["per_conv"],
             "local" => (bool) $pol["local"],
@@ -146,6 +176,7 @@ final class Pruner
             "messages" => (int) $st->fetchColumn(),
             "last_run" => (int) self::setting($pdo, self::LAST_RUN, "0"),
             "scoped" => [
+                "mode" => self::setting($pdo, "msg." . $scopeId . ".mode", ""),
                 "keep_days" => self::setting($pdo, "msg." . $scopeId . ".keep_days", ""),
                 "keep_per_conv" => self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", ""),
                 "local" => self::setting($pdo, "msg." . $scopeId . ".local", ""),

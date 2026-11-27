@@ -15,6 +15,7 @@ use PDO;
  *   1. 内置默认值（群功能默认全开）
  *   2. 平台默认权限组（perm_groups.scope_id = 0, is_default = 1）
  *   3. 作用域自己套的权限组（scopes.perm_group_id）
+ *   4. 会话自己套的权限组（conversations.perm_group_id，私群可单独配，默认跟主群）
  *
  * perms 存 JSON 对象，只存「被改过的键」。以后新增键时旧组不用迁移。
  */
@@ -34,6 +35,7 @@ final class Perm {
     ];
 
     private static array $scopeCache = [];
+    private static array $convCache = [];
     private static array $groupCache = [];
     private static ?int $defaultId = null;
 
@@ -105,9 +107,46 @@ final class Perm {
         return self::forScope($pdo, $scopeId);
     }
 
+    /** 会话（私群）套哪个组：自己指定了就用，否则跟主群（作用域） */
+    public static function convGroupId(PDO $pdo, array $conv): int {
+        $own = (int) ($conv["perm_group_id"] ?? 0);
+        if ($own > 0) return $own;
+        return self::scopeGroupId($pdo, (int) ($conv["scope_id"] ?? 0));
+    }
+
+    /** 某个会话最终生效的群功能开关：默认组 + 会话自己的组（没指定组时跟主群完全一致） */
+    public static function forConv(PDO $pdo, array $conv): array {
+        $id = (int) ($conv["id"] ?? 0);
+        $scopeId = (int) ($conv["scope_id"] ?? 0);
+        $own  = (int) ($conv["perm_group_id"] ?? 0);
+        if ($id > 0 && isset(self::$convCache[$id])) return self::$convCache[$id];
+        if ($own <= 0) {
+            $out = self::forScope($pdo, $scopeId);
+        } else {
+            $out = self::defaults();
+            self::apply($out, self::groupPerms($pdo, self::defaultGroupId($pdo)));
+            self::apply($out, self::groupPerms($pdo, $own));
+        }
+        if ($id > 0) self::$convCache[$id] = $out;
+        return $out;
+    }
+
+    public static function canForConv(PDO $pdo, array $conv, string $key): bool {
+        $all = self::forConv($pdo, $conv);
+        if (!array_key_exists($key, $all)) return true;
+        return (bool) $all[$key];
+    }
+
+    public static function forClientConv(PDO $pdo, array $conv): array {
+        return self::clientOf(self::forConv($pdo, $conv));
+    }
+
     /** 给前端的精简群功能表 */
     public static function forClient(PDO $pdo, int $scopeId): array {
-        $all = self::forScope($pdo, $scopeId);
+        return self::clientOf(self::forScope($pdo, $scopeId));
+    }
+
+    private static function clientOf(array $all): array {
         return [
             "notice"     => !empty($all["group.notice"]),
             "invite"     => !empty($all["group.invite"]),
@@ -169,6 +208,7 @@ final class Perm {
                 ->execute([$name, $clean, $now, $id]);
             self::$groupCache = [];
             self::$scopeCache = [];
+            self::$convCache = [];
             return $id;
         }
         if ($scopeId <= 0 && !$isSuper) Json::fail("只有超级管理员能建平台级权限组");
@@ -176,6 +216,7 @@ final class Perm {
         $st->execute([$scopeId, $name, $clean, $now, $now]);
         self::$groupCache = [];
         self::$scopeCache = [];
+        self::$convCache = [];
         return (int) $pdo->lastInsertId();
     }
 
@@ -189,10 +230,31 @@ final class Perm {
         $st = $pdo->prepare("SELECT COUNT(*) FROM scopes WHERE perm_group_id = ?");
         $st->execute([$id]);
         if ((int) $st->fetchColumn() > 0) Json::fail("还有群在用这个权限组，先换掉");
+        $st = $pdo->prepare("SELECT COUNT(*) FROM conversations WHERE perm_group_id = ?");
+        $st->execute([$id]);
+        if ((int) $st->fetchColumn() > 0) Json::fail("还有私群在用这个权限组，先换掉");
         $pdo->prepare("DELETE FROM perm_groups WHERE id = ?")->execute([$id]);
         self::$groupCache = [];
         self::$scopeCache = [];
+        self::$convCache = [];
         self::$defaultId = null;
+    }
+
+    /** 把私群指到某个组（$groupId=0 表示跟主群走） */
+    public static function assignConv(PDO $pdo, int $convId, int $groupId): void {
+        $st = $pdo->prepare("SELECT id, scope_id FROM conversations WHERE id = ? LIMIT 1");
+        $st->execute([$convId]);
+        $conv = $st->fetch();
+        if (!$conv) Json::fail("会话不存在");
+        if ($groupId > 0) {
+            $row = self::requireGroup($pdo, $groupId);
+            // 组只能来自同一个群，或平台默认组
+            $own = (int) ($row["scope_id"] ?? 0);
+            if ($own !== 0 && $own !== (int) $conv["scope_id"]) Json::fail("这个权限组不属于本群");
+        }
+        $pdo->prepare("UPDATE conversations SET perm_group_id = ? WHERE id = ?")
+            ->execute([$groupId > 0 ? $groupId : null, $convId]);
+        self::$convCache = [];
     }
 
     /** 把作用域指到某个组（$groupId=0 表示回到默认） */
@@ -200,6 +262,7 @@ final class Perm {
         if ($groupId > 0) self::requireGroup($pdo, $groupId);
         $pdo->prepare("UPDATE scopes SET perm_group_id = ? WHERE id = ?")->execute([$groupId > 0 ? $groupId : null, $scopeId]);
         self::$scopeCache = [];
+        self::$convCache = [];
     }
 
     // ---- 内部 ----

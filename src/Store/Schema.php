@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 17;
+    public const VERSION = 18;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -93,6 +93,8 @@ final class Schema {
                 "notice_by" => "BIGINT NULL",
                 // 私群解散时间：解散后从会话列表消失，后台审计仍能看到历史
                 "dissolved_at" => "BIGINT NULL",
+                // 这个私群单独套哪个权限组（NULL/0 = 跟主群）
+                "perm_group_id" => "BIGINT NULL",
             ],
             // 私群成员：role = owner / admin / member；pinned_at 是各自会话列表里的置顶时间
             "conv_members" => [
@@ -118,7 +120,7 @@ final class Schema {
                     // 并发升级或权限不足时忽略，下次请求继续尝试
                 }
                 // members.adapter 是后加的列：加列之前建的 AI 全是小群客户端建的，
-                // 默认值 mcp 会让它们还拿着老 token 却被老接口拒掉，这里统一归到 xsj
+                // 默认值 mcp 会让它们拿着 token 却被 xsj 接口拒掉，这里统一归到 xsj
                 if ($added && $table === "members" && $col === "adapter") {
                     try {
                         $pdo->exec("UPDATE members SET adapter = 'xsj' WHERE kind = 'ai'");
@@ -282,7 +284,7 @@ final class Schema {
                 . "id $pk, scope_id BIGINT NOT NULL, kind VARCHAR(8) NOT NULL, title $short NULL,"
                 . " is_public TINYINT NOT NULL DEFAULT 0, dm_key $slug NULL, created_by BIGINT NULL,"
                 . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
-                . " dissolved_at BIGINT NULL,"
+                . " dissolved_at BIGINT NULL, perm_group_id BIGINT NULL,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_msg_id BIGINT NOT NULL DEFAULT 0,"
                 . " last_msg_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
