@@ -122,7 +122,7 @@ final class Moderation
                 ->execute([$until, (int) $conv["id"], $targetId]);
         }
 
-        $who = ($byRole === "super" ? "超级管理员" : "管理员") . "「" . (string) $by["name"] . "」";
+        $who = ($byRole === "super" ? "超级管理员" : ($byRole === "owner" ? "群主" : "管理员")) . "「" . (string) $by["name"] . "」";
         $tail = $until > lg_now()
             ? "禁言了「" . (string) $target["name"] . "」，解禁时间 " . self::fmtMs($until)
             : "解除了「" . (string) $target["name"] . "」的禁言";

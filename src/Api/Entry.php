@@ -34,6 +34,14 @@ final class Entry
             return;
         }
 
+        // 内建人机验证的挑战：登录页和高危操作弹窗都来领。
+        // 前端拼的是 BASE + "captcha/start"，主群是 /g/captcha/start，互通群是 /g/<slug>/captcha/start，
+        // 两种都认；这里不读会话，也就不占 session 锁。
+        if ($rest === "captcha/start" || preg_match('#^[A-Za-z0-9_-]{1,32}/captcha/start$#', $rest)) {
+            self::captchaStart();
+            return;
+        }
+
         lg_session();
 
         if (!lg_installed()) {
@@ -136,6 +144,19 @@ final class Entry
         $st->execute([$id]);
         $row = $st->fetch();
         return $row ?: null;
+    }
+
+    /** 一条挑战 + 站点配的验证方式（前端按 provider 决定画内建滑块还是嵌第三方 widget） */
+    private static function captchaStart(): void {
+        header("Content-Type: application/json; charset=utf-8");
+        header("Cache-Control: no-store");
+        $pdo = Db::connect();
+        $out = Captcha::start($pdo);
+        $cfg = Captcha::clientConfig($pdo);
+        $out["provider"] = (string) $cfg["provider"];
+        $out["site_key"] = (string) $cfg["site_key"];
+        $out["script"] = (string) $cfg["script"];
+        echo json_encode($out, JSON_UNESCAPED_UNICODE);
     }
 
     private static function rest(): string

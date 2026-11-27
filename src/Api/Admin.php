@@ -454,6 +454,7 @@ final class Admin {
         }
 
         if ($sub === "delete") {
+            Guard::require($pdo, "admin.member.delete", Input::body());
             $st = $pdo->prepare("UPDATE members SET deleted_at = ?, token_hash = NULL WHERE id = ?");
             $st->execute([lg_now(), $id]);
             $st = $pdo->prepare("UPDATE members SET banned = 1 WHERE owner_id = ? AND kind = 'ai'");
@@ -475,6 +476,7 @@ final class Admin {
         }
 
         if ($sub === "purge") {
+            Guard::require($pdo, "admin.member.purge", Input::body());
             try {
                 Account::purge($pdo, $me, $id);
             } catch (\RuntimeException $ex) {
@@ -525,6 +527,12 @@ final class Admin {
             "auth.captcha.site_key"   => "text",
             "auth.captcha.secret"     => "secret",
             "auth.captcha.verify_url" => "url",
+            // 行为验证的加强项：只在 auth.mode=captcha 时叠加工作量证明，难度 12..24
+            "captcha.pow"             => "int",
+            "captcha.pow_bits"        => "powbits",
+            // 高危操作二次验证：总开关与动作清单（逗号分隔的键，空 = 全部）
+            "verify.risk"             => "int",
+            "verify.risk.actions"     => "riskactions",
             // 邮件订阅：只有超管能配，站内信通知用户时用它发信
             "mail.enabled"            => "int",
             "mail.notify"             => "int",
@@ -595,6 +603,12 @@ final class Admin {
             // 人机验证的 Secret 同理：只回「是否配过」，不回明文
             $hasCaptchaSecret = trim($out["auth.captcha.secret"]) !== "";
             $out["auth.captcha.secret"] = "";
+            // 行为验证专项：默认不开工作量证明，难度 18（约 26 万次哈希）
+            $out["captcha.pow"] = self::setting($pdo, "captcha.pow", "0");
+            $out["captcha.pow_bits"] = self::setting($pdo, "captcha.pow_bits", "18");
+            // 高危操作二次验证：默认开、默认全部动作
+            $out["verify.risk"] = self::setting($pdo, "verify.risk", "1");
+            $out["verify.risk.actions"] = self::setting($pdo, "verify.risk.actions", "");
             // 邮箱密码同理
             $hasMailPass = trim($out["mail.pass"]) !== "";
             $out["mail.pass"] = "";
@@ -610,6 +624,8 @@ final class Admin {
                 "has_captcha_secret" => $hasCaptchaSecret,
                 "captcha_active"     => Captcha::active($pdo),
                 "captcha_warning"    => Captcha::warning($pdo),
+                "risk_actions"       => Guard::client(),
+                "risk_actions_on"    => Guard::actions($pdo),
                 "has_mail_pass"      => $hasMailPass,
                 "mail_configured"    => Mailer::configured($pdo),
                 "mail_ready"         => Mailer::notifyOn($pdo),
@@ -641,12 +657,12 @@ final class Admin {
             };
             $cap = $eff("auth.captcha.provider");
             if ($cap === "") $cap = "builtin";
-            if (!in_array($cap, ["builtin", "turnstile", "hcaptcha", "recaptcha", "geetest4"], true)) {
+            if (!in_array($cap, ["builtin", "turnstile", "hcaptcha", "recaptcha", "geetest4", "tencent"], true)) {
                 Json::fail("不认识这种人机验证方式");
             }
             if ($cap !== "builtin") {
-                $idLabel  = $cap === "geetest4" ? "Captcha ID" : "Site Key";
-                $keyLabel = $cap === "geetest4" ? "Captcha Key" : "Secret Key";
+                $idLabel  = $cap === "geetest4" ? "Captcha ID" : ($cap === "tencent" ? "AppID" : "Site Key");
+                $keyLabel = $cap === "geetest4" ? "Captcha Key" : ($cap === "tencent" ? "AppSecretKey" : "Secret Key");
                 if ($eff("auth.captcha.site_key") === "") Json::fail("用第三方验证要填 " . $idLabel . "，登录页才知道加载哪个验证框");
                 if ($eff("auth.captcha.secret") === "") Json::fail("用第三方验证要填 " . $keyLabel . "，不然服务端没法确认验证结果");
             }
@@ -671,7 +687,7 @@ final class Admin {
             } elseif ($kind === "authmode") {
                 if (!in_array($v, ["oauth", "captcha", "none"], true)) Json::fail("登录方式只能是 oauth / captcha / none");
             } elseif ($kind === "captchaprovider") {
-                if (!in_array($v, ["builtin", "turnstile", "hcaptcha", "recaptcha", "geetest4"], true)) Json::fail("人机验证只能是 builtin / turnstile / hcaptcha / recaptcha / geetest4");
+                if (!in_array($v, ["builtin", "turnstile", "hcaptcha", "recaptcha", "geetest4", "tencent"], true)) Json::fail("人机验证只能是 builtin / turnstile / hcaptcha / recaptcha / geetest4 / tencent");
             } elseif ($kind === "mport") {
                 if ($v === "") $v = "465";
                 if (!preg_match('/^\d{1,5}$/', $v) || (int) $v < 1 || (int) $v > 65535) Json::fail("邮箱端口要填 1-65535 之间的数字");
@@ -685,6 +701,16 @@ final class Admin {
                 if (!in_array($v, ["both", "stream", "sse"], true)) Json::fail("MCP 连接方式只能是 both / stream / sse");
             } elseif ($kind === "filestorage") {
                 if (!in_array($v, ["local", "db", "s3"], true)) Json::fail("文件存储只能是本地 / 二进制入库 / 对象存储");
+            } elseif ($kind === "powbits") {
+                if ($v === "") $v = "18";
+                if (!preg_match('/^\d+$/', $v) || (int) $v < 12 || (int) $v > 24) Json::fail("工作量证明难度要填 12-24 之间的数字");
+            } elseif ($kind === "riskactions") {
+                if ($v !== "") {
+                    foreach (explode(",", $v) as $one) {
+                        $one = trim($one);
+                        if ($one !== "" && !isset(Guard::ACTIONS[$one])) Json::fail("不认识的高危动作：" . $one);
+                    }
+                }
             } elseif ($kind === "email") {
                 if ($v !== "" && !filter_var($v, FILTER_VALIDATE_EMAIL)) Json::fail("「" . $k . "」不是有效的邮箱地址");
             }
@@ -1055,6 +1081,7 @@ final class Admin {
 
         // 群封禁：封了之后谁都不能发消息（群主/管理员也不行），解封由后台操作
         if ($sub === "ban") {
+            Guard::require($pdo, "admin.conv.ban", Input::body());
             $on = (string) self::in("on", "1") !== "0";
             $pdo->prepare("UPDATE scopes SET banned = ? WHERE id = ?")->execute([$on ? 1 : 0, (int) $conv["scope_id"]]);
             Compat::systemMessage(
@@ -1072,6 +1099,7 @@ final class Admin {
 
         // 群注销：大群注销整个作用域，私群解散会话；所有成员收到站内信
         if ($sub === "dissolve") {
+            Guard::require($pdo, "admin.conv.dissolve", Input::body());
             $now = lg_now();
             $sid = (int) $conv["scope_id"];
             $title = (int) $conv["is_public"] === 1
@@ -1195,6 +1223,7 @@ final class Admin {
         }
 
         if ($sub === "clear") {
+            Guard::require($pdo, "admin.conv.clear", Input::body());
             $now = lg_now();
             $st = $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = 0 WHERE conv_id = ? AND deleted_at IS NULL");
             $st->execute([$now, $convId]);

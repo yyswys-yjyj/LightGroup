@@ -6,6 +6,7 @@ import {
   resolveThemeId, refreshThemes, themeName, contrastText,
   THEME_MODES, setThemeMode, effectiveMode, themeMode, encodeThemeChoice
 } from './core.js';
+import { requireRisk as askRisk } from './verify.js';
 import { openRegionPicker } from './region.js';
 import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
@@ -355,15 +356,17 @@ function openDeleteAccount() {
   inp.autocomplete = 'off';
   inp.placeholder = '一字不差地打一遍';
   body.appendChild(inp);
-  const goBtn = btn('确认注销', 'btn btn-primary btn-wide', function () {
+  const goBtn = btn('确认注销', 'btn btn-primary btn-wide', async function () {
     const name = (inp.value || '').trim();
     if (!name) { toast('先把昵称打一遍'); inp.focus(); return; }
     goBtn.disabled = true;
+    const cap = await askRisk('account.delete', '注销账号', '注销后消息会显示「账号已注销」，不可恢复。');
+    if (cap === null) { goBtn.disabled = false; return; }
     fetch(URLS.login, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ action: 'account.delete', name: name })
+      body: JSON.stringify(Object.assign({ action: 'account.delete', name: name }, cap))
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.ok) {
         goBtn.disabled = false;

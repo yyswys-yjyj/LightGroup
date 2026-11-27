@@ -79,7 +79,14 @@ if ($path === "/") {
 if ($path === "/captcha/start") {
     header("Content-Type: application/json; charset=utf-8");
     header("Cache-Control: no-store");
-    echo json_encode(Captcha::start(), JSON_UNESCAPED_UNICODE);
+    $capPdo = \LightGroup\Store\Db::connect();
+    $capOut = Captcha::start($capPdo);
+    // 高危弹窗要知道用哪种验证、站点配了哪个 widget
+    $capCfg = Captcha::clientConfig($capPdo);
+    $capOut["provider"] = (string) $capCfg["provider"];
+    $capOut["site_key"] = (string) $capCfg["site_key"];
+    $capOut["script"] = (string) $capCfg["script"];
+    echo json_encode($capOut, JSON_UNESCAPED_UNICODE);
     exit;
 }
 

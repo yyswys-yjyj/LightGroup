@@ -4,7 +4,7 @@ $admin = $mode === "admin";
 $qs = $next !== "" ? "next=" . rawurlencode($next) : "";
 $toMember = \LightGroup\Web\Url::to("/login" . ($qs !== "" ? "?" . $qs : ""));
 $toAdmin  = \LightGroup\Web\Url::to("/login?m=admin" . ($qs !== "" ? "&" . $qs : ""));
-// 验证码：内建滑块或第三方 widget（turnstile / hcaptcha / recaptcha）
+// 验证码：内建滑块或第三方 widget（turnstile / hcaptcha / recaptcha / geetest4 / tencent）
 $cap = is_array($captcha) ? $captcha : null;
 $capProvider = $cap ? (string) $cap["provider"] : "builtin";
 $capSiteKey  = $cap ? (string) $cap["site_key"] : "";
@@ -12,6 +12,8 @@ $capScript   = $cap ? (string) $cap["script"] : "";
 $capWarn     = $cap ? (string) $cap["warning"] : "";
 if ($capProvider === "geetest4") {
     $capHint = "点一下下面的按钮，按提示完成验证";
+} elseif ($capProvider === "tencent") {
+    $capHint = "点一下下面的按钮，在弹出的框里完成验证";
 } elseif ($capProvider === "recaptcha") {
     $capHint = "点一下「我不是机器人」，过了就能进";
 } elseif ($capProvider === "hcaptcha") {
@@ -97,16 +99,18 @@ if ($capProvider === "geetest4") {
         <?php if ($captchaOn): ?>
           <?php if ($capProvider === "builtin"): ?>
         <div class="captcha" id="captcha" data-start="<?= e(\LightGroup\Web\Url::to("/captcha/start")) ?>">
-          <div class="captcha-tip"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span>拖动滑块，把小方块送到缺口上</span></div>
-          <div class="captcha-track" id="cap-track">
-            <div class="captcha-hole" id="cap-hole"></div>
+          <div class="captcha-tip"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span>按住左上角的圆点，拖到圆圈里再松手</span></div>
+          <div class="captcha-stage" id="cap-stage">
+            <div class="captcha-target" id="cap-target"></div>
             <div class="captcha-knob" id="cap-knob"><i class="fa-solid fa-angles-right" aria-hidden="true"></i></div>
           </div>
           <input type="hidden" name="cap_token" id="cap-token" value="">
-          <input type="hidden" name="cap_off" id="cap-off" value="">
+          <input type="hidden" name="cap_x" id="cap-x" value="">
+          <input type="hidden" name="cap_y" id="cap-y" value="">
           <input type="hidden" name="cap_ms" id="cap-ms" value="">
           <input type="hidden" name="cap_moves" id="cap-moves" value="">
           <input type="hidden" name="cap_path" id="cap-path" value="">
+          <input type="hidden" name="cap_pow" id="cap-pow" value="">
         </div>
           <?php else: ?>
         <div class="captcha captcha-third" id="captcha3">
@@ -117,6 +121,8 @@ if ($capProvider === "geetest4") {
           <div class="h-captcha" data-sitekey="<?= e($capSiteKey) ?>" data-hl="zh"></div>
             <?php elseif ($capProvider === "geetest4"): ?>
           <div id="geetest4-box" class="geetest4-box"></div>
+            <?php elseif ($capProvider === "tencent"): ?>
+          <div id="tencent-box" class="tencent-box"></div>
             <?php else: ?>
           <div class="g-recaptcha" data-sitekey="<?= e($capSiteKey) ?>" data-hl="zh-CN"></div>
             <?php endif; ?>
@@ -262,6 +268,46 @@ try { localStorage.removeItem("lg.token"); } catch (e) { void e; }
     ev.preventDefault();
     tip("先完成人机验证再登录");
     if (gt) gt.showCaptcha();
+  });
+})();
+<?php elseif ($captchaOn && $capProvider === "tencent"): ?>
+// 腾讯防水墙：TCaptcha.js 是异步加载的，等它挂上 TencentCaptcha 再开；
+// 通过后把 ticket + randstr 拼成 JSON 写进 cap3，服务端按这套协议校验。
+(function () {
+  var box = document.getElementById("tencent-box");
+  var form = document.querySelector(".login-form");
+  if (!box || !form) return;
+  var out = document.getElementById("cap3");
+  var passed = false;
+  var cap = null;
+  function tip(t) {
+    var s = document.querySelector("#captcha3 .captcha-tip span");
+    if (s) s.textContent = t;
+  }
+  function boot() {
+    if (typeof window.TencentCaptcha !== "function") { setTimeout(boot, 200); return; }
+    cap = new window.TencentCaptcha(<?= json_encode($capSiteKey) ?>, function (res) {
+      if (res && res.ret === 0 && res.ticket) {
+        if (out) out.value = JSON.stringify({ ticket: res.ticket, randstr: res.randstr || "" });
+        passed = true;
+        tip("验证通过，可以登录了");
+      } else {
+        tip("验证没过，点下面的按钮再试一次");
+      }
+    }, {});
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn-ghost";
+    b.textContent = "开始验证";
+    b.addEventListener("click", function () { if (cap) cap.show(); });
+    box.appendChild(b);
+  }
+  boot();
+  form.addEventListener("submit", function (ev) {
+    if (passed) return;
+    ev.preventDefault();
+    tip("先完成人机验证再登录");
+    if (cap) cap.show();
   });
 })();
 <?php else: ?>

@@ -722,6 +722,7 @@ final class Compat {
      * 之后用同名再建一次 = 复活这个账号，换个新 token。
      */
     private static function aiDelete(PDO $pdo, array $scope): void {
+        Guard::require($pdo, "ai.delete", Input::body());
         $me = self::requireMember($pdo);
         if ((string) $me["kind"] !== "human") Json::fail("只有人类账号能销毁 AI");
 
@@ -821,6 +822,7 @@ final class Compat {
         Json::ok([
             "perms"    => Perm::forClient($pdo, (int) $scope["id"]),
             "features" => Features::site($pdo, (int) $scope["id"]),
+            "risk"     => ["enabled" => Guard::enabled($pdo), "actions" => Guard::actions($pdo)],
         ]);
     }
 
@@ -876,6 +878,8 @@ final class Compat {
                 // 前端按这两份开关隐藏入口；真正的拦截在后端各接口里
                 "perms"    => Perm::forClient($pdo, (int) $scope["id"]),
                 "features" => Features::site($pdo, (int) $scope["id"]),
+                // 高危操作要不要先过人机验证：前端据此决定提交前弹不弹
+                "risk"     => ["enabled" => Guard::enabled($pdo), "actions" => Guard::actions($pdo)],
             ],
             "members" => self::membersFor($pdo, $scope, $m),
             "title" => $scope["title"],
@@ -1050,6 +1054,23 @@ final class Compat {
     }
 
     /**
+     * 会话里的管理身份。大群沿用账号角色（管理员/超管），
+     * 私群只看会话里的群主与管理员——站长在私群里只是一名成员，没有任何额外权力。
+     */
+    private static function convModerator(PDO $pdo, array $scope, array $conv, array $m): bool {
+        if ($conv === []) return false;
+        if ((int) $conv["is_public"] === 1) {
+            $role = self::roleOf($pdo, $m);
+            return $role === "admin" || $role === "super";
+        }
+        if ((string) $conv["kind"] === "pg") {
+            $r = Conv::roleIn($pdo, (int) $conv["id"], (int) $m["id"]);
+            return $r === "owner" || $r === "admin";
+        }
+        return false;
+    }
+
+    /**
      * 待办/置顶这类「消息操作」要落在消息所在的会话里：
      * 客户端带了 conv 就必须对上，而且操作者得能读那个会话（私群外的人不能动）。
      */
@@ -1065,6 +1086,12 @@ final class Compat {
 
     private static function noticeSet(PDO $pdo, array $scope): void {
         $m = self::requireModerator($pdo);
+        $cid = self::optionalConvId();
+        if ($cid > 0) {
+            $c = Conv::convById($pdo, $cid);
+            if ($c === null || (int) $c["scope_id"] !== (int) $scope["id"]) Json::fail("会话不存在");
+            if ((int) $c["is_public"] !== 1) Json::fail("私群的公告在群资料页里改", 403);
+        }
         if (!Perm::can($pdo, (int) $scope["id"], "group.notice")) Json::fail("这个群没有开放群公告", 403);
         $text = trim(Input::get("text"));
         if (mb_strlen($text) > 2000) Json::fail("公告太长，2000 字以内");
@@ -1079,7 +1106,7 @@ final class Compat {
     }
 
     private static function pinSet(PDO $pdo, array $scope): void {
-        $m = self::requireModerator($pdo);
+        $m = self::requireMember($pdo);
         if (!Perm::can($pdo, (int) $scope["id"], "group.pin")) Json::fail("这个群没有开放置顶", 403);
         $id = self::parseMid($pdo, Input::get("id"));
         if ($id <= 0) $id = Input::int("id", 0);
@@ -1092,6 +1119,8 @@ final class Compat {
         if (!$row) Json::fail("消息不在了");
         // 置顶挂在消息所在的会话上，私群的置顶不会跑到大群
         $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
+        $conv = Conv::convById($pdo, $convId);
+        if (!self::convModerator($pdo, $scope, $conv ?? [], $m)) Json::fail("只有群主或管理员能置顶", 403);
         $on = Input::get("on") !== "0";
         if ($on) {
             $st2 = $pdo->prepare("UPDATE messages SET pinned_at = ?, pinned_by = ? WHERE id = ?");
@@ -1109,8 +1138,6 @@ final class Compat {
         $id = Input::int("id", 0);
         $convId = 0;
         if ($op === "create") {
-            $role = self::roleOf($pdo, $m);
-            if ($role !== "admin" && $role !== "super") Json::fail("只有管理员能设群待办");
             if (!Perm::can($pdo, (int) $scope["id"], "group.todo")) Json::fail("这个群没有开放群待办", 403);
             $msgId = Input::int("msgId", 0);
             if ($msgId <= 0) Json::fail("要拿哪条消息做待办");
@@ -1121,6 +1148,8 @@ final class Compat {
             $row = $st->fetch();
             if (!$row) Json::fail("消息不在了");
             $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
+            $convRow = Conv::convById($pdo, $convId);
+            if (!self::convModerator($pdo, $scope, $convRow ?? [], $m)) Json::fail("只有群主或管理员能设群待办", 403);
             $dup = $pdo->prepare("SELECT id FROM todos WHERE msg_id = ? AND closed_at IS NULL LIMIT 1");
             $dup->execute([$msgId]);
             if ($dup->fetch()) Json::fail("这条已经是待办了");
@@ -1159,8 +1188,8 @@ final class Compat {
             $row = $st->fetch();
             if (!$row) Json::fail("待办不在了");
             $convId = self::convOfMessageOp($pdo, $scope, $m, (int) ($row["conv_id"] ?? 0));
-            $role = self::roleOf($pdo, $m);
-            $isAdmin = $role === "admin" || $role === "super";
+            $closeConv = Conv::convById($pdo, $convId);
+            $isAdmin = self::convModerator($pdo, $scope, $closeConv ?? [], $m);
             if (!$isAdmin && (int) $row["created_by"] !== (int) $m["id"]) {
                 Json::fail("只有管理员或发起人能撤掉这条待办");
             }
@@ -2745,9 +2774,12 @@ final class Compat {
         if (!$msg) Json::fail("消息不存在");
         if (!empty($msg["deleted_at"])) Json::fail("已经撤回过了");
 
-        $role = self::roleOf($pdo, $m);
         $isAuthor = (int) $msg["member_id"] === (int) $m["id"];
-        if (!$isAuthor && $role === "member") Json::fail("只能撤回自己的消息");
+        if (!$isAuthor) {
+            // 私群里的撤回同样看会话角色：站长不是群主/管理员就撤回不了别人的话
+            $rc = (int) ($msg["conv_id"] ?? 0) > 0 ? Conv::convById($pdo, (int) $msg["conv_id"]) : null;
+            if (!self::convModerator($pdo, $scope, $rc ?? [], $m)) Json::fail("只能撤回自己的消息");
+        }
 
         $policy = (string) ($scope["recall_policy"] ?? "5m");
         if ($policy === "5m") {

@@ -713,3 +713,22 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .rg-row .rg-street{flex:1;min-width:0}
 .rg-preview{font-size:13px;color:var(--text-dim);padding:10px 12px;border-radius:10px;background:var(--surface-2,var(--input-bg));border:1px solid var(--border)}
 .rg-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+
+/* ---------- 高危操作的人机验证弹层 ---------- */
+.vrf{display:flex;flex-direction:column;gap:10px}
+.vrf-lead{font-size:14.5px;font-weight:600;line-height:1.55}
+.vrf-hint{font-size:12.5px;color:var(--text-dim);line-height:1.6}
+.vrf-stage{position:relative;height:176px;border-radius:14px;border:1px solid var(--border);
+  background:repeating-linear-gradient(45deg,var(--surface-2) 0 10px,transparent 10px 20px),var(--surface-2);
+  overflow:hidden;touch-action:none;user-select:none}
+.vrf-target{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;
+  border:2px dashed var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.vrf-knob{position:absolute;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
+  background:var(--accent);color:var(--accent-text);box-shadow:0 4px 12px rgba(15,23,42,.22);
+  cursor:grab;touch-action:none;display:flex;align-items:center;justify-content:center}
+.vrf-knob.on{cursor:grabbing;transform:scale(1.06)}
+.vrf-knob::after{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent-text);opacity:.85}
+.vrf-tip{font-size:12.5px;color:var(--text-dim)}
+.vrf-state{font-size:12.5px;color:var(--accent-ink);min-height:18px}
+.vrf-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:2px}
+.vrf-third{min-height:70px;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px}

@@ -273,6 +273,7 @@ final class PrivateGroup {
 
             case "transfer":
                 self::mustOwner($role, "只有群主能转让群主");
+                Guard::require($pdo, "group.transfer", $body);
                 $target = self::parseId($pdo, $body["member"] ?? 0);
                 if ($target <= 0 || $target === $myId) Json::fail("选一个别的成员");
                 if (Conv::roleIn($pdo, $id, $target) === "") Json::fail("这个人不在群里");
@@ -292,6 +293,7 @@ final class PrivateGroup {
 
             case "dissolve":
                 self::mustOwner($role, "只有群主能解散群聊");
+                Guard::require($pdo, "group.dissolve", $body);
                 $pdo->prepare("UPDATE conversations SET dissolved_at = ? WHERE id = ?")->execute([lg_now(), $id]);
                 self::note($pdo, $scope, $id, $myId, "解散了群聊");
                 Json::ok(["dissolved" => true]);

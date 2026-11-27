@@ -77,3 +77,18 @@
 .captcha.done .captcha-track{border-color:var(--ok)}
 .captcha.fail .captcha-track{animation:cap-shake .32s ease}
 @keyframes cap-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+
+/* 二维滑块：从左上角拖到圆圈处 */
+.captcha-stage{position:relative;height:168px;border-radius:12px;border:1px solid var(--border);
+  background:repeating-linear-gradient(45deg,var(--surface-2) 0 10px,transparent 10px 20px),var(--surface-2);
+  overflow:hidden;touch-action:none;user-select:none;margin-bottom:8px}
+.captcha-target{position:absolute;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;
+  border:2px dashed color-mix(in srgb,var(--accent) 60%,transparent);
+  background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.captcha-knob{position:absolute;top:0;left:0;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;background:var(--accent);color:var(--accent-text);
+  box-shadow:var(--shadow-sm);cursor:grab;touch-action:none;font-size:13px}
+.captcha-knob:active{cursor:grabbing}
+.captcha.done .captcha-knob{background:var(--ok);color:var(--on-ok)}
+.captcha.done .captcha-stage{border-color:var(--ok)}
+.captcha.fail .captcha-stage{animation:cap-shake .32s ease}

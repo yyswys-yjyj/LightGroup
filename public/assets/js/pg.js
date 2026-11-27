@@ -4,6 +4,7 @@ import { avatar } from './avatar.js';
 import { refreshBars } from './msg.js';
 import { openQr, linkFor } from './qr.js';
 import * as conv from './conv.js';
+import { requireRisk } from './verify.js';
 
 let hostRef = null;
 let curId = 0;
@@ -203,7 +204,15 @@ function memberRow(g, m, myRole) {
 }
 
 async function op(action, extra) {
-  const body = Object.assign({ op: action }, extra || {});
+  // 转让和解散不可逆：提交前先过人机验证（不需要验证时返回空对象）
+  let cap = {};
+  if (action === 'transfer') {
+    cap = await requireRisk('group.transfer', '转让群主', '转完你就变成管理员，只有新群主能解散这个群。');
+  } else if (action === 'dissolve') {
+    cap = await requireRisk('group.dissolve', '解散群聊', '成员会被请出，聊天记录不再出现在他们的列表里。');
+  }
+  if (cap === null) return false;
+  const body = Object.assign({ op: action }, extra || {}, cap);
   const j = await api('api/groups/' + curId, body);
   if (!j.ok) { toast(j.err || '操作失败'); return false; }
   if (action === 'notice') {

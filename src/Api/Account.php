@@ -39,6 +39,8 @@ final class Account {
         $me = Session::member($pdo);
         if ($me === null) Json::fail("登录已失效，请重新登录");
         if ($action !== "account.delete") Json::fail("不认识的请求");
+        // 注销不可逆：先过一道人机验证（开关与清单在后台「人机验证」里）
+        Guard::require($pdo, "account.delete", Input::body());
 
         try {
             self::selfDelete($pdo, $me, Input::get("name"));

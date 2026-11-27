@@ -27,10 +27,18 @@ final class Captcha {
     public const TTL = 120000;
     /** 允许的横向误差（百分比） */
     public const TOL = 4;
+    /** 二维滑块：横纵两个方向各自的容差（百分比） */
+    public const TOL2 = 6;
     /** 人拖不可能比这更快（毫秒） */
     public const MIN_MS = 300;
     /** 轨迹至少要这么多个采样点 */
     public const MIN_MOVES = 5;
+    /** 工作量证明难度（前导 0 的十六进制位数），默认 18 位 ≈ 26 万次哈希 */
+    public const POW_DEFAULT_BITS = 18;
+    public const POW_MIN_BITS = 12;
+    public const POW_MAX_BITS = 24;
+    /** 浏览器算 PoW 的 nonce 上限，防止有人用超大整数卡服务端 */
+    public const POW_MAX_NONCE = 4000000000;
 
     /** 第三方人机验证：键 => [显示名, 官方校验地址, 前端脚本, 前端字段名] */
     public const THIRD = [
@@ -39,6 +47,8 @@ final class Captcha {
         "recaptcha" => ["Google reCAPTCHA", "https://www.google.com/recaptcha/api/siteverify", "https://www.google.com/recaptcha/api.js", "g-recaptcha-response"],
         // Geetest v4 一次返回四个值，前端拼成 JSON 塞进 cap3，字段名就统一填 cap3
         "geetest4"  => ["Geetest 行为验证 v4", "https://gcaptcha4.geetest.com/validate", "https://static.geetest.com/v4/gt4.js", "cap3"],
+        // 腾讯防水墙：前端弹自己的框，回调给 ticket + randstr，两个都要带回来校验
+        "tencent"   => ["腾讯防水墙", "https://ssl.captcha.qq.com/ticket/verify", "https://t.captcha.qq.com/TCaptcha.js", "cap3"],
     ];
 
     /** 站点登录方式：oauth（第三方门禁）/ captcha（人机验证）/ none */
@@ -87,7 +97,9 @@ final class Captcha {
 
     /** 两家对密钥的叫法不一样，配置界面的提示跟着换 */
     private static function keyLabel(string $provider): string {
-        return $provider === "geetest4" ? "Captcha Key" : "Secret Key";
+        if ($provider === "geetest4") return "Captcha Key";
+        if ($provider === "tencent") return "AppSecretKey";
+        return "Secret Key";
     }
 
     public static function siteKey(PDO $pdo): string {
@@ -116,14 +128,34 @@ final class Captcha {
         ];
     }
 
-    /** 发一条挑战：target 是滑块该停的百分比位置 */
-    public static function start(): array {
-        $now    = self::now();
-        $target = random_int(58, 88);
-        $exp    = $now + self::TTL;
-        $nonce  = bin2hex(random_bytes(6));
-        $token  = $target . "." . $exp . "." . $nonce . "." . self::sign($target . "|" . $exp . "|" . $nonce);
-        return ["ok" => true, "token" => $token, "target" => $target, "ttl" => self::TTL];
+    /**
+     * 发一条挑战：二维画布上指定一个目标点（百分比坐标），把滑块拖过去。
+     * token 里带 UA 摘要：同一份答案换浏览器/脚本提交也对不上，
+     * 配合一次性 nonce，重放与「开条挑战手工填坐标」都过不去。
+     */
+    public static function start(?PDO $pdo = null): array {
+        $now   = self::now();
+        $x     = random_int(18, 86);
+        $y     = random_int(12, 88);
+        $exp   = $now + self::TTL;
+        $nonce = bin2hex(random_bytes(6));
+        $ua    = self::uaTag();
+        $salt  = bin2hex(random_bytes(8));
+        $body  = "2|" . $x . "|" . $y . "|" . $exp . "|" . $nonce . "|" . $ua . "|" . $salt;
+        $token = "2." . $x . "." . $y . "." . $exp . "." . $nonce . "." . $ua . "." . $salt . "." . self::sign($body);
+        $out = [
+            "ok"     => true,
+            "token"  => $token,
+            "target" => ["x" => $x, "y" => $y],
+            // 老字段留着：没来得及刷新的旧页面还能按一维滑块用
+            "target_x" => $x,
+            "target_y" => $y,
+            "ttl"    => self::TTL,
+        ];
+        if ($pdo !== null && self::powOn($pdo)) {
+            $out["pow"] = ["bits" => self::powBits($pdo), "salt" => $salt];
+        }
+        return $out;
     }
 
     /**
@@ -131,21 +163,7 @@ final class Captcha {
      * 内建滑块看签名/位置/耗时/轨迹；第三方看站点的 siteverify 结果。
      */
     public static function check(PDO $pdo, array $fields): string {
-        if (!self::thirdParty($pdo)) {
-            $token = self::scalar($fields, "cap_token");
-            $ok = self::verify(
-                $token,
-                (int) self::scalar($fields, "cap_off"),
-                (int) self::scalar($fields, "cap_ms"),
-                (int) self::scalar($fields, "cap_moves"),
-                self::scalar($fields, "cap_path")
-            );
-            if (!$ok) return "人机验证没过，重新拖一下再试";
-            // 一条挑战只能换一次登录：不消费 nonce 的话，抓到一次合法请求
-            // 就能把同一份 cap_* 无限重放（攻击者不用真的拖滑块）。
-            if (!self::consume($pdo, $token)) return "这条验证已经用过了，刷新页面再拖一次";
-            return "";
-        }
+        if (!self::thirdParty($pdo)) return self::checkBuiltin($pdo, $fields);
         $p     = self::active($pdo);
         $token = self::scalar($fields, "cap3");
         if ($token === "") {
@@ -159,22 +177,79 @@ final class Captcha {
         if ($p === "geetest4") {
             return self::verifyGeetest4($pdo, $token) ? "" : "人机验证没过，重试一下";
         }
+        if ($p === "tencent") {
+            return self::verifyTencent($pdo, $token) ? "" : "人机验证没过，重试一下";
+        }
         if (!self::verifyThirdParty($pdo, $p, $token)) return "人机验证没过，重试一下";
         return "";
     }
 
-    /** 校验一条内建挑战：签名、有效期、位置、耗时、轨迹 */
-    public static function verify(string $token, int $offset, int $ms, int $moves, string $path = ""): bool {
+    /**
+     * 只认内建二维滑块：OAuth 门禁 / 无验证站点的高危操作走这里。
+     * 第三方 widget 的 token 不在这里认，避免「登录用第三方、高危用同一份 token」混过去。
+     */
+    public static function checkBuiltin(PDO $pdo, array $fields): string {
+        $token = self::scalar($fields, "cap_token");
+        // 二维滑块提交 cap_x / cap_y；只带 cap_off 的是旧一维页面
+        $hasXY = isset($fields["cap_x"]) || isset($fields["cap_y"]);
+        $x = $hasXY ? (int) self::scalar($fields, "cap_x") : (int) self::scalar($fields, "cap_off");
+        $y = $hasXY ? (int) self::scalar($fields, "cap_y") : 0;
+        $ok = self::verify(
+            $token,
+            $x,
+            (int) self::scalar($fields, "cap_ms"),
+            (int) self::scalar($fields, "cap_moves"),
+            self::scalar($fields, "cap_path"),
+            $hasXY,
+            $y
+        );
+        if (!$ok) return "人机验证没过，重新拖一下再试";
+        if (self::powOn($pdo) && !self::powCheck($pdo, $token, self::scalar($fields, "cap_pow"))) {
+            return "工作量证明没通过，重试一下";
+        }
+        // 一条挑战只能换一次登录：不消费 nonce 的话，抓到一次合法请求
+        // 就能把同一份 cap_* 无限重放（攻击者不用真的拖滑块）。
+        if (!self::consume($pdo, $token)) return "这条验证已经用过了，刷新页面再拖一次";
+    return "";
+    }
+
+    /**
+     * 校验一条内建挑战：签名、有效期、UA、位置、耗时、轨迹、工作量证明。
+     * 二维格式（新）：2.x.y.exp.nonce.ua.salt.sig，$twoD 为 true 时按 x/y 比对；
+     * 一维格式（老页面缓存）：x.exp.nonce.sig，只比 x。
+     */
+    public static function verify(string $token, int $x, int $ms, int $moves, string $path = "", bool $twoD = true, int $y = 0, string $pow = ""): bool {
         $parts = explode(".", $token);
+        $now = self::now();
+        if (count($parts) === 8 && $parts[0] === "2") {
+            [$v, $tx, $ty, $exp, $nonce, $ua, $salt, $sig] = $parts;
+            if (!ctype_digit($tx) || !ctype_digit($ty) || !ctype_digit($exp)) return false;
+            if (!preg_match('/^[0-9a-f]{12}$/', $nonce)) return false;
+            if (!preg_match('/^[0-9a-f]{8}$/', $ua)) return false;
+            if (!preg_match('/^[0-9a-f]{16}$/', $salt)) return false;
+            $body = $v . "|" . $tx . "|" . $ty . "|" . $exp . "|" . $nonce . "|" . $ua . "|" . $salt;
+            if (!hash_equals(self::sign($body), $sig)) return false;
+            if ($now > (int) $exp) return false;
+            // UA 变了（换浏览器、脚本直连）直接不过
+            if (!hash_equals($ua, self::uaTag())) return false;
+            if (abs($x - (int) $tx) > self::TOL2) return false;
+            if ($twoD && abs($y - (int) $ty) > self::TOL2) return false;
+            if ($ms < self::MIN_MS || $ms > self::TTL) return false;
+            if ($moves < self::MIN_MOVES) return false;
+            if (!self::verifyPath2($path, (int) $tx, $twoD ? (int) $ty : 0, $twoD)) return false;
+            // 工作量证明要站点配置（难度），交给 check() 校验；这里只看挑战本身
+            return true;
+        }
+        // 一维老格式
         if (count($parts) !== 4) return false;
         [$t, $exp, $nonce, $sig] = $parts;
         if (!ctype_digit($t) || !ctype_digit($exp) || !preg_match('/^[0-9a-f]{12}$/', $nonce)) return false;
         if (!hash_equals(self::sign($t . "|" . $exp . "|" . $nonce), $sig)) return false;
-        if (self::now() > (int) $exp) return false;
-        if (abs($offset - (int) $t) > self::TOL) return false;
+        if ($now > (int) $exp) return false;
+        if (abs($x - (int) $t) > self::TOL) return false;
         if ($ms < self::MIN_MS || $ms > self::TTL) return false;
         if ($moves < self::MIN_MOVES) return false;
-        if (!self::verifyPath($path, $offset)) return false;
+        if (!self::verifyPath($path, $x)) return false;
         return true;
     }
 
@@ -203,10 +278,103 @@ final class Captcha {
         return true;
     }
 
+    /**
+     * 二维轨迹校验：点格式 x:y;x:y;...
+     * 除了起终点，还看「是不是真的一路拖过去」：推进步数占比够、总路程不离谱。
+     */
+    private static function verifyPath2(string $path, int $tx, int $ty, bool $twoD): bool {
+        if ($path === "" || strlen($path) > 1024) return false;
+        $pts = [];
+        foreach (explode(";", $path) as $one) {
+            $one = trim($one);
+            if ($one === "") continue;
+            $pair = explode(":", $one);
+            if (count($pair) !== 2 || !is_numeric($pair[0]) || !is_numeric($pair[1])) return false;
+            $pts[] = [(float) $pair[0], (float) $pair[1]];
+            if (count($pts) > 64) return false;
+        }
+        if (count($pts) < self::MIN_MOVES) return false;
+        // 起点在画布左上角附近：拖的动作必须从头开始
+        if (abs($pts[0][0]) > 5 || ($twoD && abs($pts[0][1]) > 5)) return false;
+        $last = $pts[count($pts) - 1];
+        if (abs($last[0] - $tx) > self::TOL2 + 2) return false;
+        if ($twoD && abs($last[1] - $ty) > self::TOL2 + 2) return false;
+        $moved = 0;
+        $len = 0.0;
+        for ($i = 1; $i < count($pts); $i++) {
+            $dx = $pts[$i][0] - $pts[$i - 1][0];
+            $dy = $twoD ? $pts[$i][1] - $pts[$i - 1][1] : 0.0;
+            $d = sqrt($dx * $dx + $dy * $dy);
+            if ($d > 0.4) $moved++;
+            if ($d > 80) return false; // 一步跨整个画布：不是手拖
+            $len += $d;
+        }
+        if ($moved < max(3, (int) floor((count($pts) - 1) * 0.6))) return false;
+        $direct = sqrt(pow($tx, 2) + ($twoD ? pow($ty, 2) : 0));
+        if ($len > $direct * 3.2 + 80) return false;
+        return true;
+    }
+
+    /** 站点是否给内建验证叠加工作量证明（只在行为验证模式下生效） */
+    public static function powOn(PDO $pdo): bool {
+        if (self::mode($pdo) !== "captcha") return false;
+        return self::setting($pdo, "captcha.pow") === "1";
+    }
+
+    public static function powBits(PDO $pdo): int {
+        $v = (int) self::setting($pdo, "captcha.pow_bits");
+        if ($v <= 0) $v = self::POW_DEFAULT_BITS;
+        return max(self::POW_MIN_BITS, min(self::POW_MAX_BITS, $v));
+    }
+
+    /**
+     * 校验工作量证明：前端提交 nonce（0..4e9），salt 来自挑战 token。
+     * 难度取站点配置，不认客户端传入的 bits，防止把难度改成 1。
+     */
+    public static function powCheck(PDO $pdo, string $token, string $pow): bool {
+        if ($pow === "") return false;
+        if (!preg_match('/^\d{1,10}$/', $pow)) return false;
+        $n = (int) $pow;
+        if ($n < 0 || $n > self::POW_MAX_NONCE) return false;
+        $salt = self::tokenSalt($token);
+        if ($salt === "") return false;
+        return self::powVerify($salt, $pow, self::powBits($pdo));
+    }
+
+    /** 独立的 PoW 计算（测试与内部复用） */
+    public static function powVerify(string $salt, string $nonce, int $bits): bool {
+        if (!preg_match('/^\d{1,10}$/', $nonce)) return false;
+        $bits = max(self::POW_MIN_BITS, min(self::POW_MAX_BITS, $bits));
+        $hex  = hash("sha256", $salt . ":" . $nonce);
+        // 每位十六进制 4 bit：要求前 bits 位都是 0（bits 不是 4 的倍数时按位补齐）
+        $digits = intdiv($bits, 4);
+        if (substr($hex, 0, $digits) !== str_repeat("0", $digits)) return false;
+        $rest = $bits % 4;
+        if ($rest > 0) {
+            $nibble = hexdec($hex[$digits] ?? "0");
+            if ($nibble > (0xF >> $rest)) return false;
+        }
+        return true;
+    }
+
+    /** 从 token 里取 PoW 的 salt（二维格式）；一维格式没有 salt */
+    private static function tokenSalt(string $token): string {
+        $parts = explode(".", $token);
+        if (count($parts) !== 8 || $parts[0] !== "2") return "";
+        return preg_match('/^[0-9a-f]{16}$/', $parts[6]) ? $parts[6] : "";
+    }
+
+    /** 浏览器 UA 摘要：换浏览器/脚本直连时 token 对不上 */
+    private static function uaTag(): string {
+        $ua = (string) ($_SERVER["HTTP_USER_AGENT"] ?? "");
+        return substr(hash("sha256", "ua|" . $ua), 0, 8);
+    }
+
     /** 记下这条挑战已经用过；重复使用（主键冲突）返回 false */
     private static function consume(PDO $pdo, string $token): bool {
         $parts = explode(".", $token);
-        $nonce = $parts[2] ?? "";
+        // 二维挑战是 2.x.y.exp.nonce.ua.salt.sig：nonce 在第 5 段；一维老格式才在第 3 段
+        $nonce = (count($parts) === 8 && $parts[0] === "2") ? ($parts[4] ?? "") : ($parts[2] ?? "");
         if (!preg_match('/^[0-9a-f]{12}$/', $nonce)) return false;
         try {
             $pdo->prepare("INSERT INTO captcha_used (nonce, used_at) VALUES (?, ?)")->execute([$nonce, self::now()]);
@@ -323,6 +491,56 @@ final class Captcha {
         $r = json_decode($body, true);
         if (!is_array($r)) return false;
         return ($r["status"] ?? "") === "success" && ($r["result"] ?? "") === "success";
+    }
+
+    /**
+     * 腾讯防水墙二次校验。
+     * 前端回调给的是 JSON {ticket, randstr}，两个都要带回来；
+     * 官方接口 GET ticket/verify?a=... 返回 response === "1" 才算过。
+     */
+    private static function verifyTencent(PDO $pdo, string $raw): bool {
+        $j = json_decode($raw, true);
+        if (!is_array($j)) return false;
+        $ticket  = trim((string) ($j["ticket"] ?? ""));
+        $randstr = trim((string) ($j["randstr"] ?? ""));
+        if ($ticket === "" || $randstr === "") return false;
+        $secret = self::secret($pdo);
+        $aid    = self::siteKey($pdo);
+        if ($secret === "" || $aid === "") return false;
+        $url = self::verifyUrl($pdo);
+        if ($url === "") $url = self::THIRD["tencent"][1];
+        $sep = strpos($url, "?") === false ? "?" : "&";
+        $q = [
+            "aid"          => $aid,
+            "AppSecretKey" => $secret,
+            "Ticket"       => $ticket,
+            "Randstr"      => $randstr,
+            "UserIP"       => (string) ($_SERVER["REMOTE_ADDR"] ?? ""),
+        ];
+        $body = self::get($url . $sep . http_build_query($q));
+        if ($body === "") return false;
+        $r = json_decode($body, true);
+        if (!is_array($r)) return false;
+        return (string) ($r["response"] ?? "") === "1";
+    }
+
+    /** GET 一段文本：有 curl 用 curl，没有就退回 stream，超时都短 */
+    private static function get(string $url): string {
+        if (function_exists("curl_init")) {
+            $ch = @curl_init($url);
+            if ($ch === false) return "";
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 4,
+                CURLOPT_TIMEOUT        => 8,
+                CURLOPT_FOLLOWLOCATION => false,
+            ]);
+            $out = curl_exec($ch);
+            return is_string($out) ? $out : "";
+        }
+        $ctx = stream_context_create(["http" => ["method" => "GET", "timeout" => 8]]);
+        $out = @file_get_contents($url, false, $ctx);
+        return is_string($out) ? $out : "";
     }
 
     /** POST 表单：有 curl 用 curl，没有就退回 stream，超时都短，别把登录页挂住 */

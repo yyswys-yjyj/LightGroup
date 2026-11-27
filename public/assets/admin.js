@@ -128,6 +128,232 @@ function confirmBox(title, text, danger) {
   });
 }
 
+// ---------------------------------------------------------------- 高危操作验证
+// 封禁群、注销群、清空历史、删成员这些点一下就没法回头的操作，
+// 提交前先拖一次二维滑块；关掉「高危操作验证」的站点这里直接放行。
+let RISK_CFG = null;
+async function riskCfg() {
+  if (RISK_CFG) return RISK_CFG;
+  try {
+    const d = await api('settings');
+    const st = d.settings || {};
+    const raw = String(st['verify.risk.actions'] || '').trim();
+    RISK_CFG = {
+      on: st['verify.risk'] !== '0',
+      all: raw === '',
+      list: raw ? raw.split(',').map(function (x) { return x.trim(); }).filter(Boolean) : [],
+      pow: st['captcha.pow'] === '1' && (st['auth.mode'] || 'captcha') === 'captcha'
+    };
+  } catch (e) {
+    RISK_CFG = { on: false, all: false, list: [], pow: false };
+  }
+  return RISK_CFG;
+}
+
+/** 需要验证返回要随请求提交的字段；不需要返回 {}；用户取消返回 null */
+async function adminVerify(action, title, hint) {
+  const cfg = await riskCfg();
+  if (!cfg.on) return {};
+  if (!cfg.all && cfg.list.indexOf(action) < 0) return {};
+  let ch = null;
+  try {
+    const r = await fetch(BASE + 'captcha/start', { credentials: 'same-origin' });
+    ch = await r.json();
+  } catch (e) { ch = null; }
+  if (!ch || !ch.token) { toast('验证服务暂时连不上，稍后再试', 'err'); return null; }
+  return openAdmSlider(ch, title, hint, cfg);
+}
+
+function openAdmSlider(ch, title, hint, cfg) {
+  return new Promise(function (resolve) {
+    let settled = false;
+    const stage = div('adm-vrf-stage');
+    const target = div('adm-vrf-target');
+    const knob = div('adm-vrf-knob');
+    stage.append(target, knob);
+    const tip = el('p', { class: 'adm-vrf-tip', text: '按住左上角的圆点，拖到圆圈里再松手' });
+    const state = el('p', { class: 'adm-vrf-state', text: '' });
+    const body = div('adm-vrf', [hint ? el('p', { class: 'adm-vrf-hint', text: hint }) : null, stage, tip, state]);
+    const m = modal(title || '安全验证', [body], [
+      btn('重新拖', 'btn-ghost', function () { reset(); }),
+      btn('取消', 'btn-ghost', function () { done(null); }),
+    ]);
+    function done(fields) {
+      if (settled) return;
+      settled = true;
+      m.close();
+      resolve(fields);
+    }
+
+    const tx = Number(ch.target && ch.target.x) || 50;
+    const ty = Number(ch.target && ch.target.y) || 50;
+    target.style.left = tx + '%';
+    target.style.top = ty + '%';
+
+    let dragging = false;
+    let t0 = 0;
+    let path = [];
+    let busy = false;
+
+    function place(x, y) { knob.style.left = x + '%'; knob.style.top = y + '%'; }
+    function reset() {
+      path = [];
+      place(2, 2);
+      tip.textContent = '按住左上角的圆点，拖到圆圈里再松手';
+      state.textContent = '';
+      knob.classList.remove('on');
+      busy = false;
+    }
+    reset();
+
+    function at(ev) {
+      const r = stage.getBoundingClientRect();
+      let x = ((ev.clientX - r.left) / r.width) * 100;
+      let y = ((ev.clientY - r.top) / r.height) * 100;
+      return { x: Math.round(Math.max(0, Math.min(100, x))), y: Math.round(Math.max(0, Math.min(100, y))) };
+    }
+    function down(ev) {
+      if (busy) return;
+      ev.preventDefault();
+      dragging = true;
+      t0 = Date.now();
+      path = [{ x: 2, y: 2 }];
+      knob.classList.add('on');
+      tip.textContent = '拖到圆圈里再松手';
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    }
+    function move(ev) {
+      if (!dragging) return;
+      const p = at(ev);
+      place(p.x, p.y);
+      const last = path[path.length - 1];
+      if (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) >= 2) path.push(p);
+    }
+    function up() {
+      if (!dragging) return;
+      dragging = false;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      const end = path[path.length - 1] || { x: 2, y: 2 };
+      if (Math.hypot(end.x - tx, end.y - ty) > 14) {
+        tip.textContent = '没对上圆圈，再拖一次';
+        state.textContent = '';
+        return;
+      }
+      if (path.length < 4) {
+        path.push({ x: Math.round((end.x + tx) / 2), y: Math.round((end.y + ty) / 2) });
+        path.push({ x: tx, y: ty });
+      }
+      finish(path, Date.now() - t0);
+    }
+    function finish(points, ms) {
+      busy = true;
+      const last = points[points.length - 1];
+      const fields = {
+        cap_token: ch.token,
+        cap_x: String(last.x),
+        cap_y: String(last.y),
+        cap_ms: String(ms),
+        cap_moves: String(points.length),
+        cap_path: points.map(function (p) { return p.x + ':' + p.y; }).join(';')
+      };
+      if (!cfg.pow || !ch.pow) { done(fields); return; }
+      state.textContent = '正在计算工作量证明…';
+      powNonce(ch.pow.salt, Number(ch.pow.bits) || 18, function (nonce) {
+        fields.cap_pow = nonce;
+        done(fields);
+      }, function () {
+        busy = false;
+        state.textContent = '计算失败，重新拖一次';
+      });
+    }
+
+    knob.addEventListener('pointerdown', down);
+  });
+}
+
+const RISK_TEXT = {
+  'admin.conv.ban': ['封禁这个群', '封禁后所有人都不能发消息，群主和管理员也不行。'],
+  'admin.conv.dissolve': ['注销这个群', '成员都会收到站内信，历史消息仍保留在审计里。'],
+  'admin.conv.clear': ['清空会话历史', '这个会话里的所有消息都会消失，不能恢复。'],
+  'admin.member.delete': ['注销成员', '注销后该账号无法登录，历史消息保留。'],
+  'admin.member.purge': ['彻底删除成员', '成员的消息会一起删掉，不能恢复。']
+};
+function riskTitle(key) { const t = RISK_TEXT[key]; return t ? t[0] : '安全验证'; }
+function riskHint(key) { const t = RISK_TEXT[key]; return t ? t[1] : ''; }
+
+// ---------- 工作量证明（与前台 verify.js 同一套算法） ----------
+function powNonce(salt, bits, ok, no) {
+  const full = bits >> 2;
+  const rem = bits & 3;
+  const limit = 4000000000;
+  let i = 0;
+  function step() {
+    const end = Math.min(i + 20000, limit);
+    for (; i < end; i++) {
+      if (zeroBits(sha256Hex(salt + ':' + i), full, rem)) { ok(String(i)); return; }
+    }
+    if (i >= limit) { no(); return; }
+    setTimeout(step, 0);
+  }
+  step();
+}
+function zeroBits(hex, full, rem) {
+  for (let k = 0; k < full; k++) if (hex[k] !== '0') return false;
+  if (rem === 0) return true;
+  return parseInt(hex[full], 16) < (1 << (4 - rem));
+}
+const SHA_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+];
+function sha256Hex(str) {
+  const bytes = new TextEncoder().encode(str);
+  const l = bytes.length;
+  const total = (((l + 9) >> 6) + 1) << 6;
+  const buf = new Uint8Array(total);
+  buf.set(bytes);
+  buf[l] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(total - 4, (l * 8) >>> 0, false);
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+  const w = new Int32Array(64);
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(off + i * 4, false);
+    for (let i = 16; i < 64; i++) {
+      const a = w[i - 15], b = w[i - 2];
+      const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
+      const s1 = ((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, hh = h7;
+    for (let i = 0; i < 64; i++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (hh + S1 + ch + SHA_K[i] + w[i]) | 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0;
+      d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + hh) | 0;
+  }
+  function hex(n) { return ('00000000' + (n >>> 0).toString(16)).slice(-8); }
+  return hex(h0) + hex(h1) + hex(h2) + hex(h3) + hex(h4) + hex(h5) + hex(h6) + hex(h7);
+}
+
 function pageHead(title, desc, actions) {
   return div('page-head', [
     div('page-head-l', [
@@ -779,6 +1005,23 @@ async function renderPermGroups(box) {
         }
       }
       const n = Object.keys(g.perms || {}).length;
+      if (cv.private && !cv.dissolved) {
+        if (m.role !== 'owner') {
+          acts.push(btn('移出', 'btn-ghost btn-sm', async function () {
+            if (!(await confirmBox('移出成员', '把「' + (m.name || '') + '」移出这个群？', true))) return;
+            await act('member', { op: 'remove', member: m.id }, '已移出');
+          }));
+          if (m.role === 'admin') {
+            acts.push(btn('取消管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'member' }, '已取消管理员'); }));
+          } else {
+            acts.push(btn('设管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'admin' }, '已设为管理员'); }));
+          }
+          acts.push(btn('转让群主', 'btn-ghost btn-sm', async function () {
+            if (!(await confirmBox('转让群主', '把群主转给「' + (m.name || '') + '」？你自己会变成管理员。', true))) return;
+            await act('member', { op: 'owner', member: m.id }, '已转让群主');
+          }));
+        }
+      }
       return [
         el('td', {}, [div('cell-name', [
           el('b', { text: g.name }),
@@ -950,8 +1193,15 @@ async function memberAct(m, sub, on) {
     const ok = await confirmBox('注销成员', '注销「' + m.name + '」后该账号无法登录，历史消息保留。继续？', true);
     if (!ok) return;
   }
+  const risk = sub === 'purge' ? 'admin.member.purge' : (sub === 'delete' ? 'admin.member.delete' : '');
+  let extra = {};
+  if (risk) {
+    extra = await adminVerify(risk, riskTitle(risk), riskHint(risk));
+    if (extra === null) return;
+  }
   try {
-    await api('members/' + m.id + '/' + sub, sub === 'ban' ? { on: on ? 1 : 0 } : {});
+    const body = sub === 'ban' ? { on: on ? 1 : 0 } : Object.assign({}, extra);
+    await api('members/' + m.id + '/' + sub, body);
     toast('操作成功');
     go('members');
   } catch (e) { toast(e.message, 'err'); }
@@ -1295,6 +1545,7 @@ async function renderCaptcha(box) {
     { value: 'hcaptcha', label: 'hCaptcha' },
     { value: 'recaptcha', label: 'Google reCAPTCHA v2' },
     { value: 'geetest4', label: 'Geetest 行为验证 v4' },
+    { value: 'tencent', label: '腾讯防水墙' },
   ], st['auth.captcha.provider'] || 'builtin');
 
   const siteKey = textInput('auth.captcha.site_key', st['auth.captcha.site_key'] || '', '第三方给的 Site Key');
@@ -1317,15 +1568,18 @@ async function renderCaptcha(box) {
     third.style.display = isThird ? '' : 'none';
     // Geetest 那边把公钥/密钥叫 Captcha ID / Captcha Key
     const isGt = provider.value === 'geetest4';
+    const isTc = provider.value === 'tencent';
+    const idName = isGt ? 'Captcha ID' : (isTc ? 'AppID' : 'Site Key');
+    const keyName = isGt ? 'Captcha Key' : (isTc ? 'AppSecretKey' : 'Secret Key');
     const lk = idField.querySelector('.field-label');
     const lkk = keyField.querySelector('.field-label');
-    if (lk) lk.textContent = isGt ? 'Captcha ID' : 'Site Key';
-    if (lkk) lkk.textContent = isGt ? 'Captcha Key' : 'Secret Key';
-    siteKey.placeholder = isGt ? 'Geetest 后台的 Captcha ID' : '第三方给的 Site Key';
+    if (lk) lk.textContent = idName;
+    if (lkk) lkk.textContent = keyName;
+    siteKey.placeholder = isGt ? 'Geetest 后台的 Captcha ID' : (isTc ? '腾讯云后台的 AppID' : '第三方给的 Site Key');
     if (!secret.value) {
       secret.placeholder = d.has_captcha_secret
         ? '已保存，留空不修改'
-        : (isGt ? 'Geetest 后台的 Captcha Key' : '第三方给的 Secret Key');
+        : (isGt ? 'Geetest 后台的 Captcha Key' : (isTc ? '腾讯云后台的 AppSecretKey' : '第三方给的 Secret Key'));
     }
     status.innerHTML = '';
     if (mode.value === 'oauth') {
@@ -1368,6 +1622,64 @@ async function renderCaptcha(box) {
       }, 'fa-floppy-disk'),
     ]),
   ], { icon: 'fa-shield-halved' }));
+
+  // 行为验证专项：高危动作清单 + 工作量证明
+  const riskOn = el('input', { type: 'checkbox', checked: st['verify.risk'] !== '0' });
+  const powOn = el('input', { type: 'checkbox', checked: st['captcha.pow'] === '1' });
+  const powBits = selectInput('captcha.pow_bits', [
+    { value: '14', label: '14 位（最省电，适合手机）' },
+    { value: '16', label: '16 位' },
+    { value: '18', label: '18 位（默认）' },
+    { value: '20', label: '20 位（老机器要多等几秒）' },
+    { value: '22', label: '22 位（很慢）' },
+  ], st['captcha.pow_bits'] || '18');
+
+  const rawActions = String(st['verify.risk.actions'] || '').trim();
+  const onList = rawActions ? rawActions.split(',').map(function (x) { return x.trim(); }).filter(Boolean) : [];
+  const boxes = {};
+  const actionGrid = div('form-grid');
+  (d.risk_actions || []).forEach(function (a) {
+    // 空的清单 = 全部开启，所以没配过的时候默认全勾上
+    const cb = el('input', { type: 'checkbox', checked: onList.length === 0 || onList.indexOf(a.key) >= 0 });
+    boxes[a.key] = cb;
+    actionGrid.append(el('label', { class: 'check-line' }, [cb, el('span', { text: a.label })]));
+  });
+
+  const powBlock = div('form-grid', [
+    el('label', { class: 'check-line span2' }, [powOn, el('span', { text: '叠加工作量证明（浏览器算一小段哈希，人感觉不到，批量爆破会明显变慢）' })]),
+    field('证明难度', powBits, '只在「登录验证方式 = 内建滑块验证码」时生效'),
+  ]);
+  function paintPow() { powBlock.style.display = mode.value === 'captcha' ? '' : 'none'; }
+  mode.addEventListener('change', paintPow);
+  paintPow();
+
+  box.append(card('高危操作验证', [
+    el('form', { class: 'adm-form' }, [
+      el('label', { class: 'check-line' }, [riskOn, el('span', { text: '高危操作提交前再验证一次（关掉就只靠账号本身）' })]),
+      el('p', { class: 'field-hint', text: '滑块只出现在网页上；带 token 的接口调用（MCP、REST、小群适配器）不受影响。' }),
+      el('div', { class: 'field-label', text: '哪些动作要验证' }),
+      actionGrid,
+      powBlock,
+    ]),
+    div('form-foot', [
+      btn('保存高危验证设置', 'btn-primary', async function () {
+        const picked = Object.keys(boxes).filter(function (k) { return boxes[k].checked; });
+        // 全选就存空串（“全部”），省得以后新增动作默认被关掉
+        const all = picked.length === Object.keys(boxes).length;
+        try {
+          await api('settings', {
+            'verify.risk': riskOn.checked ? '1' : '0',
+            'verify.risk.actions': all ? '' : picked.join(','),
+            'captcha.pow': powOn.checked ? '1' : '0',
+            'captcha.pow_bits': powBits.value,
+          });
+          RISK_CFG = null;
+          toast('高危验证设置已保存');
+          go('captcha');
+        } catch (e) { toast(e.message, 'err'); }
+      }, 'fa-floppy-disk'),
+    ]),
+  ], { icon: 'fa-triangle-exclamation' }));
 }
 
 // ---------------------------------------------------------------- 邮件通知
@@ -1737,9 +2049,15 @@ function convMetaItem(label, value) {
 /** 会话审计详情：独立子页 #/convs/<id>，信息面板放全，不再用弹窗 */
 async function renderConvAudit(box, id) {
   box.classList.add('conv-audit');
-  async function act(path, body, okMsg) {
+  async function act(path, body, okMsg, risk) {
+    // risk 是 Guard 里的动作键，传了就先过一道人机验证
+    let extra = {};
+    if (risk) {
+      extra = await adminVerify(risk, riskTitle(risk), riskHint(risk));
+      if (extra === null) return;
+    }
     try {
-      await api('convs/' + id + '/' + path, body || {});
+      await api('convs/' + id + '/' + path, Object.assign({}, body || {}, extra));
       toast(okMsg || '已完成');
       await paint();
     } catch (e) { toast(e.message, 'err'); }
@@ -1758,6 +2076,8 @@ async function renderConvAudit(box, id) {
       return;
     }
     const cv = d.conv || {};
+    // 私群、私聊只做审计：管理动作只在大群上出现（后端同样拦着）
+    const isPub = Number(cv.isPublic) === 1;
     const rows = cv.memberRows || [];
     const msgs = d.msgs || [];
     const kindText = cv.isPublic ? '大群' : (cv.private ? '私群' : '私聊');
@@ -1788,7 +2108,8 @@ async function renderConvAudit(box, id) {
     ];
     box.append(card('基本信息', [div('conv-meta', metaPairs.map(function (kv) { return convMetaItem(kv[0], kv[1]); }))], { icon: 'fa-circle-info' }));
 
-    // 管理：广播、群封禁、全员禁言、群注销；每个动作都会在会话里留一条系统提示
+    // 管理：广播、群封禁、全员禁言、群注销。
+    // 审计面板是有留痕的管理通道：这里的每个动作都会在会话里留一条系统提示，成员看得到。
     const modKids = [];
     const bcTa = el('textarea', { class: 'adm-input conv-bc', rows: '2', placeholder: '广播内容，会以系统提示发到这个会话' });
     modKids.push(div('conv-mod-row', [
@@ -1803,7 +2124,7 @@ async function renderConvAudit(box, id) {
     const modBtns = [];
     modBtns.push(btn(banned ? '解除群封禁' : '封禁这个群', banned ? 'btn-ghost btn-sm' : 'btn-danger btn-sm', async function () {
       if (!banned && !(await confirmBox('封禁这个群', '封禁后所有人都不能发消息，群主和管理员也不行。', true))) return;
-      await act('ban', { on: banned ? '0' : '1' }, banned ? '已解除封禁' : '已封禁');
+      await act('ban', { on: banned ? '0' : '1' }, banned ? '已解除封禁' : '已封禁', 'admin.conv.ban');
     }, banned ? 'fa-lock-open' : 'fa-lock'));
     modBtns.push(btn(wmUntil ? '解除全员禁言' : '全员禁言', 'btn-ghost btn-sm', async function () {
       if (wmUntil) { await act('mute_all', { on: '0' }, '已解除全员禁言'); return; }
@@ -1818,11 +2139,12 @@ async function renderConvAudit(box, id) {
         ? '整个群会被注销，所有成员都会收到站内信，历史消息仍保留在审计里。'
         : '这个群会解散，成员都会收到站内信，历史消息仍保留在审计里。';
       if (!(await confirmBox('注销这个群', tip, true))) return;
-      await act('dissolve', {}, '已注销');
+      await act('dissolve', {}, '已注销', 'admin.conv.dissolve');
     }, 'fa-trash-can'));
     modKids.push(div('conv-mod-acts', modBtns));
     if (banned) modKids.push(el('p', { class: 'conv-mod-tip', text: '这个群已被封禁，所有人都不能发消息。' }));
     if (wmUntil) modKids.push(el('p', { class: 'conv-mod-tip', text: '全员禁言到 ' + fmtDT(wmUntil) + '。' }));
+    modKids.unshift(el('p', { class: 'adm-tip', text: '这里的每个动作都会在会话里留一条系统提示，成员能看到。' }));
     box.append(card('管理', modKids, { icon: 'fa-gavel' }));
 
     const permKids = [];
@@ -1882,23 +2204,6 @@ async function renderConvAudit(box, id) {
           btn('确定', 'btn-primary', function () { mm.close(); act('mute', { member: m.id, minutes: min.value }, '已更新禁言'); }),
         ]);
       }));
-      if (cv.private && !cv.dissolved) {
-        if (m.role !== 'owner') {
-          acts.push(btn('移出', 'btn-ghost btn-sm', async function () {
-            if (!(await confirmBox('移出成员', '把「' + (m.name || '') + '」移出这个群？', true))) return;
-            await act('member', { op: 'remove', member: m.id }, '已移出');
-          }));
-          if (m.role === 'admin') {
-            acts.push(btn('取消管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'member' }, '已取消管理员'); }));
-          } else {
-            acts.push(btn('设管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'admin' }, '已设为管理员'); }));
-          }
-          acts.push(btn('转让群主', 'btn-ghost btn-sm', async function () {
-            if (!(await confirmBox('转让群主', '把群主转给「' + (m.name || '') + '」？你自己会变成管理员。', true))) return;
-            await act('member', { op: 'owner', member: m.id }, '已转让群主');
-          }));
-        }
-      }
       return [
         el('td', {}, [div('cell-name', [el('b', { text: m.name || ('#' + m.id) }), m.gone ? el('span', { class: 'badge muted', text: '已退出' }) : null])]),
         el('td', { class: 'muted', text: m.username || '—' }),
@@ -1917,8 +2222,10 @@ async function renderConvAudit(box, id) {
       el('span', { class: 'conv-count', text: '最近 ' + msgs.length + ' 条' }),
       btn('清空历史', 'btn-danger btn-sm', async function () {
         if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。', true))) return;
+        const cap = await adminVerify('admin.conv.clear', riskTitle('admin.conv.clear'), riskHint('admin.conv.clear'));
+        if (cap === null) return;
         try {
-          const r = await api('convs/' + id + '/clear', {});
+          const r = await api('convs/' + id + '/clear', cap);
           toast('已清空 ' + r.cleared + ' 条');
           paint();
         } catch (e) { toast(e.message, 'err'); }

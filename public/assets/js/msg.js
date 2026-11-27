@@ -39,6 +39,10 @@ export function isMine(m) {
 }
 
 export function canModerate() {
+  // 私群只看会话里的身份：站长在私群里也是普通成员，管理动作要留痕，不能走客户端特权
+  if (S.cur && S.cur.kind === 'pg') {
+    return S.cur.role === 'owner' || S.cur.role === 'admin';
+  }
   const r = (S.me && S.me.role) || '';
   return r === 'admin' || r === 'super' || (S.me && S.me.badge === 'admin');
 }
