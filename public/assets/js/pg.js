@@ -90,18 +90,25 @@ function paintGuest(g) {
   body.appendChild(ops);
 }
 
+// 权限组是群功能开关：后端返回的 perm 里 false 表示这个群关了该功能
+function perm(key) {
+  const p = (data && data.group && data.group.perm) || {};
+  return p[key] !== false;
+}
+
 function paint() {
   if (!hostRef || !data) return;
   const g = data.group;
   if (g.isMember === false) { paintGuest(g); return; }
   const members = data.members || [];
+  const total = g.members || members.length;
   const role = g.role || 'member';
   hostRef.textContent = '';
   const page = h('div', 'chat-page');
   const acts = [];
-  if (g.isOwner) acts.push(iconBtn('fa-pen', '改群名', renameSheet));
-  acts.push(iconBtn('fa-qrcode', '群二维码', function () { groupQr(g); }));
-  page.appendChild(head(g.title || '群聊', members.length + ' 人 · ' + (ROLE_TEXT[role] || '成员'), acts));
+  if (g.isOwner && perm('rename')) acts.push(iconBtn('fa-pen', '改群名', renameSheet));
+  if (perm('qr')) acts.push(iconBtn('fa-qrcode', '群二维码', function () { groupQr(g); }));
+  page.appendChild(head(g.title || '群聊', total + ' 人 · ' + (ROLE_TEXT[role] || '成员'), acts));
   const body = h('div', 'page-body');
   page.appendChild(body);
   hostRef.appendChild(page);
@@ -110,7 +117,7 @@ function paint() {
   body.appendChild(memberCard(g, members, role));
 
   const ops = h('div', 'pg-ops');
-  ops.appendChild(btn('＋ 邀请成员', 'btn btn-line', inviteSheet));
+  if (role !== 'member' || perm('invite')) ops.appendChild(btn('＋ 邀请成员', 'btn btn-line', inviteSheet));
   if (role !== 'owner') ops.appendChild(btn('退出群聊', 'btn btn-ghost', leaveGroup));
   else ops.appendChild(btn('解散群聊', 'btn btn-danger', dissolveGroup));
   body.appendChild(ops);
@@ -120,7 +127,7 @@ function noticeCard(g, role, members) {
   const card = h('section', 'pg-card');
   const head2 = h('div', 'pg-card-h');
   head2.appendChild(h('b', '', '群公告'));
-  if (role === 'owner' || role === 'admin') {
+  if ((role === 'owner' || role === 'admin') && perm('notice')) {
     head2.appendChild(btn(g.notice ? '编辑' : '发布', 'btn btn-xs btn-ghost', noticeSheet));
   }
   card.appendChild(head2);
@@ -148,8 +155,12 @@ function noticeCard(g, role, members) {
 function memberCard(g, members, role) {
   const card = h('section', 'pg-card pg-members');
   const head2 = h('div', 'pg-card-h');
-  head2.appendChild(h('b', '', '群成员 ' + members.length));
+  head2.appendChild(h('b', '', '群成员 ' + (g.members || members.length)));
   card.appendChild(head2);
+  if (!members.length) {
+    card.appendChild(h('p', 'pg-notice empty', '这个群没有开放成员列表。'));
+    return card;
+  }
   const list = h('div', 'list-card');
   members.forEach(function (m) { list.appendChild(memberRow(g, m, role)); });
   card.appendChild(list);
@@ -172,7 +183,7 @@ function memberRow(g, m, myRole) {
 
   const acts = h('div', 'row-acts');
   const canKick = myRole === 'owner' ? r !== 'owner' : (myRole === 'admin' ? r === 'member' : false);
-  if (g.isOwner && r !== 'owner' && !m.gone) {
+  if (g.isOwner && perm('admin') && r !== 'owner' && !m.gone) {
     acts.appendChild(btn(r === 'admin' ? '取消管理员' : '设管理员', 'btn btn-xs btn-ghost', function () {
       op('role', { member: m.id, role: r === 'admin' ? 'member' : 'admin' });
     }));
@@ -181,7 +192,7 @@ function memberRow(g, m, myRole) {
       op('transfer', { member: m.id });
     }));
   }
-  if (canKick && !m.gone) {
+  if (canKick && perm('admin') && !m.gone) {
     acts.appendChild(btn('移出', 'btn btn-xs btn-ghost danger', function () {
       if (!confirm('把「' + (m.name || '这位') + '」移出群聊？')) return;
       op('remove', { member: m.id });

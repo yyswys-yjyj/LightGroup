@@ -40,6 +40,8 @@ final class Compat {
      */
     public static function dispatch(PDO $pdo, array $scope, string $path): void {
         self::$ctxScope = $scope;
+        // 消息剪枝：到点才真跑，平时只多一条 settings 查询
+        \LightGroup\Store\Pruner::maybeRun($pdo);
         self::assertLegacyAdapter($pdo, $path);
         // 长消息全文：签名链接，不要求登录，AI 客户端拿到就能直接取纯文本
         if (str_starts_with($path, "api/txt/")) {
@@ -62,6 +64,8 @@ final class Compat {
             case "api/qr":    self::qr(); break;
             case "api/recall":  self::recall($pdo, $scope); break;
             case "api/profile": self::profile($pdo, $scope); break;
+            case "api/perm":    self::permInfo($pdo, $scope); break;
+            case "api/discover": Discover::handle($pdo, $scope); break;
             case "api/styles":  self::styles($pdo, $scope); break;
             case "api/cap":     self::cap($pdo, $scope); break;
             case "api/session": self::sessionLogin($pdo, $scope); break;
@@ -248,6 +252,7 @@ final class Compat {
             $m = self::$acting;
             if (!empty($m["deleted_at"])) Json::fail("账号已注销");
             if ((int) $m["banned"] === 1) Json::fail("该账号已被封禁");
+            self::assertAiReachable($pdo, $m);
             self::assertScope($pdo, $m);
             return $m;
         }
@@ -264,8 +269,26 @@ final class Compat {
             $m = self::adoptScope($pdo, self::$ctxScope) ?? $m;
         }
 
+        self::assertAiReachable($pdo, $m);
         self::assertScope($pdo, $m);
         return $m;
+    }
+
+    /**
+     * 被站点设置关掉的 AI 不能再调接口：全站关了 AI，或者它用的适配器被关了。
+     * 人类成员不受影响；后台还能看到这些 AI，只是它们连不上。
+     */
+    private static function assertAiReachable(PDO $pdo, array $m): void {
+        if ((string) ($m["kind"] ?? "") !== "ai") return;
+        if (!Features::on($pdo, "ai")) {
+            Json::fail("本站已关闭 AI 账号，这个身份暂时不可用", 403);
+        }
+        $adapter = (string) ($m["adapter"] ?? "mcp");
+        $adapter = in_array($adapter, ["xsj", "mcp", "api"], true) ? $adapter : "mcp";
+        if (!Features::adapter($pdo, $adapter)) {
+            $label = ["xsj" => "小群（xsj）", "mcp" => "MCP", "api" => "REST（api）"];
+            Json::fail("本站已关闭「" . ($label[$adapter] ?? $adapter) . "」适配器，这个 AI 暂时不可用", 403);
+        }
     }
 
     private static function setting(PDO $pdo, string $key, string $default = "0"): string {
@@ -416,6 +439,19 @@ final class Compat {
         return $out;
     }
 
+    /**
+     * 成员名单：群主/管理员总能看到，普通成员看权限组里的 group.member_list。
+     * 关闭时只给空数组，人数另外按 scope 统计。
+     */
+    private static function membersFor(PDO $pdo, array $scope, array $m): array {
+        $role = self::roleOf($pdo, $m);
+        if ($role !== "admin" && $role !== "super" && !Perm::can($pdo, (int) $scope["id"], "group.member_list")) {
+            return [];
+        }
+        return self::membersOf($pdo, (int) $scope["id"]);
+    }
+
+
     /** 成员的角标身份：管理员账号在群里要显示「管理员」「超级管理员」 */
     private static function badgeMap(PDO $pdo): array {
         $out = [];
@@ -459,6 +495,10 @@ final class Compat {
             ]);
         }
 
+        // 站点设置里关掉自助注册后，已存在的成员仍能凭邀请码重进，但不允许再建新号
+        if (!Features::on($pdo, "register")) {
+            Json::fail("本站没有开放自助注册，请联系管理员", 403);
+        }
         self::checkHumanQuota($pdo, $scope);
 
         // 脚本/AI 批量建号会把群刷爆：同一个 IP 10 分钟内只放行一个新账号
@@ -599,6 +639,11 @@ final class Compat {
         $adapter = strtolower(trim(Input::get("adapter")));
         if ($adapter === "") $adapter = "mcp";
         if (!in_array($adapter, ["xsj", "mcp", "api"], true)) Json::fail("适配器只认 xsj、mcp、api");
+        if (!Features::on($pdo, "ai")) Json::fail("本站没有开放 AI 账号", 403);
+        if (!Features::adapter($pdo, $adapter)) {
+            $label = ["xsj" => "小群（xsj）", "mcp" => "MCP", "api" => "REST（api）"];
+            Json::fail("本站没有开放「" . ($label[$adapter] ?? $adapter) . "」适配器", 403);
+        }
         if ($name === "" || mb_strlen($name) > 24) Json::fail("AI 名字不能为空，且不超过 24 个字");
 
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? LIMIT 1");
@@ -737,6 +782,15 @@ final class Compat {
         }
     }
 
+    /** 前端刷新权限开关用（菜单、按钮显隐），真正的拦截在各接口里 */
+    private static function permInfo(PDO $pdo, array $scope): void {
+        self::requireMember($pdo);
+        Json::ok([
+            "perms"    => Perm::forClient($pdo, (int) $scope["id"]),
+            "features" => Features::site($pdo, (int) $scope["id"]),
+        ]);
+    }
+
     private static function me(PDO $pdo, array $scope): void {
         $m = self::requireMember($pdo);
         $up = $pdo->prepare("UPDATE members SET last_seen_at = ? WHERE id = ?");
@@ -775,8 +829,19 @@ final class Compat {
                 // 这个群身份是不是走 OAuth 门禁建的：是的话「我的资料」里要能去
                 // /oauth/accounts 挑或新建业务账号
                 "oauth"    => (int) ($m["oauth_id"] ?? 0) > 0,
+                "bioMode"  => (string) ($m["bio_mode"] ?? "plain") === "markdown" ? "markdown" : "plain",
+                "tags"     => self::profileTags($m),
+                "birthday" => (string) ($m["birthday"] ?? ""),
+                "age"      => Profile::ageOf((string) ($m["birthday"] ?? "")),
+                "gender"   => (string) ($m["gender"] ?? ""),
+                "signature"=> (string) ($m["signature"] ?? ""),
+                "email"    => (string) ($m["email"] ?? ""),
+                "discover" => (int) ($m["discover"] ?? 1) === 1,
+                // 前端按这两份开关隐藏入口；真正的拦截在后端各接口里
+                "perms"    => Perm::forClient($pdo, (int) $scope["id"]),
+                "features" => Features::site($pdo, (int) $scope["id"]),
             ],
-            "members" => self::membersOf($pdo, (int) $scope["id"]),
+            "members" => self::membersFor($pdo, $scope, $m),
             "title" => $scope["title"],
             "invite" => (string) $scope["invite"],
             "recall_policy" => (string) ($scope["recall_policy"] ?? "5m"),
@@ -795,6 +860,19 @@ final class Compat {
             "friends"    => Social::countFriends($pdo, (int) $m["id"]),
             "pending"    => Social::countPending($pdo, (int) $m["id"]),
         ]);
+    }
+
+    /** 成员标签：库里存 JSON 数组，读坏了就当没有 */
+    private static function profileTags(array $m): array {
+        $raw = (string) ($m["tags"] ?? "");
+        if ($raw === "") return [];
+        $row = json_decode($raw, true);
+        if (!is_array($row)) return [];
+        $out = [];
+        foreach ($row as $t) {
+            if (is_scalar($t) && trim((string) $t) !== "") $out[] = (string) $t;
+        }
+        return array_slice($out, 0, 5);
     }
 
     // ---------- 群公告 / 置顶 / 群待办 ----------
@@ -951,6 +1029,7 @@ final class Compat {
 
     private static function noticeSet(PDO $pdo, array $scope): void {
         $m = self::requireModerator($pdo);
+        if (!Perm::can($pdo, (int) $scope["id"], "group.notice")) Json::fail("这个群没有开放群公告", 403);
         $text = trim(Input::get("text"));
         if (mb_strlen($text) > 2000) Json::fail("公告太长，2000 字以内");
         if ($text === "") {
@@ -965,6 +1044,7 @@ final class Compat {
 
     private static function pinSet(PDO $pdo, array $scope): void {
         $m = self::requireModerator($pdo);
+        if (!Perm::can($pdo, (int) $scope["id"], "group.pin")) Json::fail("这个群没有开放置顶", 403);
         $id = self::parseMid(Input::get("id"));
         if ($id <= 0) $id = Input::int("id", 0);
         if ($id <= 0) Json::fail("要置顶哪一条");
@@ -995,6 +1075,7 @@ final class Compat {
         if ($op === "create") {
             $role = self::roleOf($pdo, $m);
             if ($role !== "admin" && $role !== "super") Json::fail("只有管理员能设群待办");
+            if (!Perm::can($pdo, (int) $scope["id"], "group.todo")) Json::fail("这个群没有开放群待办", 403);
             $msgId = Input::int("msgId", 0);
             if ($msgId <= 0) Json::fail("要拿哪条消息做待办");
             $ids = self::scopeIds($pdo, $scope);
@@ -1780,6 +1861,7 @@ final class Compat {
 
     private static function friendRequest(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
+        if (!Features::social($pdo, "friend")) Json::fail("本站没有开放加好友", 403);
         Social::request($pdo, $scope, $me, self::friendTarget($pdo, $scope));
         Json::ok(self::friendCounts($pdo, $me));
     }
@@ -1844,6 +1926,7 @@ final class Compat {
     /** POST api/dm/open：先必须是好友，再复用/新建私聊 */
     private static function dmOpen(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
+        if (!Features::social($pdo, "dm")) Json::fail("本站没有开放私聊", 403);
         $targetId = self::friendTarget($pdo, $scope);
         if ($targetId === (int) $me["id"]) Json::fail("不能和自己私聊");
         $target = Social::scopeMember($pdo, $scope, $targetId);
@@ -1863,6 +1946,7 @@ final class Compat {
      */
     private static function dmInvite(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
+        if (!Features::social($pdo, "dm")) Json::fail("本站没有开放私聊", 403);
         if ((string) $me["kind"] === "ai") Json::fail("只有人能邀请 AI");
 
         $convId = (int) (Input::get("conv") !== "" ? Input::get("conv") : Input::get("id"));
@@ -2842,7 +2926,7 @@ final class Compat {
                 break;
             case "messages/recall":
             case "recall":      self::recall($pdo, $scope); break;
-            case "members":     Json::ok(["members" => self::membersOf($pdo, (int) $scope["id"])]); break;
+            case "members":     Json::ok(["members" => self::membersFor($pdo, $scope, $m)]); break;
             case "wait":        self::wait($pdo, $scope); break;
             case "cap":         self::cap($pdo, $scope); break;
             default:            Json::fail("未知接口"); break;

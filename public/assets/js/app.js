@@ -12,6 +12,9 @@ import * as people from './people.js';
 import * as me from './me.js';
 import * as space from './space.js';
 import * as pg from './pg.js';
+import * as more from './more.js';
+import * as discover from './discover.js';
+import { trimTotal, setServerAllowed } from './store.js';
 
 const APP = document.getElementById('app');
 let convTimer = 0;
@@ -87,7 +90,7 @@ function railTab(key, label, ic, on) {
     }
     setListOpen(false);
     if (key === 'contacts') go('#/friends');
-    else if (key === 'space') go('#/space');
+    else if (key === 'space') go('#/more');
     else go('#/me');
   });
   return b;
@@ -108,7 +111,7 @@ function fillRail() {
   const ct = railTab('contacts', '联系人', 'fa-user-group', S.page === 'friends' || S.page === 'members');
   if (people.pendingCount() > 0) ct.appendChild(h('span', 'req-badge', String(people.pendingCount())));
   rail.appendChild(ct);
-  const st = railTab('space', '空间', 'fa-compass', S.page === 'space');
+  const st = railTab('space', '更多', 'fa-ellipsis', S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover');
   if (space.unreadCount() > 0) st.appendChild(h('span', 'req-badge', String(space.unreadCount())));
   rail.appendChild(st);
   // 「个人」只在手机上出现，桌面有左上角头像按钮
@@ -123,7 +126,7 @@ function refreshRailState() {
   const on = {
     chat: S.page === 'chat',
     contacts: S.page === 'friends' || S.page === 'members',
-    space: S.page === 'space',
+    space: S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover',
     me: S.page === 'me' || S.page === 'appearance',
   };
   rail.querySelectorAll('.rail-tab').forEach(function (b) {
@@ -204,7 +207,8 @@ function renderRoute() {
   const innerEl = hostEl ? hostEl.querySelector('.page-body') : null;
   const keepInnerY = innerEl ? innerEl.scrollTop : 0;
   S.page = r.page;
-  ensureSidePane(r.page === 'space' ? 'space' : 'chat');
+  const sideSpace = r.page === 'space';
+  ensureSidePane(sideSpace ? 'space' : 'chat');
   closeSheet();
 
   if (r.page === 'chat') {
@@ -218,6 +222,8 @@ function renderRoute() {
     else if (r.page === 'groups') people.renderGroups(host);
     else if (r.page === 'pg') pg.renderGroup(host, r.id);
     else if (r.page === 'members') people.renderMembers(host);
+    else if (r.page === 'more') more.renderMore(host);
+    else if (r.page === 'discover') discover.renderDiscover(host);
     else if (r.page === 'space') space.renderSpace(host);
     else if (r.page === 'scan') space.renderScan(host);
     else if (r.page === 'me') me.renderProfile(host);
@@ -280,7 +286,11 @@ async function bootChat() {
     toLogin();
     return;
   }
-  if (j.me) S.me = j.me;
+  if (j.me) {
+    S.me = j.me;
+    // 管理员（站点 / 本群）关了本机保存时，本地缓存一律当关
+    setServerAllowed(!(S.me.features && S.me.features.msg && S.me.features.msg.local === false));
+  }
   if (j.members && j.members.length) {
     S.members = j.members;
     S.memberSig = j.members.map(function (m) { return m.id + ':' + m.name + ':' + (m.avatar ? 1 : 0); }).join('|');
@@ -343,6 +353,9 @@ function boot() {
     if (ev && ev.detail && typeof ev.detail.unread === 'number') refreshRailState();
   });
   window.addEventListener('hashchange', function () { /* startRouter 已接管 */ });
+
+  // 本机消息缓存超了就按最旧的丢，别等到写满浏览器配额才报错
+  trimTotal().catch(function () { /* 静默 */ });
 
   // 登录态由服务端会话决定（未登录服务端已 302 到 /login），这里直接按 api/me 探活
   bootChat();

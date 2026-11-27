@@ -1,6 +1,14 @@
 // LightGroup · 空间：群里的小广场（动态 + 站内信）
 import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteName, hhmm } from './core.js';
 import { avatar } from './avatar.js';
+
+// 站点功能开关：空间总开关与发/赞/评三项，都在 S.me.features 里
+function feat(group, key) {
+  const box = ((S.me && S.me.features) || {})[group];
+  if (box === false) return false;
+  if (!box || typeof box !== 'object') return true;
+  return box[key] !== false;
+}
 import { openImage } from './msg.js';
 import { shrinkImage } from './chat.js';
 import { canScan, followScan, decodeSource, decodeFile } from './qr.js';
@@ -43,6 +51,12 @@ let sideEl = null;
 export function renderSpace(host) {
   hostEl = host;
   host.textContent = '';
+  if (!feat('space', 'enabled')) {
+    const empty = h('div', 'page-body sp-page');
+    empty.appendChild(h('div', 'sp-empty', '本站没有开放空间。'));
+    host.appendChild(empty);
+    return;
+  }
   const body = h('div', 'page-body sp-page');
   host.appendChild(body);
   const inner = h('div', 'sp-inner');
@@ -82,7 +96,6 @@ export function renderSideList(host) {
     ['mine', 'fa-user-pen', '我的动态', 0],
     ['notice', 'fa-bell', '通知', unread],
   ];
-  if (canScan()) items.push(['scan', 'fa-qrcode', '扫描器', 0]);
   items.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || it[0] === tab;
     const b = document.createElement('button');
@@ -93,7 +106,6 @@ export function renderSideList(host) {
     b.appendChild(h('span', '', it[2]));
     if (it[3] > 0) b.appendChild(h('span', 'req-badge', it[3] > 99 ? '99+' : String(it[3])));
     b.addEventListener('click', function () {
-      if (it[0] === 'scan') { go('#/scan'); return; }
       if (it[0] === 'notice') { tab = 'notice'; }
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
@@ -146,9 +158,11 @@ function cover() {
   row.appendChild(meta);
 
   const acts = h('div', 'sp-profile-acts');
-  const write = btn('发动态', 'btn-primary btn-sm', openComposer);
-  write.insertBefore(icon('fa-pen'), write.firstChild);
-  acts.appendChild(write);
+  if (feat('space', 'post')) {
+    const write = btn('发动态', 'btn-primary btn-sm', openComposer);
+    write.insertBefore(icon('fa-pen'), write.firstChild);
+    acts.appendChild(write);
+  }
   row.appendChild(acts);
 
   wrap.appendChild(row);
@@ -167,7 +181,6 @@ function tabs() {
   const tabs = h('div', 'sp-tabs');
   // 桌面用左栏导航（扫描器也在那边），手机的页签是唯一导航，所以这里也得有一项
   const list = [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']];
-  if (canScan()) list.push(['scan', '扫描器']);
   list.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine)
       || (it[0] === 'notice' && tab === 'notice');
@@ -177,7 +190,6 @@ function tabs() {
     b.appendChild(h('span', '', it[1]));
     if (it[0] === 'notice' && unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
     b.addEventListener('click', function () {
-      if (it[0] === 'scan') { go('#/scan'); return; }
       if (it[0] === 'notice') tab = 'notice';
       else { tab = 'feed'; mine = it[0] === 'mine'; }
       tag = '';
@@ -702,7 +714,7 @@ function itemNode(m, list) {
     like.appendChild(icon(m.liked ? 'fa-solid fa-heart' : 'fa-regular fa-heart'));
     like.appendChild(h('span', '', m.likes ? String(m.likes) : '赞'));
   });
-  acts.appendChild(like);
+  if (feat('space', 'like')) acts.appendChild(like);
 
   const cm = document.createElement('button');
   cm.type = 'button';
@@ -715,7 +727,7 @@ function itemNode(m, list) {
     if (old) old.remove();
     if (openComment === m.id) el.appendChild(commentBox(m, el));
   });
-  acts.appendChild(cm);
+  if (feat('space', 'comment')) acts.appendChild(cm);
   el.appendChild(acts);
 
   if (m.comments && m.comments.length) {

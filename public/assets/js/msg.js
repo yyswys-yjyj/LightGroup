@@ -43,6 +43,12 @@ export function canModerate() {
   return r === 'admin' || r === 'super' || (S.me && S.me.badge === 'admin');
 }
 
+// 群功能开关（权限组）；后端也会拦，这里只是别让菜单里出现点不动的项
+export function permOn(key) {
+  const p = (S.me && S.me.perms) || {};
+  return p[key] !== false;
+}
+
 export function isDm() { return !!(S.cur && S.cur.kind === 'dm'); }
 // 私群的公告/成员放在群资料页，聊天页顶部不挂大群那几条横幅
 export function isPg() { return !!(S.cur && S.cur.kind === 'pg'); }
@@ -449,9 +455,11 @@ export function msgMenu(m, x, y) {
     if (displayText(m)) items.push(['翻译', 'fa-language', () => doTranslate(m)]);
     items.push(['复制文字', 'fa-copy', () => copyText(displayText(m) || (m.img ? '[图片]' : (m.voice ? '[语音]' : '')))]);
     if (!isDm() && canModerate()) {
-      const pinned = (S.pins || []).some(function (p) { return p.id === m.id; });
-      items.push([pinned ? '取消置顶' : '置顶这条', 'fa-thumbtack', () => togglePin(m, !pinned)]);
-      items.push(['设为群待办', 'fa-list-check', () => makeTodo(m)]);
+      if (permOn('pin')) {
+        const pinned = (S.pins || []).some(function (p) { return p.id === m.id; });
+        items.push([pinned ? '取消置顶' : '置顶这条', 'fa-thumbtack', () => togglePin(m, !pinned)]);
+      }
+      if (permOn('todo')) items.push(['设为群待办', 'fa-list-check', () => makeTodo(m)]);
     }
   }
   items.push(['撤回', 'fa-rotate-left', () => doRecall(m)]);

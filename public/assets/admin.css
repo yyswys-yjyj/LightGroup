@@ -488,3 +488,8 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
 .push-opt-top{display:flex;align-items:center;gap:8px}
 .push-opt-top b{font-size:14px}
 .push-opt .hint{margin:6px 0 0 22px;font-size:12px;color:var(--text-dim);line-height:1.6}
+
+/* 功能开关：两列铺开的 checkbox 网格；小标题只分组，不加边框 */
+.adm-switch-grid { display: flex; flex-wrap: wrap; gap: 9px 26px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }
+.adm-subhead { font-size: 12px; font-weight: 600; color: var(--text-dim); margin: 10px 0 0; }
+.adm-perm-keys { display: flex; flex-wrap: wrap; gap: 9px 26px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }

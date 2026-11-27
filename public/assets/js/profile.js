@@ -312,7 +312,16 @@ export async function loadUserProfile(uid, force) {
     const own = {
       id: S.me.id, uid: key, name: S.me.name, kind: S.me.kind, role: S.me.role || 'member',
       color: S.me.color, bio: S.me.bio || '', avatar: S.me.avatar || '', joined: S.me.joined || 0,
-      owner: S.me.owner || '', isMe: true, friends: 'me'
+      owner: S.me.owner || '', isMe: true, friends: 'me',
+      // 资料页要按这些字段显示：简介模式、标签、生日/年龄、性别、签名、邮箱
+      bioMode: S.me.bioMode || 'plain',
+      tags: Array.isArray(S.me.tags) ? S.me.tags : [],
+      birthday: S.me.birthday || '',
+      age: S.me.age || 0,
+      gender: S.me.gender || '',
+      signature: S.me.signature || '',
+      email: S.me.email || '',
+      discover: S.me.discover !== false
     };
     CACHE.set(key, own);
     return own;
@@ -387,15 +396,27 @@ function paintCard(el, member, p) {
   head.appendChild(info);
   el.appendChild(head);
 
-  const bio = h('div', 'pf-pop-bio md-body');
+  if (p && p.signature) el.appendChild(h('div', 'pf-pop-sign', String(p.signature)));
+
+  const bio = h('div', 'pf-pop-bio');
   if (!p) {
     bio.appendChild(h('div', 'pf-pop-empty', '简介加载中…'));
   } else if (!String(p.bio || '').trim()) {
     bio.appendChild(h('div', 'pf-pop-empty', '还没有写简介'));
-  } else {
+  } else if (p.bioMode === 'markdown') {
+    bio.classList.add('md-body');
     bio.innerHTML = mdHtml(p.bio);
+  } else {
+    bio.classList.add('pf-bio-plain');
+    bio.textContent = String(p.bio).replace(/\s+/g, ' ').slice(0, 140);
   }
   el.appendChild(bio);
+
+  if (p && Array.isArray(p.tags) && p.tags.length) {
+    const tl = h('div', 'pf-tags pf-tags-sm');
+    p.tags.slice(0, 5).forEach(function (t) { tl.appendChild(h('span', 'pf-tag', '#' + t)); });
+    el.appendChild(tl);
+  }
 
   const acts = h('div', 'pf-pop-acts');
   acts.appendChild(btn('查看资料', 'btn btn-sm btn-primary', function () {
@@ -606,6 +627,10 @@ function placeCard(el, anchor) {
   el.style.top = Math.round(top) + 'px';
 }
 
+function genderText(g) {
+  return g === 'male' ? '男' : (g === 'female' ? '女' : (g === 'other' ? '其它' : ''));
+}
+
 function goToUser(uid) {
   const target = '#/u/' + uid;
   if (location.hash === target) { checkRoute(); return; }
@@ -742,15 +767,32 @@ function paintUserPage(uid, p) {
     if (d.kind === 'ai') bits.push(d.owner ? 'AI · ' + d.owner + ' 的' : 'AI 成员');
     if (d.kind === 'ai' && d.adapter) bits.push(adapterText(d.adapter));
     else bits.push(roleText(d));
+    if (d.age) bits.push(d.age + ' 岁');
+    if (d.gender) bits.push(genderText(d.gender));
     if (d.joined) bits.push('自 ' + fmtDay(d.joined) + ' 成为成员');
     if (d.scope === 'cluster') bits.push('不在这个群');
     else if (d.scope === 'other') bits.push('不在同一圈子');
     info.appendChild(h('div', 'pf-hero-sub', bits.join(' · ')));
 
-    const bio = h('div', 'pf-hero-bio md-body');
-    if (!String(d.bio || '').trim()) bio.appendChild(h('div', 'pf-pop-empty', '这个人还没写介绍。'));
-    else bio.innerHTML = mdHtml(d.bio);
+    if (d.signature) info.appendChild(h('div', 'pf-hero-sign', String(d.signature)));
+
+    const bio = h('div', 'pf-hero-bio');
+    if (!String(d.bio || '').trim()) {
+      bio.appendChild(h('div', 'pf-pop-empty', '这个人还没写介绍。'));
+    } else if (d.bioMode === 'markdown') {
+      bio.classList.add('md-body');
+      bio.innerHTML = mdHtml(d.bio);
+    } else {
+      bio.classList.add('pf-bio-plain');
+      bio.textContent = d.bio;
+    }
     info.appendChild(bio);
+
+    if (Array.isArray(d.tags) && d.tags.length) {
+      const tl = h('div', 'pf-tags');
+      d.tags.forEach(function (t) { tl.appendChild(h('span', 'pf-tag', '#' + t)); });
+      info.appendChild(tl);
+    }
 
     const acts = h('div', 'pf-hero-acts');
     cardActions(acts, d, d);
@@ -803,6 +845,12 @@ function paintUserPage(uid, p) {
     if (d && d.joined) meta.appendChild(h('span', 'pf-card-tag', '加入于 ' + fmtDay(d.joined)));
     if (d && d.kind === 'ai') meta.appendChild(h('span', 'pf-card-tag', 'AI 成员'));
     if (d && d.kind === 'ai' && d.adapter) meta.appendChild(h('span', 'pf-card-tag', adapterText(d.adapter)));
+    if (d && d.birthday) meta.appendChild(h('span', 'pf-card-tag', '生日 ' + d.birthday));
+    if (d && d.gender) meta.appendChild(h('span', 'pf-card-tag', genderText(d.gender)));
+    if (d && d.email) meta.appendChild(h('span', 'pf-card-tag', String(d.email)));
+    if (d && Array.isArray(d.tags) && d.tags.length) {
+      d.tags.forEach(function (t) { meta.appendChild(h('span', 'pf-card-tag', '#' + t)); });
+    }
     card.appendChild(meta);
     const stat = h('div', 'pf-stat-row');
     stat.appendChild(statCell('动态', counts.moments));

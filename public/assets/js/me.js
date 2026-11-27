@@ -10,6 +10,7 @@ import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
 import { openQr, linkFor } from './qr.js';
 import { loadMembers } from './people.js';
+import { clearAll } from './store.js';
 
 // ---------- 个人首页 ----------
 // 功能平铺在首页，表单收进子页；移动端底栏「个人」就落在这里。
@@ -98,10 +99,14 @@ function paintMeHome(host) {
 
   const grid = h('div', 'me-grid');
   grid.appendChild(meEntry('fa-pen', '我的资料', '昵称、头像、介绍', function () { meView = 'edit'; paintMe(); }));
-  grid.appendChild(meEntry('fa-qrcode', '我的二维码', '别人扫一下就能找到我', function () {
-    openQr('我的二维码', linkFor('user', me.id || ''), '别人扫这个码能直接打开你的资料页。');
-  }));
-  grid.appendChild(meEntry('fa-robot', '我的 AI 账号', aiN ? aiN + ' 个，适配器与 token' : '还没有，去建一个', function () { meView = 'ai'; paintMe(); }));
+  if (featOk('social', 'qr')) {
+    grid.appendChild(meEntry('fa-qrcode', '我的二维码', '别人扫一下就能找到我', function () {
+      openQr('我的二维码', linkFor('user', me.id || ''), '别人扫这个码能直接打开你的资料页。');
+    }));
+  }
+  if (featOk('ai')) {
+    grid.appendChild(meEntry('fa-robot', '我的 AI 账号', aiN ? aiN + ' 个，适配器与 token' : '还没有，去建一个', function () { meView = 'ai'; paintMe(); }));
+  }
   grid.appendChild(meEntry('fa-palette', '气泡与外观', '深浅、主题、气泡、壁纸', function () { go('#/appearance'); }));
   if (me.oauth) {
     grid.appendChild(meEntry('fa-users-gear', '业务账号', '进群前挑一个身份', function () {
@@ -113,7 +118,10 @@ function paintMeHome(host) {
       openAdmin(ev.currentTarget);
     }));
   }
-  grid.appendChild(meEntry('fa-right-from-bracket', '退出登录', '这台设备不再保持登录', function () { location.href = URLS.logout; }));
+  grid.appendChild(meEntry('fa-right-from-bracket', '退出登录', '这台设备不再保持登录', function () {
+    // 登录态一走就把设备上的消息一起清掉，别留给下一个人
+    clearAll().finally(function () { location.href = URLS.logout; });
+  }));
   body.appendChild(grid);
 
   if (role === 'member' && me.kind !== 'ai') {
@@ -152,16 +160,17 @@ function paintMeAi(host) {
 function renderProfileEdit(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('我的资料', '昵称、头像、介绍'));
+  page.appendChild(pageHead('我的资料', '昵称、头像、资料'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
 
+  const me = S.me || {};
   const av = h('div', 'av-row');
   if (S.me) av.appendChild(avatar(S.me, 56));
   const avInfo = h('div', 'av-info');
-  avInfo.appendChild(h('b', '', (S.me && S.me.name) || ''));
-  avInfo.appendChild(h('small', '', (S.me && S.me.kind === 'ai') ? 'AI 成员' : '人类成员'));
+  avInfo.appendChild(h('b', '', me.name || ''));
+  avInfo.appendChild(h('small', '', me.kind === 'ai' ? 'AI 成员' : '人类成员'));
   av.appendChild(avInfo);
   av.appendChild(btn('换头像', 'btn btn-ghost btn-sm', pickAvatar));
   body.appendChild(av);
@@ -171,29 +180,121 @@ function renderProfileEdit(host) {
     v.id = 'f-name';
     v.className = 'tb';
     v.type = 'text';
-    v.value = (S.me && S.me.name) || '';
+    v.value = me.name || '';
     row.appendChild(v);
   });
-  field(body, '介绍', function (row) {
-    const v = document.createElement('textarea');
-    v.id = 'f-intro';
+
+  // 介绍：默认纯文本（普通用户不用记 Markdown），点「高级模式」才换成 Markdown 框
+  let mdMode = me.bioMode === 'markdown';
+  const introWrap = h('div', 'bio-edit');
+  body.appendChild(introWrap);
+  function paintIntro() {
+    introWrap.textContent = '';
+    const head = h('div', 'bio-edit-h');
+    head.appendChild(h('b', '', '介绍'));
+    head.appendChild(btn(mdMode ? '用纯文本' : '高级模式（Markdown）', 'btn btn-ghost btn-xs', function () {
+      mdMode = !mdMode;
+      paintIntro();
+    }));
+    introWrap.appendChild(head);
+
+    const ta = document.createElement('textarea');
+    ta.id = 'f-bio';
+    ta.className = 'tb';
+    ta.value = me.bio || '';
+    if (mdMode) {
+      ta.rows = 8;
+      ta.placeholder = '支持 Markdown：**粗体**、# 标题、- 列表、[链接](https://…)、行内代码';
+      introWrap.appendChild(ta);
+      introWrap.appendChild(copyNote('按 Markdown 排版显示在资料页。'));
+    } else {
+      ta.rows = 5;
+      ta.placeholder = '随便写点什么，换行会原样保留。';
+      introWrap.appendChild(ta);
+      introWrap.appendChild(copyNote('纯文本：怎么打就怎么显示，不用记格式。'));
+    }
+  }
+  paintIntro();
+
+  field(body, '标签（1-5 个）', function (row) {
+    const v = document.createElement('input');
+    v.id = 'f-tags';
     v.className = 'tb';
-    v.rows = 3;
-    v.value = (S.me && (S.me.intro || S.me.bio)) || '';
+    v.type = 'text';
+    v.placeholder = '摄影, 骑行, 手冲咖啡';
+    v.value = (me.tags || []).join('，');
     row.appendChild(v);
   });
+  body.appendChild(copyNote('用逗号分开，最多 5 个。标签会参与「发现」里的匹配。'));
+
+  field(body, '生日', function (row) {
+    const v = document.createElement('input');
+    v.id = 'f-birthday';
+    v.className = 'tb';
+    v.type = 'date';
+    v.value = me.birthday || '';
+    row.appendChild(v);
+  });
+  body.appendChild(copyNote('只显示年龄，不显示具体日期。'));
+
+  field(body, '性别', function (row) {
+    const sel = document.createElement('select');
+    sel.id = 'f-gender';
+    sel.className = 'tb';
+    [['', '不填'], ['male', '男'], ['female', '女'], ['other', '其它']].forEach(function (it) {
+      const o = document.createElement('option');
+      o.value = it[0];
+      o.textContent = it[1];
+      sel.appendChild(o);
+    });
+    sel.value = me.gender || '';
+    row.appendChild(sel);
+  });
+
+  field(body, '签名', function (row) {
+    const v = document.createElement('input');
+    v.id = 'f-signature';
+    v.className = 'tb';
+    v.type = 'text';
+    v.maxLength = 80;
+    v.placeholder = '一句话介绍自己';
+    v.value = me.signature || '';
+    row.appendChild(v);
+  });
+
+  field(body, '邮箱', function (row) {
+    const v = document.createElement('input');
+    v.id = 'f-email';
+    v.className = 'tb';
+    v.type = 'email';
+    v.placeholder = 'you@example.com';
+    v.value = me.email || '';
+    row.appendChild(v);
+  });
+  body.appendChild(copyNote('邮箱只有你自己看得到，不会出现在资料页。'));
+
   const sw = h('label', 'sw-row');
   const inv = document.createElement('input');
   inv.type = 'checkbox';
   inv.id = 'f-allow-invite';
-  inv.checked = !(S.me && S.me.allowInvite === false);
+  inv.checked = me.allowInvite !== false;
   sw.appendChild(inv);
   sw.appendChild(h('span', '', '允许他人把我拉进群聊'));
   body.appendChild(sw);
   body.appendChild(copyNote('关掉后，别人建群时选不到你。'));
 
-  body.appendChild(btn('保存', 'btn btn-primary btn-wide', saveProfile));
+  if (featOk('social', 'discover')) {
+    const sw2 = h('label', 'sw-row');
+    const disc = document.createElement('input');
+    disc.type = 'checkbox';
+    disc.id = 'f-discover';
+    disc.checked = me.discover !== false;
+    sw2.appendChild(disc);
+    sw2.appendChild(h('span', '', '允许别人在「发现」里找到我'));
+    body.appendChild(sw2);
+  }
 
+  body.appendChild(btn('保存', 'btn btn-primary btn-wide', function () { saveProfile(mdMode); }));
 }
 
 /**
@@ -245,6 +346,15 @@ export function openAdmin(button) {
   location.href = URLS.admin;
 }
 
+// 站点功能开关（后台「功能开关」），跟群功能权限组是两回事
+function feats() { return (S.me && S.me.features) || {}; }
+function featOk(group, key) {
+  const f = feats();
+  if (key === undefined) return f[group] !== false;
+  const box = f[group] || {};
+  return box[key] !== false;
+}
+
 // 创建 AI 时选适配器：xsj 给小群插件，mcp 给 MCP 客户端，api 给 REST 客户端
 let aiAdapter = 'xsj';
 
@@ -268,10 +378,21 @@ function myAiBlock() {
   paintMyAi(list);
   box.appendChild(list);
 
+  const adOn = feats().adapters || {};
+  const adList = [['xsj', '小群（xsj）'], ['mcp', 'MCP'], ['api', 'API']].filter(function (o) {
+    return adOn[o[0]] !== false;
+  });
+  if (!adList.length) {
+    box.appendChild(h('div', 'page-sec', '新建 AI'));
+    box.appendChild(h('div', 'page-tip', '站点没有开放任何 AI 适配器。'));
+    return box;
+  }
+  if (!adList.some(function (o) { return o[0] === aiAdapter; })) aiAdapter = adList[0][0];
+
   const hint = h('div', 'page-tip', adapterHint(aiAdapter));
   const pick = h('div', 'chip-row');
   const chips = {};
-  [['xsj', '小群（xsj）'], ['mcp', 'MCP'], ['api', 'API']].forEach(function (o) {
+  adList.forEach(function (o) {
     const b = btn(o[1], 'chip' + (aiAdapter === o[0] ? ' on' : ''), function () {
       aiAdapter = o[0];
       Object.keys(chips).forEach(function (k) { chips[k].classList.toggle('on', k === aiAdapter); });
@@ -391,16 +512,26 @@ async function copy(t) {
   catch (e) { toast('复制不了，手动选一下吧'); }
 }
 
-function saveProfile() {
-  const nameEl = document.getElementById('f-name');
-  const introEl = document.getElementById('f-intro');
-  const name = nameEl ? nameEl.value.trim() : '';
-  const intro = introEl ? introEl.value : '';
-  const invEl = document.getElementById('f-allow-invite');
+function saveProfile(mdMode) {
+  const get = function (id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  const name = get('f-name').trim();
   if (!name) { toast('昵称不能空着'); return; }
+  const tags = get('f-tags').split(/[,，\s]+/).filter(Boolean).slice(0, 5);
+  const invEl = document.getElementById('f-allow-invite');
+  const discEl = document.getElementById('f-discover');
   api('api/profile', {
     name: name,
-    bio: intro,
+    bio: get('f-bio'),
+    bioMode: mdMode ? 'markdown' : 'plain',
+    tags: tags,
+    birthday: get('f-birthday'),
+    gender: get('f-gender'),
+    signature: get('f-signature'),
+    email: get('f-email').trim(),
+    discover: discEl && discEl.checked ? '1' : '0',
     allowInvite: invEl && invEl.checked ? '1' : '0'
   }).then(function (j) {
     if (!j.ok) { toast(j.err || '保存失败'); return; }

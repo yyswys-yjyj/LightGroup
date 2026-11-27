@@ -596,3 +596,48 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 /* 一条消息里文字和图片排在同一段：图片按行内块跟着文字走，不单独占一行 */
 .txt.rich{display:block;white-space:pre-wrap;word-break:break-word}
 .txt.rich .pic.inline{display:inline-block;vertical-align:middle;max-width:min(168px,52%);max-height:112px;width:auto;margin:2px 5px 2px 0;border-radius:9px}
+
+
+/* 资料编辑：纯文本 / Markdown 两态 */
+.bio-edit{margin:4px 0 14px}
+.bio-edit-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.bio-edit-h b{font-size:13px;color:var(--text-dim);font-weight:600}
+.bio-edit textarea{width:100%}
+
+/* 资料页新字段 */
+.pf-bio-plain{white-space:pre-wrap;word-break:break-word}
+.pf-hero-sign{margin:6px 0 2px;font-size:13px;color:var(--text-dim);font-style:italic}
+.pf-pop-sign{margin:2px 0 8px;font-size:12.5px;color:var(--text-dim);font-style:italic}
+.pf-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.pf-tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:12px;line-height:1.6}
+.pf-tags-sm{margin:6px 0 0}
+.pf-tags-sm .pf-tag{font-size:11.5px;padding:1px 7px}
+
+/* 发现 */
+.dc-tip{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 14px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.dc-tip-txt{display:flex;flex-direction:column;gap:3px;min-width:0}
+.dc-tip-txt b{font-size:13.5px}
+.dc-tip-txt span{font-size:12px;color:var(--text-dim)}
+.dc-list{display:flex;flex-direction:column;gap:10px}
+.dc-card{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);cursor:pointer;color:inherit}
+.dc-card:hover{border-color:var(--accent)}
+.dc-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.dc-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.dc-top b{font-size:14.5px}
+.dc-meta{font-size:12px;color:var(--text-dim);padding:1px 7px;border-radius:999px;background:var(--surface-2)}
+.dc-sign{font-size:12.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dc-why{font-size:11.5px;color:var(--accent-ink)}
+.dc-score{flex:none;min-width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-ink);font-size:12.5px;font-weight:600}
+
+/* 消息存储（更多 → 消息存储） */
+.ms-store{display:flex;flex-direction:column;gap:10px}
+.ms-opt{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+.ms-opt.on{border-color:var(--accent);background:var(--surface-2)}
+.ms-opt input{width:16px;height:16px;margin-top:3px;accent-color:var(--accent);flex:0 0 auto}
+.ms-opt-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ms-opt-txt b{font-size:14px}
+.ms-opt-txt span{font-size:12px;color:var(--text-dim);line-height:1.5}
+.ms-count{margin:2px 0 0}
+
+.ms-opt.off{opacity:.55;cursor:not-allowed}
+.ms-opt.off input{cursor:not-allowed}

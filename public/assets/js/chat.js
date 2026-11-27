@@ -8,6 +8,7 @@ import { msgNode, refreshBars, clearReply, isDm, setReply, applyRecall } from '.
 import * as side from './side.js';
 import * as conv from './conv.js';
 import { openProfileCard } from './people.js';
+import { localEnabled, getMsgs, putMsgs, remember } from './store.js';
 
 let feedEl = null;
 let mountedId = null;
@@ -48,7 +49,14 @@ function isNearBottom() {
   return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 180;
 }
 
+let userScrolled = false;
 function onFeedScroll() {
+  if (!userScrolled) return;
+  if (feedEl && feedEl.scrollTop < 120) loadOlder();
+}
+// 内容不够一屏时滚动条不动，scroll 事件可能根本不来；触摸/滚轮本身就算「用户要往上翻」
+function onUserScroll() {
+  userScrolled = true;
   if (feedEl && feedEl.scrollTop < 120) loadOlder();
 }
 
@@ -78,6 +86,9 @@ async function loadOlder() {
   if (!older.length) { hasOlder = false; return; }
   S.msgs = older.concat(S.msgs);
   hasOlder = !!j.more;
+  if (localEnabled()) {
+    putMsgs(id, older).catch(function () { /* 静默 */ });
+  }
   renderFeed();
   if (feedEl) feedEl.scrollTop = feedEl.scrollHeight - beforeHeight + beforeTop;
 }
@@ -117,6 +128,7 @@ export function mount(id) {
     S.mode = (S.convApi || cid !== 0) ? 'conv' : 'legacy';
     hasOlder = true;
     olderLoading = false;
+    userScrolled = false;
   }
   S.page = 'chat';
   build();
@@ -173,6 +185,8 @@ function build() {
   feedEl = h('div', 'feed');
   feedEl.id = 'feed';
   feedEl.addEventListener('scroll', onFeedScroll, { passive: true });
+  feedEl.addEventListener('wheel', onUserScroll, { passive: true });
+  feedEl.addEventListener('touchmove', onUserScroll, { passive: true });
   page.appendChild(feedEl);
   page.appendChild(buildComposer());
 
@@ -501,13 +515,29 @@ function renderError(msg) {
 async function initLoad() {
   const id = S.curId;
   const my = gen;
-  const j = await api('api/conv?id=' + id + '&since=0&limit=50');
+  // 开了本机存储：先把上次留下的这一屏画出来，只向服务端要它之后的新消息
+  let since = 0;
+  if (localEnabled() && S.mode !== 'legacy') {
+    try {
+      const cached = await getMsgs(id, 200);
+      if (my !== gen || S.curId !== id) return;
+      if (cached.length) {
+        S.msgs = cached;
+        S.lastId = cached[cached.length - 1].id || 0;
+        since = S.lastId;
+        renderFeed();
+        scrollBottom(false);
+        pageStop();
+      }
+    } catch (e) { void e; }
+  }
+  const j = await api('api/conv?id=' + id + '&since=' + since + '&limit=50');
   // 等接口的这段时间可能已经点到别的会话了：这次结果直接作废
   if (my !== gen || S.curId !== id) return;
   if (j && j.ok) {
     S.convApi = true;
     S.mode = 'conv';
-    apply(j);
+    if (since > 0) applyDelta(j); else apply(j);
     startLoop();
     return;
   }
@@ -547,6 +577,7 @@ function apply(j) {
   S.msgs = [];
   S.lastId = 0;
   hasOlder = !!j.more;
+  userScrolled = false;
   if (j.msgs && j.msgs.length) {
     j.msgs.forEach(function (m) { if (!S.msgs.some(function (x) { return x.id === m.id; })) S.msgs.push(m); });
     S.lastId = j.lastId || j.msgs[j.msgs.length - 1].id;
@@ -558,7 +589,35 @@ function apply(j) {
   renderFeed();
   scrollBottom(false);
   refreshBars();
+  if (localEnabled() && j.msgs && j.msgs.length) {
+    putMsgs(S.curId, j.msgs).catch(function () { /* 本机库不可用就只当内存 */ });
+  }
   // 消息真正画出来才算这次切页走完，底栏的「页面: Xms」用这个数
+  pageStop();
+}
+
+// 本机已有这一屏、只把服务端的增量接在后面（不能走 apply，它会清空 S.msgs）
+function applyDelta(j) {
+  if (j.conv && j.conv.id) S.cur = Object.assign({}, S.cur || {}, j.conv);
+  if (typeof j.title === 'string' && j.title) S.cur.title = j.title;
+  if (!isDm()) syncMembers(j.members);
+  S.notice = j.notice || null;
+  if (j.pins) S.pins = j.pins;
+  if (j.todos) S.todos = j.todos;
+  barsSig = barsSigOf(S.pins, S.todos, S.notice);
+  if (j.msgs && j.msgs.length) {
+    appendMsgs(j.msgs);
+    S.lastId = j.lastId || j.msgs[j.msgs.length - 1].id;
+    if (localEnabled()) {
+      putMsgs(S.curId, j.msgs).catch(function () { /* 静默 */ });
+    }
+  } else if (j.lastId && j.lastId > S.lastId) {
+    S.lastId = j.lastId;
+  }
+  const c = conv.convById(S.curId);
+  if (c && c.unread) { c.unread = 0; conv.repaint(); }
+  refreshBars();
+  refreshSub();
   pageStop();
 }
 
@@ -616,6 +675,8 @@ function appendMsgs(list) {
   if (feedEl && nearBottom && S.msgs.length) scrollBottom(false);
   const c = conv.convById(S.curId);
   if (c && c.unread) { c.unread = 0; conv.repaint(); }
+  // 轮询和发送回执都走这里：本机存储开着就把新消息落盘（内部有节流）
+  remember(list);
 }
 
 function syncMembers(list) {

@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 15;
+    public const VERSION = 16;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -35,6 +35,8 @@ final class Schema {
                 // 私群配额：单人在本域能建几个、单个私群最多几个人（0 = 跟随站点配置）
                 "pg_member_cap" => "INT NOT NULL DEFAULT 0",
                 "pg_size_cap"   => "INT NOT NULL DEFAULT 0",
+                // 这个作用域默认套哪个权限组（NULL/0 = 平台默认组）
+                "perm_group_id" => "BIGINT NULL",
             ],
             "members"  => [
                 // 登录名：创建时默认等于昵称，之后不可改，昵称可以随便改
@@ -51,6 +53,19 @@ final class Schema {
                 "deleted_name" => $mysql ? "VARCHAR(191) NULL" : "TEXT NULL",
                 // 允许别人把我拉进私群；关掉后谁拉都不行
                 "allow_invite" => "TINYINT NOT NULL DEFAULT 1",
+                // 单独指定权限组（优先于作用域那份）
+                "perm_group_id" => "BIGINT NULL",
+                // 简介模式：plain = 纯文本（默认，给不会 markdown 的人），markdown = 高级模式
+                "bio_mode"     => "VARCHAR(8) NOT NULL DEFAULT 'plain'",
+                "birthday"     => "VARCHAR(10) NULL",
+                "gender"       => "VARCHAR(8) NULL",
+                "signature"    => "VARCHAR(80) NULL",
+                // 邮箱只给本人看（资料编辑页），不进出口的公开资料
+                "email"        => "VARCHAR(191) NULL",
+                // 标签：JSON 数组，1-5 个
+                "tags"         => $mysql ? "TEXT NULL" : "TEXT NULL",
+                // 允许出现在「发现」里
+                "discover"     => "TINYINT NOT NULL DEFAULT 1",
             ],
             "messages" => [
                 "reply_to"   => "BIGINT NULL",
@@ -165,7 +180,7 @@ final class Schema {
 
     /** migrate() 只补建后来新增的表，避免把全部语句再跑一遍 */
     private static function isNewTable(string $sql): bool {
-        foreach (["api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs", "dm_invites"] as $t) {
+        foreach (["perm_groups", "api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs", "dm_invites"] as $t) {
             if (stripos($sql, $t) !== false) return true;
         }
         return false;
@@ -211,6 +226,7 @@ final class Schema {
                 . " theme VARCHAR(64) NULL,"
                 . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
                 . " pg_member_cap INT NOT NULL DEFAULT 0, pg_size_cap INT NOT NULL DEFAULT 0,"
+                . " perm_group_id BIGINT NULL,"
                 . " created_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_scopes_slug ON scopes(slug)",
@@ -234,6 +250,9 @@ final class Schema {
                 . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, banned TINYINT NOT NULL DEFAULT 0,"
                 . " deleted_at BIGINT NULL, deleted_name $short NULL, allow_invite TINYINT NOT NULL DEFAULT 1,"
+                . " perm_group_id BIGINT NULL, bio_mode VARCHAR(8) NOT NULL DEFAULT 'plain',"
+                . " birthday VARCHAR(10) NULL, gender VARCHAR(8) NULL, signature VARCHAR(80) NULL,"
+                . " email VARCHAR(191) NULL, tags $text NULL, discover TINYINT NOT NULL DEFAULT 1,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_seen_at BIGINT NULL"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_members_name ON members(scope_id, name)",
@@ -277,6 +296,13 @@ final class Schema {
                 . " blocked_by BIGINT NULL, PRIMARY KEY (a_id, b_id)"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_friends_b ON friends(b_id, status)",
+            // 权限组：scope_id=0 且 is_default=1 的那条是平台默认组，perms 存 JSON 覆盖项
+            "CREATE TABLE IF NOT EXISTS perm_groups ("
+                . "id $pk, scope_id BIGINT NOT NULL DEFAULT 0, name $short NOT NULL, perms $text NULL,"
+                . " is_default TINYINT NOT NULL DEFAULT 0,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL DEFAULT 0"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_perm_scope ON perm_groups(scope_id)",
             // 登录失败计数：k 是 ip:<地址> 或 user:<scope>:<用户名>，超阈值就锁一段时间
             "CREATE TABLE IF NOT EXISTS login_fails ("
                 . "k VARCHAR(191) NOT NULL PRIMARY KEY, n INT NOT NULL DEFAULT 0,"

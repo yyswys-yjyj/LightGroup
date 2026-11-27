@@ -47,10 +47,32 @@ final class Mcp
             return;
         }
         if ($method === "GET") {
+            // 权限组把 MCP 限定成只走 HTTP Stream 时，别再挂 SSE 长连接
+            if (self::sseBlocked()) {
+                http_response_code(405);
+                header("Content-Type: application/json; charset=utf-8");
+                echo json_encode(
+                    ["error" => "本站的 MCP 只支持 HTTP Stream，请在客户端里选 HTTP Stream"],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                );
+                return;
+            }
             self::openStream();
             return;
         }
         self::handlePost();
+    }
+
+    /** 这个 AI 的权限组是否禁止了 SSE 长连接（只允许 HTTP Stream） */
+    private static function sseBlocked(): bool
+    {
+        if (self::token() === "") return false;
+        try {
+            [$me] = self::auth(Db::connect());
+        } catch (Throwable $e) {
+            return false;
+        }
+        return Features::transport(Db::connect()) === "stream";
     }
 
     /**
@@ -517,6 +539,12 @@ final class Mcp
         if ((string) ($me["kind"] ?? "") !== "ai") throw new \RuntimeException("这个 token 不是 AI 账号的");
         if (!empty($me["deleted_at"])) throw new \RuntimeException("这个账号已经注销");
         if ((int) ($me["banned"] ?? 0) === 1) throw new \RuntimeException("这个账号已被封禁");
+        if (!Features::on($pdo, "ai")) {
+            throw new \RuntimeException("本站已关闭 AI 账号，这个身份暂时不可用");
+        }
+        if (!Features::adapter($pdo, "mcp")) {
+            throw new \RuntimeException("本站已关闭 MCP 适配器，这个 AI 暂时不可用");
+        }
         $adapter = (string) ($me["adapter"] ?? "mcp");
         if ($adapter !== "mcp") {
             $label = $adapter === "xsj" ? "小群（xsj）" : $adapter;

@@ -54,6 +54,14 @@ final class Profile {
             $avatar = self::field("avatar", "");
             // 「允许他人把我拉进群」：布尔开关，没传就当没改
             $allow = self::field("allowInvite", null);
+            // 简介模式：默认纯文本；只有显式切到 markdown 才存 markdown
+            $bioMode = self::field("bioMode", null);
+            $birthday = self::field("birthday", null);
+            $gender = self::field("gender", null);
+            $signature = self::field("signature", null);
+            $email = self::field("email", null);
+            $tagsRaw = self::rawField("tags", null);
+            $discover = self::field("discover", null);
 
             if ($name !== "" && $name !== (string) $m["name"]) {
                 if (mb_strlen($name) > 24) Json::fail("昵称最多 24 个字");
@@ -77,6 +85,46 @@ final class Profile {
                 $on = in_array(strtolower(trim($allow)), ["1", "true", "on", "yes"], true) ? 1 : 0;
                 $pdo->prepare("UPDATE members SET allow_invite = ? WHERE id = ?")->execute([$on, (int) $m["id"]]);
                 $m["allow_invite"] = $on;
+            }
+            if ($bioMode !== null) {
+                $mode = strtolower(trim($bioMode)) === "markdown" ? "markdown" : "plain";
+                $pdo->prepare("UPDATE members SET bio_mode = ? WHERE id = ?")->execute([$mode, (int) $m["id"]]);
+                $m["bio_mode"] = $mode;
+            }
+            if ($birthday !== null) {
+                $birthday = trim($birthday);
+                if ($birthday !== "") self::checkBirthday($birthday);
+                $pdo->prepare("UPDATE members SET birthday = ? WHERE id = ?")->execute([$birthday === "" ? null : $birthday, (int) $m["id"]]);
+                $m["birthday"] = $birthday;
+            }
+            if ($gender !== null) {
+                $gender = strtolower(trim($gender));
+                if (!in_array($gender, ["", "male", "female", "other"], true)) Json::fail("性别只能是 male / female / other / 不填");
+                $pdo->prepare("UPDATE members SET gender = ? WHERE id = ?")->execute([$gender === "" ? null : $gender, (int) $m["id"]]);
+                $m["gender"] = $gender;
+            }
+            if ($signature !== null) {
+                $signature = trim(str_replace(["\r", "\n"], " ", $signature));
+                if (mb_strlen($signature) > 80) Json::fail("签名最多 80 个字");
+                $pdo->prepare("UPDATE members SET signature = ? WHERE id = ?")->execute([$signature === "" ? null : $signature, (int) $m["id"]]);
+                $m["signature"] = $signature;
+            }
+            if ($email !== null) {
+                $email = trim($email);
+                if ($email !== "" && !filter_var($email, FILTER_VALIDATE_EMAIL)) Json::fail("邮箱格式不对");
+                if (mb_strlen($email) > 191) Json::fail("邮箱太长了");
+                $pdo->prepare("UPDATE members SET email = ? WHERE id = ?")->execute([$email === "" ? null : $email, (int) $m["id"]]);
+                $m["email"] = $email;
+            }
+            if ($tagsRaw !== null) {
+                $tags = self::cleanTags($tagsRaw);
+                $pdo->prepare("UPDATE members SET tags = ? WHERE id = ?")->execute([$tags ? json_encode($tags, JSON_UNESCAPED_UNICODE) : null, (int) $m["id"]]);
+                $m["tags"] = $tags ? json_encode($tags, JSON_UNESCAPED_UNICODE) : "";
+            }
+            if ($discover !== null) {
+                $on = in_array(strtolower(trim($discover)), ["1", "true", "on", "yes"], true) ? 1 : 0;
+                $pdo->prepare("UPDATE members SET discover = ? WHERE id = ?")->execute([$on, (int) $m["id"]]);
+                $m["discover"] = $on;
             }
         }
         Json::ok(["profile" => self::out($pdo, $m), "me" => self::meOut($pdo, $scope, $m)]);
@@ -176,6 +224,13 @@ final class Profile {
             "role"   => self::roleOf($pdo, $m),
             "color"  => self::colorOf((int) $m["id"]),
             "bio"    => (string) ($m["bio"] ?? ""),
+            "bioMode" => (string) ($m["bio_mode"] ?? "plain") === "markdown" ? "markdown" : "plain",
+            "tags"    => self::tagsOf($m),
+            "birthday" => (string) ($m["birthday"] ?? ""),
+            "age"     => self::ageOf((string) ($m["birthday"] ?? "")),
+            "gender"  => (string) ($m["gender"] ?? ""),
+            "signature" => (string) ($m["signature"] ?? ""),
+            "discover" => (int) ($m["discover"] ?? 1) === 1,
             "avatar" => (string) ($m["avatar"] ?? ""),
             "joined" => (int) ($m["created_at"] ?? 0),
         ];
@@ -218,6 +273,15 @@ final class Profile {
             "role"     => self::roleOf($pdo, $m),
             "model"    => "",
             "bio"      => (string) ($m["bio"] ?? ""),
+            "bioMode"  => (string) ($m["bio_mode"] ?? "plain") === "markdown" ? "markdown" : "plain",
+            "tags"     => self::tagsOf($m),
+            "birthday" => (string) ($m["birthday"] ?? ""),
+            "age"      => self::ageOf((string) ($m["birthday"] ?? "")),
+            "gender"   => (string) ($m["gender"] ?? ""),
+            "signature"=> (string) ($m["signature"] ?? ""),
+            // 邮箱只给本人：公开资料（out）不带它
+            "email"    => (string) ($m["email"] ?? ""),
+            "discover" => (int) ($m["discover"] ?? 1) === 1,
             "invite"   => (string) $scope["invite"],
             "adapter"  => $isAi ? self::adapterOf($m) : "",
             // 「允许他人把我拉进群」：建私群选人时后端会按这个拦
@@ -236,6 +300,71 @@ final class Profile {
         if (strlen($raw) > 200000) return str_repeat("a", self::BIO_MAX + 1);
         $bio = str_replace(["\r\n", "\r"], "\n", $raw);
         return str_replace("\0", "", $bio);
+    }
+
+    /** 取值但允许数组（标签用），body 优先 */
+    private static function rawField(string $key, $default) {
+        $body = Input::body();
+        if (array_key_exists($key, $body)) return $body[$key];
+        if (array_key_exists($key, $_GET)) return $_GET[$key];
+        return $default;
+    }
+
+    /** 生日必须是 1900 年至今的真实日期 */
+    private static function checkBirthday(string $v): void {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $v, $m)) Json::fail("生日要写成 2000-01-31 这样");
+        $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+        if ($y < 1900 || !checkdate($mo, $d, $y)) Json::fail("生日不是有效日期");
+        $today = (int) date("Ymd");
+        if ($y * 10000 + $mo * 100 + $d > $today) Json::fail("生日不能填未来的日期");
+    }
+
+    /** 标签：1-5 个，每个最多 16 字，去掉开头的 #，去重 */
+    private static function cleanTags($raw): array {
+        $list = [];
+        if (is_array($raw)) {
+            $list = $raw;
+        } elseif (is_string($raw) && trim($raw) !== "") {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) $list = $decoded;
+            else $list = preg_split('/[,，\s]+/u', $raw) ?: [];
+        }
+        $out = [];
+        foreach ($list as $t) {
+            if (!is_scalar($t)) continue;
+            $t = trim((string) $t);
+            $t = ltrim($t, "#＃");
+            $t = trim($t);
+            if ($t === "") continue;
+            if (mb_strlen($t) > 16) Json::fail("单个标签最多 16 个字");
+            if (in_array($t, $out, true)) continue;
+            $out[] = $t;
+            if (count($out) > 5) Json::fail("标签最多 5 个");
+        }
+        return $out;
+    }
+
+    private static function tagsOf(array $m): array {
+        $raw = (string) ($m["tags"] ?? "");
+        if ($raw === "") return [];
+        $row = json_decode($raw, true);
+        if (!is_array($row)) return [];
+        $out = [];
+        foreach ($row as $t) {
+            if (is_scalar($t) && trim((string) $t) !== "") $out[] = (string) $t;
+        }
+        return array_slice($out, 0, 5);
+    }
+
+    /** 按生日算年龄；没填或格式不对返回 0 */
+    public static function ageOf(string $birthday): int {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $birthday, $m)) return 0;
+        $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+        if (!checkdate($mo, $d, $y)) return 0;
+        $ty = (int) date("Y"); $tm = (int) date("n"); $td = (int) date("j");
+        $age = $ty - $y;
+        if ($tm < $mo || ($tm === $mo && $td < $d)) $age--;
+        return $age >= 0 && $age <= 150 ? $age : 0;
     }
 
     /** 和 Input::get 一样先看 JSON body 再看 query，但不 trim（markdown 的缩进要留着） */

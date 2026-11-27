@@ -20,19 +20,25 @@ final class Moments {
     public static function handle(PDO $pdo, array $scope, string $path): void {
         $me = Compat::requireMemberPublic($pdo);
         $method = strtoupper((string) ($_SERVER["REQUEST_METHOD"] ?? "GET"));
+        if (!Features::on($pdo, "space")) Json::fail("本站没有开放空间", 403);
 
         if ($path === "moments") {
             $op = (string) (Input::body()["op"] ?? "");
             if ($method === "DELETE" || $op === "delete") self::remove($pdo, $scope, $me);
-            elseif ($method === "POST") self::create($pdo, $scope, $me);
-            else self::timeline($pdo, $scope, $me);
+            elseif ($method === "POST") {
+                if (!Features::on($pdo, "space.post")) Json::fail("本站没有开放发布动态", 403);
+                self::create($pdo, $scope, $me);
+            }
+                else self::timeline($pdo, $scope, $me);
             return;
         }
         if ($path === "like") {
+            if (!Features::on($pdo, "space.like")) Json::fail("本站没有开放点赞", 403);
             self::like($pdo, $scope, $me);
             return;
         }
         if ($path === "comment") {
+            if (!Features::on($pdo, "space.comment")) Json::fail("本站没有开放评论", 403);
             $op = (string) (Input::body()["op"] ?? "");
             if ($method === "DELETE" || $op === "del") self::removeComment($pdo, $scope, $me);
             else self::comment($pdo, $scope, $me);

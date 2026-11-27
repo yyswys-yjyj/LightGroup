@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
 use LightGroup\Store\MemberNames;
+use LightGroup\Store\Pruner;
 use LightGroup\Web\Favicon;
 use LightGroup\Web\Site;
 use PDO;
@@ -49,8 +50,17 @@ final class Admin {
             case "update":    $method === "POST" ? self::updateApply($pdo, $role) : self::updateApi($pdo); break;
             case "mail":      self::mailTest($pdo, $role, $method); break;
             case "moments":   self::momentsSetting($pdo, $me, $method); break;
+            case "permgroups": self::permgroups($pdo, $role, $myScope, $method, $id, $sub); break;
+            case "prune":      $method === "POST" ? self::pruneNow($pdo, $role) : Json::ok(["prune" => Pruner::info($pdo)]); break;
             default:          Json::fail("未知管理接口");
         }
+    }
+
+    /** 手动跑一次剪枝（后台「立即剪枝」按钮） */
+    private static function pruneNow(PDO $pdo, string $role): void {
+        if ($role !== "super") Json::fail("只有超级管理员能立刻剪枝", 403);
+        $r = Pruner::run($pdo, ["limit" => 20000]);
+        Json::ok(["prune" => Pruner::info($pdo), "run" => $r]);
     }
 
     private static function role(PDO $pdo, array $m): string {
@@ -99,6 +109,13 @@ final class Admin {
             "pg_size_cap"   => (int) ($s["pg_size_cap"] ?? 0),
             "archived"      => (int) $s["archived"],
             "recall_policy" => (string) $s["recall_policy"],
+            "perm_group_id" => isset($s["perm_group_id"]) && $s["perm_group_id"] !== null ? (int) $s["perm_group_id"] : 0,
+            "pg_create"     => self::setting($pdo, "pg.create." . $id, "1") !== "0",
+            // 消息存储：空串表示跟随站点总配置
+            "msg_keep_days" => self::setting($pdo, "msg." . $id . ".keep_days", ""),
+            "msg_keep_per_conv" => self::setting($pdo, "msg." . $id . ".keep_per_conv", ""),
+            "msg_local"     => self::setting($pdo, "msg." . $id . ".local", ""),
+            "msg_policy"    => Pruner::info($pdo, $id),
             "theme"         => (string) ($s["theme"] ?? ""),
             "humans"        => $humans,
             "ais"           => $ais,
@@ -213,6 +230,48 @@ final class Admin {
             }
             $intro = self::in("intro", null);
             if ($intro !== null) { $sets[] = "intro = ?"; $args[] = (string) $intro; }
+            $pg = self::in("perm_group_id", null);
+            if ($pg !== null) {
+                $n = (int) $pg;
+                if ($n > 0) {
+                    $st = $pdo->prepare("SELECT scope_id, is_default FROM perm_groups WHERE id = ? LIMIT 1");
+                    $st->execute([$n]);
+                    $g = $st->fetch();
+                    if (!$g) Json::fail("这个权限组不存在");
+                    if ((int) $g["is_default"] === 0 && (int) $g["scope_id"] !== $id && $role !== "super") {
+                        Json::fail("这个权限组不属于本群");
+                    }
+                }
+                $sets[] = "perm_group_id = ?";
+                $args[] = $n > 0 ? $n : null;
+            }
+            $pgCreate = self::in("pg_create", null);
+            if ($pgCreate !== null) {
+                self::putSetting($pdo, "pg.create." . $id, ((bool) $pgCreate) ? "1" : "0");
+            }
+            // 消息存储：传空串 = 跟随站点总配置（删掉覆盖键），数字 = 本群自己的策略
+            $msgTouched = false;
+            foreach (["msg_keep_days" => "keep_days", "msg_keep_per_conv" => "keep_per_conv"] as $in => $suffix) {
+                $v = self::in($in, null);
+                if ($v === null) continue;
+                $msgTouched = true;
+                $raw = trim((string) $v);
+                if ($raw === "") {
+                    $pdo->prepare("DELETE FROM settings WHERE k = ?")->execute(["msg." . $id . "." . $suffix]);
+                } else {
+                    self::putSetting($pdo, "msg." . $id . "." . $suffix, (string) max(0, (int) $raw));
+                }
+            }
+            $msgLocal = self::in("msg_local", null);
+            if ($msgLocal !== null) {
+                $msgTouched = true;
+                $raw = trim((string) $msgLocal);
+                if ($raw === "") {
+                    $pdo->prepare("DELETE FROM settings WHERE k = ?")->execute(["msg." . $id . ".local"]);
+                } else {
+                    self::putSetting($pdo, "msg." . $id . ".local", ((bool) $msgLocal) ? "1" : "0");
+                }
+            }
             foreach (["human_cap", "ai_cap", "pg_member_cap", "pg_size_cap"] as $k) {
                 $v = self::in($k, null);
                 if ($v === null) continue;
@@ -239,10 +298,13 @@ final class Admin {
                 if (!in_array($policy, ["5m", "until_other", "forever"], true)) Json::fail("撤回策略不对");
                 $sets[] = "recall_policy = ?"; $args[] = $policy;
             }
-            if (!$sets) Json::fail("没有要改的内容");
-            $args[] = $id;
-            $st = $pdo->prepare("UPDATE scopes SET " . implode(", ", $sets) . " WHERE id = ?");
-            $st->execute($args);
+            if (!$sets && !$msgTouched) Json::fail("没有要改的内容");
+            // 只改了消息存储这类 settings 项时，没有 SQL 列要更新
+            if ($sets) {
+                $args[] = $id;
+                $st = $pdo->prepare("UPDATE scopes SET " . implode(", ", $sets) . " WHERE id = ?");
+                $st->execute($args);
+            }
             Json::ok(["id" => $id]);
             return;
         }
@@ -439,6 +501,10 @@ final class Admin {
             // 私群配额：每个成员能建几个、单个私群最多多少人（0 = 不限）
             "pg.member_cap"        => "int",
             "pg.size_cap"          => "int",
+            // 消息剪枝：0 表示不限，两项都为 0 时一条都不删
+            "msg.keep_days"        => "int",
+            "msg.keep_per_conv"    => "int",
+            "msg.local"            => "int",
             "oauth.enabled"        => "int",
             "oauth.ban_sync"       => "int",
             "oauth.provider"       => "provider",
@@ -472,12 +538,35 @@ final class Admin {
             "stt.url"                 => "url",
             "stt.key"                 => "secret",
             "stt.model"               => "text",
+            // 功能开关：注册、AI、适配器、MCP 连接方式、空间与基础社交。
+            // 这些是站点级设置，和「权限组」（只管群功能）不是一回事。
+            "feature.register"        => "int",
+            "feature.ai"              => "int",
+            "feature.adapter.xsj"     => "int",
+            "feature.adapter.mcp"     => "int",
+            "feature.adapter.api"     => "int",
+            "feature.mcp.transport"   => "mcptransport",
+            "feature.space"           => "int",
+            "feature.space.post"      => "int",
+            "feature.space.like"      => "int",
+            "feature.space.comment"   => "int",
+            "feature.social.friend"   => "int",
+            "feature.social.dm"       => "int",
+            "feature.social.scan"     => "int",
+            "feature.social.qr"       => "int",
+            "feature.social.discover" => "int",
         ];
         if ($method === "GET") {
             $out = [];
             foreach ($types as $k => $_) $out[$k] = self::setting($pdo, $k, "");
+            // 功能开关默认全开：不单独取默认值的话，后台会把没配过的项显示成「关」
+            foreach (Features::KEYS as $fk => $m) {
+                $out["feature." . $fk] = self::setting($pdo, "feature." . $fk, (string) $m[1]);
+            }
             // 默认值不是空串，得单独取，否则后台开关会显示成「关」
             $out["mcp.enabled"] = self::setting($pdo, "mcp.enabled", "1");
+            // 本机保存默认开；不单独取默认值的话，后台会把没配过的项显示成「关」
+            $out["msg.local"] = self::setting($pdo, "msg.local", "1");
             // 密钥不回传明文：前端只显示「已配置」，留空保存表示不改
             $hasSecret = trim($out["oauth.client_secret"]) !== "";
             $out["oauth.client_secret"] = "";
@@ -507,6 +596,7 @@ final class Admin {
                 "start_url"     => OAuth::origin() . OAuth::START_PATH,
                 "well_known"    => trim($out["oauth.issuer"], "/") !== "" ? rtrim($out["oauth.issuer"], "/") . "/.well-known/openid-configuration" : "",
                 "has_secret"    => $hasSecret,
+                "prune"         => Pruner::info($pdo),
             ]);
             return;
         }
@@ -563,6 +653,8 @@ final class Admin {
                 if ($v !== "" && (!str_starts_with($v, "/assets/") || !preg_match('/\.png$/i', $v))) {
                     Json::fail("站点图标要填 /assets/ 下的 PNG 路径");
                 }
+            } elseif ($kind === "mcptransport") {
+                if (!in_array($v, ["both", "stream", "sse"], true)) Json::fail("MCP 连接方式只能是 both / stream / sse");
             } elseif ($kind === "email") {
                 if ($v !== "" && !filter_var($v, FILTER_VALIDATE_EMAIL)) Json::fail("「" . $k . "」不是有效的邮箱地址");
             }
@@ -595,6 +687,69 @@ final class Admin {
         }
         self::log($pdo, "settings.save", "更新设置 " . count($changed) . " 项：" . implode(", ", $changed));
         Json::ok(["changed" => $changed]);
+    }
+
+    /**
+     * 权限组：GET 列表 + 元数据，POST 保存，DELETE 删除，POST /{id}/assign 换组。
+     * 普通管理员只能动自己群里的组；平台默认组与跨群只有超管能动。
+     */
+    private static function permgroups(PDO $pdo, string $role, int $myScope, string $method, int $id, string $sub): void {
+        $isSuper = $role === "super";
+
+        if ($method === "GET" && $id === 0) {
+            $scopeId = $isSuper ? (int) self::in("scope", $myScope) : $myScope;
+            if ($scopeId <= 0) $scopeId = $myScope;
+            // 这个群自己套的组（0 = 没套，走平台默认组）；前端要拿它标「正在使用」
+            $st = $pdo->prepare("SELECT perm_group_id FROM scopes WHERE id = ? LIMIT 1");
+            $st->execute([$scopeId]);
+            $assigned = (int) ($st->fetchColumn() ?: 0);
+            $out = [
+                "scope"     => $scopeId,
+                "assigned"  => $assigned,
+                "groups"    => Perm::groups($pdo, $scopeId, $isSuper),
+                "meta"      => Perm::meta(),
+                "effective" => Perm::scopeResolve($pdo, $scopeId),
+                "default_id" => Perm::defaultGroupId($pdo),
+            ];
+            Json::ok($out);
+            return;
+        }
+
+        if ($method === "DELETE") {
+            if ($id <= 0) Json::fail("缺少权限组");
+            Perm::remove($pdo, $id, $myScope, $isSuper);
+            Json::ok(["removed" => $id]);
+            return;
+        }
+
+        if ($method !== "POST") Json::fail("不支持的操作");
+
+        if ($sub === "assign") {
+            $scopeId = (int) self::in("scope", 0);
+            $gid     = (int) self::in("group", 0);
+            if ($scopeId <= 0) Json::fail("要说清楚是给哪个群换组");
+            if (!$isSuper && $scopeId !== $myScope) Json::fail("只能改自己的群");
+            if ($gid > 0) {
+                $st = $pdo->prepare("SELECT scope_id, is_default FROM perm_groups WHERE id = ? LIMIT 1");
+                $st->execute([$gid]);
+                $g = $st->fetch();
+                if (!$g || (int) $g["is_default"] === 1) Json::fail("这个权限组不能套到群上");
+                if (!$isSuper && (int) $g["scope_id"] !== $myScope) Json::fail("这个权限组不属于本群");
+            }
+            Perm::assignScope($pdo, $scopeId, $gid);
+            Json::ok(["scope" => $scopeId, "group" => $gid]);
+            return;
+        }
+
+        $name  = (string) self::in("name", "");
+        $perms = self::in("perms", []);
+        if (!is_array($perms)) $perms = [];
+        $gid = (int) self::in("scope_id", 0);
+        if ($gid <= 0) $gid = $isSuper ? 0 : $myScope;
+        if (!$isSuper && $gid !== $myScope) Json::fail("只能改自己群里的权限组");
+        $newId = Perm::save($pdo, $id, $gid, $name, $perms, $isSuper);
+        self::log($pdo, "perm.save", ($id > 0 ? "修改" : "新建") . "权限组「" . trim($name) . "」");
+        Json::ok(["id" => $newId]);
     }
 
     /** 空间推流开关：按作用域存，本群管理员和超管都能改 */

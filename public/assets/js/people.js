@@ -250,7 +250,7 @@ function paintFriends() {
 export async function loadGroups() {
   const j = await api('api/groups');
   if (j && j.ok) {
-    S.groups = { groups: j.groups || [], caps: j.caps || {} };
+    S.groups = { groups: j.groups || [], caps: j.caps || {}, perm: j.perm || {} };
     GROUPS.v = true;
   } else {
     S.groups = S.groups || { groups: [], caps: {} };
@@ -271,8 +271,13 @@ function paintGroups() {
   page.appendChild(body);
   host.appendChild(page);
 
-  body.appendChild(btn('＋ 创建群聊', 'btn btn-primary btn-block', openCreateGroup));
-  body.appendChild(h('div', 'page-tip', '至少拉 3 个人或 AI 才能建群。'));
+  const canCreate = !S.groups || !S.groups.perm || S.groups.perm.create !== false;
+  if (canCreate) {
+    body.appendChild(btn('＋ 创建群聊', 'btn btn-primary btn-block', openCreateGroup));
+    body.appendChild(h('div', 'page-tip', '至少拉 3 个人或 AI 才能建群。'));
+  } else {
+    body.appendChild(h('div', 'page-tip', '这个群没有开放创建私群。'));
+  }
   if (!gs.length) {
     body.appendChild(h('div', 'empty-hint', '还没有群聊。'));
     return;

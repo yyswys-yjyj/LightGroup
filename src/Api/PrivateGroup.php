@@ -32,6 +32,7 @@ final class PrivateGroup {
         if ($path === "" || $path === "create") {
             if ($path === "create") {
                 if ($method !== "POST") Json::fail("只支持 POST");
+                if (!Features::pgCreate($pdo, (int) $scope["id"])) Json::fail("这个群没有开放创建私群", 403);
                 self::create($pdo, $scope, $me);
                 return;
             }
@@ -59,6 +60,9 @@ final class PrivateGroup {
                 "member" => self::cap($pdo, $scope, "member"),
                 "size"   => self::cap($pdo, $scope, "size"),
             ],
+            "perm"   => [
+                "create" => Features::pgCreate($pdo, (int) $scope["id"]),
+            ] + Perm::forClient($pdo, (int) $scope["id"]),
         ]);
     }
 
@@ -79,6 +83,9 @@ final class PrivateGroup {
             ]);
             return;
         }
+        $perm = Perm::forClient($pdo, (int) $scope["id"]);
+        // 成员列表也受权限组管；群主/管理员要管理成员，始终能看
+        $showMembers = $role !== "member" || ($perm["memberList"] ?? true);
         Json::ok([
             "group" => [
                 "id"        => (int) $conv["id"],
@@ -93,12 +100,13 @@ final class PrivateGroup {
                 "isOwner"   => $role === "owner",
                 "canManage" => $role === "owner" || $role === "admin",
                 "isMember"  => true,
+                "perm"      => $perm,
                 "caps"      => [
                     "member" => self::cap($pdo, $scope, "member"),
                     "size"   => self::cap($pdo, $scope, "size"),
                 ],
             ],
-            "members" => $members,
+            "members" => $showMembers ? $members : [],
         ]);
     }
 
@@ -169,6 +177,7 @@ final class PrivateGroup {
         switch ($op) {
             case "rename":
                 self::mustOwner($role, "只有群主能改群名");
+                if (!Perm::can($pdo, (int) $scope["id"], "group.rename")) Json::fail("这个群没有开放修改群资料", 403);
                 $title = trim((string) ($body["title"] ?? ""));
                 if ($title === "") Json::fail("群名不能是空的");
                 if (mb_strlen($title) > self::TITLE_MAX) Json::fail("群名最多 " . self::TITLE_MAX . " 个字");
@@ -179,6 +188,7 @@ final class PrivateGroup {
 
             case "notice":
                 self::mustAdmin($role, "只有群主或管理员能发群公告");
+                if (!Perm::can($pdo, (int) $scope["id"], "group.notice")) Json::fail("这个群没有开放群公告", 403);
                 $notice = trim((string) ($body["notice"] ?? ""));
                 if (mb_strlen($notice) > self::NOTICE_MAX) Json::fail("公告最多 " . self::NOTICE_MAX . " 个字");
                 $now = lg_now();
@@ -191,7 +201,11 @@ final class PrivateGroup {
                 return;
 
             case "add":
-                // 成员只能邀请他人入群，这一点不设门槛；人数上限与对方意愿仍然要守
+                // 群主/管理员不受限；普通成员邀请要看权限组
+                if ($role === "member" && !Perm::can($pdo, (int) $scope["id"], "group.invite")) {
+                    Json::fail("这个群没有开放成员邀请，请让群主或管理员拉人", 403);
+                }
+                // 人数上限与对方意愿仍然要守
                 $raw = $body["members"] ?? [];
                 if (!is_array($raw)) $raw = [];
                 $ids = [];
@@ -226,6 +240,7 @@ final class PrivateGroup {
 
             case "remove":
                 self::mustAdmin($role, "只有群主或管理员能移出成员");
+                if (!Perm::can($pdo, (int) $scope["id"], "group.admin")) Json::fail("这个群没有开放成员管理", 403);
                 $target = self::parseId($body["member"] ?? 0);
                 if ($target <= 0) Json::fail("缺少成员");
                 if ($target === (int) ($conv["created_by"] ?? 0)) Json::fail("不能移出群主");
@@ -241,6 +256,7 @@ final class PrivateGroup {
 
             case "role":
                 self::mustOwner($role, "只有群主能设置管理员");
+                if (!Perm::can($pdo, (int) $scope["id"], "group.admin")) Json::fail("这个群没有开放设置管理员", 403);
                 $target = self::parseId($body["member"] ?? 0);
                 $want   = (string) ($body["role"] ?? "member");
                 if (!in_array($want, ["admin", "member"], true)) Json::fail("不认识的成员角色");

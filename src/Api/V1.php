@@ -85,6 +85,11 @@ final class V1
 
             [$me, $scope] = self::auth($pdo, $who);
 
+            if ($who !== "human") {
+                if (!Features::on($pdo, "ai")) self::fail("本站已关闭 AI 账号，这个身份暂时不可用", 403);
+                if (!Features::adapter($pdo, "api")) self::fail("本站已关闭 REST（api）适配器，这个 AI 暂时不可用", 403);
+            }
+
             if ($parts[0] === "me" && $method === "GET") self::me($pdo, $scope, $me);
             if ($parts[0] === "members" && $method === "GET") self::members($pdo, $scope, $me);
             if ($parts[0] === "conversations") self::conversations($pdo, $scope, $me, $parts, $method);
