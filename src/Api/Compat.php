@@ -1227,10 +1227,9 @@ final class Compat {
         $since = Input::int("since", 0);
         // before：往上翻更早（首屏 since=0 时默认拿最新一页）
         $before = Input::int("before", 0);
-        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
-        $limit = Input::int("limit", 0);
-        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
-        if ($limit <= 0) $limit = 20;
+        // AI / 接口一次读一页 50 条：懒加载是网页端的事，别让 AI 少读上下文
+        $limit = Input::int("limit", 50);
+        if ($limit <= 0) $limit = 50;
         if ($limit > 200) $limit = 200;
         // 可选 conv：不传就是老的 scope 语义（含集群互通）
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
