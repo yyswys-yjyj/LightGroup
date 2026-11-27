@@ -75,6 +75,7 @@ final class Features {
             "local"     => (bool) $pol["local"],
             "keepDays"  => (int) $pol["days"],
             "keepPerConv" => (int) $pol["per_conv"],
+            "pageSize"  => (int) $pol["page_size"],
             "inherited" => (bool) $pol["inherited"],
         ];
     }

@@ -50,14 +50,27 @@ function isNearBottom() {
 }
 
 let userScrolled = false;
+// 不再「滚到顶就自动拉」：那会把整段历史一次性拖下来，服务器流量和首屏都受不了。
+// 往上翻只记一下用户动过手，翻历史统一走顶部那颗「加载更多消息」。
 function onFeedScroll() {
-  if (!userScrolled) return;
-  if (feedEl && feedEl.scrollTop < 120) loadOlder();
+  if (feedEl && feedEl.scrollTop < 120) userScrolled = true;
 }
-// 内容不够一屏时滚动条不动，scroll 事件可能根本不来；触摸/滚轮本身就算「用户要往上翻」
 function onUserScroll() {
   userScrolled = true;
-  if (feedEl && feedEl.scrollTop < 120) loadOlder();
+}
+
+// 一页多少条由管理员配（站点总配置，群可覆盖；没配就是 20）
+function pageSize() {
+  const m = S.me && S.me.features && S.me.features.msg;
+  const n = m && m.pageSize ? Number(m.pageSize) : 20;
+  return n > 0 ? n : 20;
+}
+
+function setMoreBusy(on) {
+  const b = feedEl && feedEl.querySelector('.load-more');
+  if (!b) return;
+  b.disabled = on;
+  b.textContent = on ? '加载中…' : '加载更多消息';
 }
 
 // 滚到顶：拿更早的一页塞到前面，并把视口按原来的相对位置挪回去
@@ -67,23 +80,26 @@ async function loadOlder() {
   const oldest = S.msgs[0].id;
   if (!oldest) return;
   olderLoading = true;
+  setMoreBusy(true);
   const my = gen;
   const id = S.curId;
   const beforeHeight = feedEl.scrollHeight;
   const beforeTop = feedEl.scrollTop;
+  const n = pageSize();
   let j = null;
   try {
     j = S.mode === 'legacy'
-      ? await api('fetch?before=' + oldest + '&limit=50')
-      : await api('api/conv?id=' + id + '&before=' + oldest + '&limit=50');
+      ? await api('fetch?before=' + oldest + '&limit=' + n)
+      : await api('api/conv?id=' + id + '&before=' + oldest + '&limit=' + n);
   } catch (e) {
     j = null;
   }
   olderLoading = false;
+  setMoreBusy(false);
   if (my !== gen || S.curId !== id) return;
   if (!j || !j.ok) return;
   const older = (j.msgs || []).filter(function (m) { return !S.msgs.some(function (x) { return x.id === m.id; }); });
-  if (!older.length) { hasOlder = false; return; }
+  if (!older.length) { hasOlder = false; renderFeed(); return; }
   S.msgs = older.concat(S.msgs);
   hasOlder = !!j.more;
   if (localEnabled()) {
@@ -519,7 +535,7 @@ async function initLoad() {
   let since = 0;
   if (localEnabled() && S.mode !== 'legacy') {
     try {
-      const cached = await getMsgs(id, 200);
+      const cached = await getMsgs(id, pageSize());
       if (my !== gen || S.curId !== id) return;
       if (cached.length) {
         S.msgs = cached;
@@ -531,7 +547,7 @@ async function initLoad() {
       }
     } catch (e) { void e; }
   }
-  const j = await api('api/conv?id=' + id + '&since=' + since + '&limit=50');
+  const j = await api('api/conv?id=' + id + '&since=' + since + '&limit=' + pageSize());
   // 等接口的这段时间可能已经点到别的会话了：这次结果直接作废
   if (my !== gen || S.curId !== id) return;
   if (j && j.ok) {
@@ -542,7 +558,7 @@ async function initLoad() {
     return;
   }
   if (isPublicConv() && (apiMissing(j) || S.mode === 'legacy')) {
-    const k = await api('fetch?since=0&limit=50');
+    const k = await api('fetch?since=0&limit=' + pageSize());
     if (my !== gen || S.curId !== id) return;
     if (k && k.ok) {
       S.convApi = false;
@@ -651,6 +667,13 @@ function sepNode(ts) {
 function renderFeed() {
   if (!feedEl) return;
   feedEl.textContent = '';
+  // 还有更早的消息就在最上面放一颗按钮；点一下才向服务端要下一段
+  if (hasOlder && S.msgs.length) {
+    const more = h('button', 'load-more', '加载更多消息');
+    more.type = 'button';
+    more.addEventListener('click', function () { loadOlder(); });
+    feedEl.appendChild(more);
+  }
   S.msgs.forEach(function (m, i) {
     const prev = i > 0 ? S.msgs[i - 1] : null;
     if (needSep(m, prev)) feedEl.appendChild(sepNode(m.ts));

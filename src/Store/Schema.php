@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 16;
+    public const VERSION = 17;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -180,7 +180,7 @@ final class Schema {
 
     /** migrate() 只补建后来新增的表，避免把全部语句再跑一遍 */
     private static function isNewTable(string $sql): bool {
-        foreach (["perm_groups", "api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs", "dm_invites"] as $t) {
+        foreach (["jobs", "perm_groups", "api_keys", "todos", "todo_done", "conversations", "conv_members", "friends", "theme_packs", "login_fails", "moments", "moment_likes", "moment_comments", "moment_reports", "notices", "notice_subs", "dm_invites"] as $t) {
             if (stripos($sql, $t) !== false) return true;
         }
         return false;
@@ -217,6 +217,14 @@ final class Schema {
 
         return [
             "CREATE TABLE IF NOT EXISTS settings (k VARCHAR(128) PRIMARY KEY, v $text)" . $suffix,
+            "CREATE TABLE IF NOT EXISTS jobs ("
+                . "id $pk, kind VARCHAR(16) NOT NULL DEFAULT '', payload $text NULL,"
+                . " status VARCHAR(12) NOT NULL DEFAULT 'pending', result $text NULL, error $text NULL,"
+                . " scope_id BIGINT NOT NULL DEFAULT 0, member_id BIGINT NOT NULL DEFAULT 0,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, started_at BIGINT NOT NULL DEFAULT 0,"
+                . " finished_at BIGINT NOT NULL DEFAULT 0"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_jobs_status ON jobs(status)",
             "CREATE TABLE IF NOT EXISTS clusters (id $pk, name $short, created_at BIGINT)$suffix",
             "CREATE TABLE IF NOT EXISTS scopes ("
                 . "id $pk, slug $slug NOT NULL DEFAULT '', title $short, intro $text,"

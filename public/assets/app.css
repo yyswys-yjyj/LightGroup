@@ -641,3 +641,8 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 
 .ms-opt.off{opacity:.55;cursor:not-allowed}
 .ms-opt.off input{cursor:not-allowed}
+
+/* 翻历史：只有点了这颗按钮才向服务端要更早的一页 */
+.feed .load-more{display:block;margin:10px auto 14px;padding:7px 16px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-dim);font-size:13px;cursor:pointer}
+.feed .load-more:hover{border-color:var(--accent);color:var(--accent)}
+.feed .load-more:disabled{opacity:.6;cursor:default}

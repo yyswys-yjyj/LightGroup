@@ -60,19 +60,37 @@ final class Mcp
             self::openStream();
             return;
         }
+        // 只开了 SSE 时 POST 不收：客户端要么先 GET 建流，要么改成 Streamable HTTP
+        if (self::transportOf() === "sse") {
+            http_response_code(405);
+            header("Allow: GET, OPTIONS");
+            header("Content-Type: application/json; charset=utf-8");
+            echo json_encode(
+                ["error" => "本站的 MCP 只支持 SSE，请在客户端里选 SSE"],
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            );
+            return;
+        }
         self::handlePost();
+    }
+
+    /** 站点给 MCP 开了哪种传输：both / stream（只 HTTP Stream） / sse（只 SSE） */
+    private static function transportOf(): string
+    {
+        if (self::token() === "") return "both";
+        try {
+            [$me] = self::auth(Db::connect());
+        } catch (Throwable $e) {
+            return "both";
+        }
+        $t = Features::transport(Db::connect());
+        return in_array($t, ["both", "stream", "sse"], true) ? $t : "both";
     }
 
     /** 这个 AI 的权限组是否禁止了 SSE 长连接（只允许 HTTP Stream） */
     private static function sseBlocked(): bool
     {
-        if (self::token() === "") return false;
-        try {
-            [$me] = self::auth(Db::connect());
-        } catch (Throwable $e) {
-            return false;
-        }
-        return Features::transport(Db::connect()) === "stream";
+        return self::transportOf() === "stream";
     }
 
     /**

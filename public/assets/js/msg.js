@@ -1,5 +1,5 @@
 // LightGroup · 消息渲染：气泡/图片/语音/引用/撤回/卡片 + 右键菜单 + 顶部三条横幅
-import { S, h, icon, toast, api, hhmm, dayLabel, copyText, openSheet, closeSheet, emit, go } from './core.js';
+import { S, h, icon, toast, api, apiMissing, hhmm, dayLabel, copyText, openSheet, closeSheet, emit, go } from './core.js';
 import { avatar } from './avatar.js';
 
 // 超过这个字数就把消息折成「消息盒子」，默认只露前面一段
@@ -339,6 +339,20 @@ function voiceNode(m) {
     if (tx.parentNode) tx.parentNode.removeChild(tx);
   };
 
+  // 转写交给后台任务：请求线程只提交，识别再慢也不会把整站拖着转圈
+  async function transcribeVoice() {
+    const job = await submitJob({ kind: 'asr', conv: S.curId, msg: m.id });
+    if (job) {
+      const r = await waitJob(job, 90000);
+      if (!r) throw new Error('这段语音没转成功，稍后再试');
+      return r.text ? String(r.text) : '';
+    }
+    // 服务端还是老版本、没有任务接口时退回同步转写
+    const r = await api('api/voice/text', { conv: S.curId, msg: m.id }, { timeout: 55000 });
+    if (!r || !r.ok) throw new Error((r && r.err) || '这段语音没转成功，稍后再试');
+    return r.text ? String(r.text) : '';
+  }
+
   tx.addEventListener('click', function () {
     if (tx.disabled) return;
     tx.disabled = true;
@@ -346,9 +360,7 @@ function voiceNode(m) {
     const spin = icon('fa-spinner');
     spin.classList.add('fa-spin');
     tx.insertBefore(spin, tx.firstChild);
-    api('api/voice/text', { conv: S.curId, msg: m.id }, { timeout: 55000 }).then(function (r) {
-      if (!r || !r.ok) throw new Error((r && r.err) || '这段语音没转成功，稍后再试');
-      const text = r.text ? String(r.text) : '';
+    transcribeVoice().then(function (text) {
       if (!text) throw new Error('这段语音里没听出内容，换个位置再录一次');
       showText(text);
     }).catch(function (e) {
@@ -764,17 +776,60 @@ async function todoClose(t) {
   if (document.getElementById('sheet')) openTodoPanel();
 }
 
+// 后台任务：翻译、语音转文字这类要等外部接口的活，提交后拿任务号轮询
+async function submitJob(payload) {
+  const r = await api('api/jobs', payload, { timeout: 15000 });
+  if (!r || !r.ok) {
+    if (apiMissing(r)) return null;
+    throw new Error((r && r.err) || '任务提交失败');
+  }
+  return r.job || null;
+}
+
+async function waitJob(job, timeoutMs) {
+  if (!job) return null;
+  if (job.status === 'done') return job.result || {};
+  if (job.status === 'failed') throw new Error(job.error || '任务失败了');
+  const deadline = Date.now() + timeoutMs;
+  let delay = 400;
+  while (Date.now() < deadline) {
+    await new Promise(function (r) { setTimeout(r, delay); });
+    delay = Math.min(delay + 200, 1500);
+    const r = await api('api/jobs/' + job.id, undefined, { timeout: 10000 });
+    if (!r || !r.ok) {
+      if (apiMissing(r)) return null;
+      throw new Error((r && r.err) || '任务状态读取失败');
+    }
+    const j = r.job || {};
+    if (j.status === 'done') return j.result || {};
+    if (j.status === 'failed') throw new Error(j.error || '任务失败了');
+  }
+  throw new Error('等太久了，稍后再试');
+}
+
 async function doTranslate(m) {
   toast('翻译中…');
-  const j = await api('api/translate', { text: m.text, to: 'zh-Hans' }, { timeout: 15000 });
-  if (!j.ok) { toast(j.err || '翻译失败'); return; }
   const row = document.querySelector('.row[data-id="' + m.id + '"]');
-  if (!row) return;
-  let tr = row.querySelector('.trans');
-  if (!tr) { tr = h('div', 'trans'); row.querySelector('.bub').appendChild(tr); }
-  tr.textContent = j.text;
-  // 出处要写在译文下面，微信也是这么标的；后端没给名字就不写，别自己猜是哪个服务
-  if (j.provider_name) tr.appendChild(h('span', 'trans-by', '翻译服务由 ' + j.provider_name + ' 提供'));
+  try {
+    let r = null;
+    const job = await submitJob({ kind: 'translate', text: m.text, to: 'zh-Hans' });
+    if (job) {
+      r = await waitJob(job, 25000);
+    } else {
+      // 老服务端还没有任务接口，退回同步翻译
+      r = await api('api/translate', { text: m.text, to: 'zh-Hans' }, { timeout: 15000 });
+      if (!r || !r.ok) throw new Error((r && r.err) || '翻译失败');
+    }
+    if (!r || !r.text) throw new Error('翻译失败');
+    if (!row) return;
+    let tr = row.querySelector('.trans');
+    if (!tr) { tr = h('div', 'trans'); row.querySelector('.bub').appendChild(tr); }
+    tr.textContent = r.text;
+    // 出处要写在译文下面，微信也是这么标的；后端没给名字就不写，别自己猜是哪个服务
+    if (r.provider_name) tr.appendChild(h('span', 'trans-by', '翻译服务由 ' + r.provider_name + ' 提供'));
+  } catch (e) {
+    toast((e && e.message) || '翻译失败');
+  }
 }
 
 /**

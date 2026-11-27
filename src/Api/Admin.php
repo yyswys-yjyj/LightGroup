@@ -115,6 +115,7 @@ final class Admin {
             "msg_keep_days" => self::setting($pdo, "msg." . $id . ".keep_days", ""),
             "msg_keep_per_conv" => self::setting($pdo, "msg." . $id . ".keep_per_conv", ""),
             "msg_local"     => self::setting($pdo, "msg." . $id . ".local", ""),
+            "msg_page_size" => self::setting($pdo, "msg." . $id . ".page_size", ""),
             "msg_policy"    => Pruner::info($pdo, $id),
             "theme"         => (string) ($s["theme"] ?? ""),
             "humans"        => $humans,
@@ -251,7 +252,7 @@ final class Admin {
             }
             // 消息存储：传空串 = 跟随站点总配置（删掉覆盖键），数字 = 本群自己的策略
             $msgTouched = false;
-            foreach (["msg_keep_days" => "keep_days", "msg_keep_per_conv" => "keep_per_conv"] as $in => $suffix) {
+            foreach (["msg_keep_days" => "keep_days", "msg_keep_per_conv" => "keep_per_conv", "msg_page_size" => "page_size"] as $in => $suffix) {
                 $v = self::in($in, null);
                 if ($v === null) continue;
                 $msgTouched = true;
@@ -259,7 +260,9 @@ final class Admin {
                 if ($raw === "") {
                     $pdo->prepare("DELETE FROM settings WHERE k = ?")->execute(["msg." . $id . "." . $suffix]);
                 } else {
-                    self::putSetting($pdo, "msg." . $id . "." . $suffix, (string) max(0, (int) $raw));
+                    // 一页条数至少 1、最多 100；保留天数和条数 0 表示不限
+                    $n = $suffix === "page_size" ? max(1, min(100, (int) $raw)) : max(0, (int) $raw);
+                    self::putSetting($pdo, "msg." . $id . "." . $suffix, (string) $n);
                 }
             }
             $msgLocal = self::in("msg_local", null);
@@ -505,6 +508,7 @@ final class Admin {
             "msg.keep_days"        => "int",
             "msg.keep_per_conv"    => "int",
             "msg.local"            => "int",
+            "msg.page_size"        => "int",
             "oauth.enabled"        => "int",
             "oauth.ban_sync"       => "int",
             "oauth.provider"       => "provider",
@@ -567,6 +571,8 @@ final class Admin {
             $out["mcp.enabled"] = self::setting($pdo, "mcp.enabled", "1");
             // 本机保存默认开；不单独取默认值的话，后台会把没配过的项显示成「关」
             $out["msg.local"] = self::setting($pdo, "msg.local", "1");
+            // 一页多少条：不配就是 20
+            $out["msg.page_size"] = self::setting($pdo, "msg.page_size", "20");
             // 密钥不回传明文：前端只显示「已配置」，留空保存表示不改
             $hasSecret = trim($out["oauth.client_secret"]) !== "";
             $out["oauth.client_secret"] = "";

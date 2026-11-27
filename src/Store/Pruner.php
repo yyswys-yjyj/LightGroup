@@ -23,6 +23,8 @@ final class Pruner
     public const KEEP_DAYS = "msg.keep_days";
     public const KEEP_PER_CONV = "msg.keep_per_conv";
     public const LOCAL = "msg.local";
+    public const PAGE_SIZE = "msg.page_size";
+    public const PAGE_DEFAULT = 20;
     public const LAST_RUN = "msg.prune.at";
     /** 两次自动剪枝之间至少隔这么久（秒） */
     public const INTERVAL = 3600;
@@ -55,17 +57,23 @@ final class Pruner
         $gDays = (int) self::setting($pdo, self::KEEP_DAYS, "0");
         $gPer = (int) self::setting($pdo, self::KEEP_PER_CONV, "0");
         $gLocal = self::setting($pdo, self::LOCAL, "1") !== "0";
+        // 一页多少条：翻历史靠用户点「加载更多」，不点就不多给
+        $gPage = (int) self::setting($pdo, self::PAGE_SIZE, (string) self::PAGE_DEFAULT);
+        if ($gPage <= 0) $gPage = self::PAGE_DEFAULT;
+        $gPage = max(1, min(100, $gPage));
         if ($scopeId <= 0) {
-            return ["days" => $gDays, "per_conv" => $gPer, "local" => $gLocal, "inherited" => true];
+            return ["days" => $gDays, "per_conv" => $gPer, "local" => $gLocal, "page_size" => $gPage, "inherited" => true];
         }
         $sd = self::setting($pdo, "msg." . $scopeId . ".keep_days", "");
         $sp = self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", "");
         $sl = self::setting($pdo, "msg." . $scopeId . ".local", "");
+        $sq = self::setting($pdo, "msg." . $scopeId . ".page_size", "");
         return [
             "days" => $sd === "" ? $gDays : max(0, (int) $sd),
             "per_conv" => $sp === "" ? $gPer : max(0, (int) $sp),
             "local" => $sl === "" ? $gLocal : ($sl !== "0"),
-            "inherited" => ($sd === "" && $sp === "" && $sl === ""),
+            "page_size" => $sq === "" ? $gPage : max(1, min(100, (int) $sq)),
+            "inherited" => ($sd === "" && $sp === "" && $sl === "" && $sq === ""),
         ];
     }
 
@@ -133,6 +141,7 @@ final class Pruner
             "keep_days" => (int) $pol["days"],
             "keep_per_conv" => (int) $pol["per_conv"],
             "local" => (bool) $pol["local"],
+            "page_size" => (int) $pol["page_size"],
             "inherited" => (bool) $pol["inherited"],
             "messages" => (int) $st->fetchColumn(),
             "last_run" => (int) self::setting($pdo, self::LAST_RUN, "0"),
@@ -140,6 +149,7 @@ final class Pruner
                 "keep_days" => self::setting($pdo, "msg." . $scopeId . ".keep_days", ""),
                 "keep_per_conv" => self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", ""),
                 "local" => self::setting($pdo, "msg." . $scopeId . ".local", ""),
+                "page_size" => self::setting($pdo, "msg." . $scopeId . ".page_size", ""),
             ],
         ];
     }

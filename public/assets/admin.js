@@ -617,10 +617,12 @@ function editScopeDialog(s) {
     { value: '1', label: '允许本机保存' },
     { value: '0', label: '禁止本机保存' },
   ], String(s.msg_local ?? ''));
+  const fMsgPage = textInput('msg_page_size', String(s.msg_page_size ?? ''), '留空跟随站点总配置', 'number');
   f.append(div('form-grid', [
     field('消息保留天数', fMsgDays, '0 表示本群不按时间删；留空跟随站点'),
     field('每会话保留条数', fMsgPer, '0 表示本群不按条数删；留空跟随站点'),
     field('本机保存', fMsgLocal, '成员把消息缓存在自己设备上；留空跟随站点'),
+    field('每次加载条数', fMsgPage, '1-100；成员点「加载更多」之前只加载这么多；留空跟随站点'),
   ]));
   const m = modal('编辑群组 · ' + (s.title || ''), [f], [
     btn('取消', 'btn-ghost', function () { m.close(); }),
@@ -638,6 +640,7 @@ function editScopeDialog(s) {
           perm_group_id: formValue(f, 'perm_group_id') || '0',
           msg_keep_days: fMsgDays.value.trim(),
           msg_keep_per_conv: fMsgPer.value.trim(),
+          msg_page_size: fMsgPage.value.trim(),
           msg_local: fMsgLocal.value,
         });
         m.close(); toast('群组已保存'); go('scopes');
@@ -1767,6 +1770,7 @@ async function renderSettings(box) {
   const pruneInfo = d.prune || {};
   const fKeepDays = textInput('msg.keep_days', String(pruneInfo.keep_days || st['msg.keep_days'] || '0'), '0 不限', 'number');
   const fKeepPer = textInput('msg.keep_per_conv', String(pruneInfo.keep_per_conv || st['msg.keep_per_conv'] || '0'), '0 不限', 'number');
+  const fKeepPage = textInput('msg.page_size', String(pruneInfo.page_size || st['msg.page_size'] || '20'), '1-100，默认 20', 'number');
   const fMsgLocal = el('input', { type: 'checkbox', checked: String(st['msg.local'] || '1') !== '0' });
 
   const form = el('form', { class: 'adm-form' }, [
@@ -1805,6 +1809,7 @@ async function renderSettings(box) {
     div('form-grid', [
       field('只保留最近几天', fKeepDays, '0 表示不按时间删'),
       field('每个会话最多保留几条', fKeepPer, '0 表示不按条数删'),
+      field('每次加载条数', fKeepPage, '成员点「加载更多消息」才会继续往前翻'),
     ]),
     div('oauth-switches', [
       el('label', { class: 'switch' }, [fMsgLocal, el('span', { text: '允许成员把消息留一份在自己设备上' })]),
@@ -1829,6 +1834,7 @@ async function renderSettings(box) {
     div('hint', [
       pruneStats,
       el('p', { text: '策略保存后不用配系统定时任务：站点有请求进来时会自己按小时检查一次。置顶消息、还有未完成群待办的消息不会被删。' }),
+      el('p', { text: '每次加载条数决定打开会话时先拉多少条；成员点「加载更多消息」才会继续往前翻。' }),
     ]),
     div('form-foot', [pruneNowBtn]),
   ], { icon: 'fa-box-archive' }));
@@ -1967,6 +1973,7 @@ async function renderSettings(box) {
           'pg.size_cap': fPgSize.value.trim() || '0',
           'msg.keep_days': fKeepDays.value.trim() || '0',
           'msg.keep_per_conv': fKeepPer.value.trim() || '0',
+          'msg.page_size': fKeepPage.value.trim() || '20',
           'msg.local': fMsgLocal.checked ? '1' : '0',
         });
         toast('设置已保存');

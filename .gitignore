@@ -9,7 +9,10 @@
 !/public/assets/icon/.gitkeep
 /.dsh/
 # 本机开发工具，不进仓库；发布包由 bin/release.php 生成
-/bin/
+/bin/*
+# 这两个是运行时真的要用到的命令（任务执行器、消息剪枝）
+!/bin/job.php
+!/bin/prune.php
 /tests/
 /doc/
 /node_modules/

@@ -5,6 +5,7 @@ namespace LightGroup\Api;
 
 use LightGroup\Http\Json;
 use LightGroup\Store\Db;
+use LightGroup\Store\Jobs;
 use LightGroup\Store\MemberNames;
 use LightGroup\Web\Site;
 use PDO;
@@ -95,6 +96,8 @@ final class Compat {
             case "api/dm/invite":     self::dmInvite($pdo, $scope); break;
             case "api/dm/join":       self::dmJoin($pdo, $scope); break;
             case "api/voice/text":    lg_session_release(); self::voiceText($pdo, $scope); break;
+            // 外部接口（翻译、语音转文字）丢给 CLI 进程做，请求本身只登记任务后立刻返回
+            case "api/jobs":          self::createJob($pdo, $scope); break;
             case "api/themes":          self::themes($pdo, $scope); break;
             case "api/theme/set":       self::themeSet($pdo, $scope); break;
             case "api/theme/pack/save": self::themePackSave($pdo, $scope); break;
@@ -108,6 +111,11 @@ final class Compat {
             case "api/subscribe":       Notices::handle($pdo, $scope, "subscribe"); break;
             case "api/subscribe/verify": Notices::handle($pdo, $scope, "subscribe/verify"); break;
             default:
+                // 任务状态：api/jobs/<id>
+                if (str_starts_with($path, "api/jobs/")) {
+                    self::jobStatus($pdo, $scope, substr($path, 9));
+                    return;
+                }
                 // 私群详情：api/groups/<id>
                 if (str_starts_with($path, "api/groups/")) {
                     PrivateGroup::handle($pdo, $scope, substr($path, 11));
@@ -1219,8 +1227,10 @@ final class Compat {
         $since = Input::int("since", 0);
         // before：往上翻更早（首屏 since=0 时默认拿最新一页）
         $before = Input::int("before", 0);
-        $limit = Input::int("limit", 50);
-        if ($limit <= 0) $limit = 50;
+        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
+        $limit = Input::int("limit", 0);
+        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
+        if ($limit <= 0) $limit = 20;
         if ($limit > 200) $limit = 200;
         // 可选 conv：不传就是老的 scope 语义（含集群互通）
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
@@ -1253,8 +1263,10 @@ final class Compat {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        $limit = Input::int("limit", 50);
-        if ($limit <= 0) $limit = 50;
+        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
+        $limit = Input::int("limit", 0);
+        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
+        if ($limit <= 0) $limit = 20;
         if ($limit > 200) $limit = 200;
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
@@ -1714,8 +1726,10 @@ final class Compat {
 
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        $limit = Input::int("limit", 50);
-        if ($limit <= 0) $limit = 50;
+        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
+        $limit = Input::int("limit", 0);
+        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
+        if ($limit <= 0) $limit = 20;
         if ($limit > 200) $limit = 200;
 
         $msgs   = self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"], $before);
@@ -2993,6 +3007,68 @@ final class Compat {
 
         $pdo->prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")->execute([lg_now(), (int) $row["key_id"]]);
         return $row;
+    }
+
+    /**
+     * 登记一条后台任务：翻译或语音转文字。
+     *
+     * 以前这两个接口在请求线程里直接 curl 外部服务，翻译要几秒、转写要几十秒，
+     * php-fpm 的 worker 一直被占着，别人连页面都打不开。现在只写一条任务记录，
+     * 由 bin/job.php 的 CLI 进程执行，客户端拿任务号轮询。
+     */
+    private static function createJob(PDO $pdo, array $scope): void {
+        $me = self::requireMember($pdo);
+        if (self::method() !== "POST") Json::fail("请用 POST 提交任务");
+        $kind = trim((string) Input::get("kind"));
+
+        if ($kind === "translate") {
+            $text = (string) Input::get("text");
+            $to = (string) Input::get("to");
+            if ($to === "") $to = "zh-Hans";
+            if (!preg_match('/^[A-Za-z]{1,3}(-[A-Za-z]{2,12})?$/', $to)) Json::fail("目标语言不对");
+            if (trim($text) === "") Json::fail("没有要翻译的内容");
+            if (mb_strlen($text) > 2000) Json::fail("一次最多翻译 2000 字");
+            $id = Jobs::create($pdo, "translate", ["text" => $text, "to" => $to], (int) $me["id"], (int) $scope["id"]);
+            Jobs::dispatch($id);
+            Json::ok(["job" => Jobs::get($pdo, $id, (int) $me["id"])]);
+            return;
+        }
+
+        if ($kind === "asr") {
+            $conv = self::resolveConv($pdo, $scope, $me, self::convIdOfRequest(), true);
+            $msgId = Input::int("msg", 0);
+            if ($msgId <= 0) $msgId = Input::int("id", 0);
+            $st = $pdo->prepare("SELECT id, voice, voice_text FROM messages WHERE id = ? AND conv_id = ? LIMIT 1");
+            $st->execute([$msgId, (int) $conv["id"]]);
+            $msg = $st->fetch();
+            if (!$msg) Json::fail("找不到这条消息");
+            $cached = trim((string) ($msg["voice_text"] ?? ""));
+            if ($cached !== "") {
+                Json::ok(["job" => ["id" => 0, "status" => "done", "kind" => "asr", "result" => ["text" => $cached, "cached" => true]]]);
+                return;
+            }
+            $voice = trim((string) ($msg["voice"] ?? ""));
+            $voice = (string) preg_replace('#^\[voice\]#', "", $voice);
+            if ($voice === "") Json::fail("这条不是语音");
+            if (!Stt::configured($pdo)) Json::fail("这个站还没开语音转文字");
+            self::rateLimit($pdo, "stt:" . self::clientIp(), 30, "转写太频繁了，过几分钟再试");
+            $id = Jobs::create($pdo, "asr", ["msgId" => $msgId, "convId" => (int) $conv["id"]], (int) $me["id"], (int) $scope["id"]);
+            Jobs::dispatch($id);
+            Json::ok(["job" => Jobs::get($pdo, $id, (int) $me["id"])]);
+            return;
+        }
+
+        Json::fail("未知任务类型");
+    }
+
+    /** 查任务状态：只认创建者本人 */
+    private static function jobStatus(PDO $pdo, array $scope, string $sid): void {
+        $me = self::requireMember($pdo);
+        $id = (int) $sid;
+        if ($id <= 0) Json::fail("任务号不对");
+        $job = Jobs::get($pdo, $id, (int) $me["id"]);
+        if ($job === null) Json::fail("任务不存在或已经过期");
+        Json::ok(["job" => $job]);
     }
 
     /** 翻译一条消息（右键菜单里的「翻译」） */
