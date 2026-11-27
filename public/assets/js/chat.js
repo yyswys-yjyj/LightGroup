@@ -85,12 +85,11 @@ async function loadOlder() {
   const id = S.curId;
   const beforeHeight = feedEl.scrollHeight;
   const beforeTop = feedEl.scrollTop;
-  const n = pageSize();
   let j = null;
   try {
     j = S.mode === 'legacy'
-      ? await api('fetch?before=' + oldest + '&limit=' + n)
-      : await api('api/conv?id=' + id + '&before=' + oldest + '&limit=' + n);
+      ? await api('fetch?before=' + oldest)
+      : await api('api/conv?id=' + id + '&before=' + oldest);
   } catch (e) {
     j = null;
   }
@@ -547,7 +546,7 @@ async function initLoad() {
       }
     } catch (e) { void e; }
   }
-  const j = await api('api/conv?id=' + id + '&since=' + since + '&limit=' + pageSize());
+  const j = await api('api/conv?id=' + id + '&since=' + since);
   // 等接口的这段时间可能已经点到别的会话了：这次结果直接作废
   if (my !== gen || S.curId !== id) return;
   if (j && j.ok) {
@@ -558,7 +557,7 @@ async function initLoad() {
     return;
   }
   if (isPublicConv() && (apiMissing(j) || S.mode === 'legacy')) {
-    const k = await api('fetch?since=0&limit=' + pageSize());
+    const k = await api('fetch?since=0');
     if (my !== gen || S.curId !== id) return;
     if (k && k.ok) {
       S.convApi = false;

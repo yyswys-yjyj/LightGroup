@@ -1262,10 +1262,12 @@ final class Compat {
         $me = self::requireMember($pdo);
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
+        // 网页端一页多少条由站点策略定：客户端传大了不认，传 0 就用策略值。
+        // 「加载更多」也只是要下一页，不能一次把全部历史拖走。
+        $page = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
+        if ($page <= 0) $page = 20;
         $limit = Input::int("limit", 0);
-        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
-        if ($limit <= 0) $limit = 20;
+        if ($limit <= 0 || $limit > $page) $limit = $page;
         if ($limit > 200) $limit = 200;
         $conv = self::resolveConv($pdo, $scope, $me, self::optionalConvId());
         $convId = $conv === null ? null : (int) $conv["id"];
@@ -1725,10 +1727,12 @@ final class Compat {
 
         $since = Input::int("since", 0);
         $before = Input::int("before", 0);
-        // 没指定条数时按站点策略给一页，用户不点「加载更多」就不多取
+        // 网页端一页多少条由站点策略定：客户端传大了不认，传 0 就用策略值。
+        // 「加载更多」也只是要下一页，不能一次把全部历史拖走。
+        $page = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
+        if ($page <= 0) $page = 20;
         $limit = Input::int("limit", 0);
-        if ($limit <= 0) $limit = (int) \LightGroup\Store\Pruner::policy($pdo, (int) $scope["id"])["page_size"];
-        if ($limit <= 0) $limit = 20;
+        if ($limit <= 0 || $limit > $page) $limit = $page;
         if ($limit > 200) $limit = 200;
 
         $msgs   = self::fetchSince($pdo, $scope, $since, $limit, (int) $conv["id"], $before);
