@@ -1075,7 +1075,9 @@ final class Admin {
              . " c.created_at, c.last_msg_id, c.last_msg_at, s.title AS scope_title, s.perm_group_id AS scope_pg,"
              . " mc.name AS creator_name,"
              . " (SELECT COUNT(*) FROM messages m WHERE m.conv_id = c.id AND m.deleted_at IS NULL AND m.sys = 0) AS msg_count,"
-             . " (SELECT COUNT(*) FROM conv_members cm WHERE cm.conv_id = c.id) AS member_count"
+             // 大群没有 conv_members 行，人数看群成员表；私群/私聊看会话成员表
+             . " (CASE WHEN c.is_public = 1 THEN (SELECT COUNT(*) FROM members mm WHERE mm.scope_id = c.scope_id AND mm.deleted_at IS NULL)"
+             . " ELSE (SELECT COUNT(*) FROM conv_members cm WHERE cm.conv_id = c.id) END) AS member_count"
              . " FROM conversations c JOIN scopes s ON s.id = c.scope_id LEFT JOIN members mc ON mc.id = c.created_by"
              . " WHERE $where ORDER BY c.last_msg_at DESC, c.id DESC LIMIT 200";
         $st = $pdo->prepare($sql);
