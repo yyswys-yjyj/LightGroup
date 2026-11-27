@@ -1,6 +1,6 @@
 // LightGroup · 空间：群里的小广场（动态）
 import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteName, hhmm } from './core.js';
-import { avatar } from './avatar.js';
+import { avatar, uidOf } from './avatar.js';
 
 // 站点功能开关：空间总开关与发/赞/评三项，都在 S.me.features 里
 function feat(group, key) {
@@ -346,7 +346,7 @@ function paintScanner(box) {
   const ta = document.createElement('textarea');
   ta.className = 'tb';
   ta.rows = 2;
-  ta.placeholder = 'lightgroup://user/h_1 或网址';
+  ta.placeholder = 'lightgroup://user/8f3k2a9c1d 或网址';
   manual.appendChild(ta);
   manual.appendChild(btn('解析', 'btn btn-sm', async function () {
     const t = ta.value.trim();
@@ -810,8 +810,9 @@ function reportDialog(m) {
 }
 
 function openProfile(m) {
-  if (!m || !m.id) return;
-  go('#/u/' + (m.kind === 'ai' ? 'a_' : 'h_') + m.id);
+  const uid = uidOf(m);
+  if (!uid) return;
+  go('#/u/' + uid);
 }
 
 // #标签 变成可点的 span

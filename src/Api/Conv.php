@@ -29,6 +29,19 @@ final class Conv {
         return self::COLORS[$id % count(self::COLORS)];
     }
 
+    /**
+     * 成员颜色：按 uid 做稳定哈希，跟 Compat::colorOf / 前端 avatar.js 同一套调色板。
+     * 会话头像用的是上面 colorOf（按会话 id 取），两套别混。
+     */
+    public static function memberColor(string $uid): string {
+        $pal = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#475569", "#9f1239", "#4d7c0f"];
+        $n = count($pal);
+        $s = 0;
+        $len = strlen($uid);
+        for ($i = 0; $i < $len; $i++) { $s = ($s * 31 + ord($uid[$i])) % 997; }
+        return $pal[$s % $n];
+    }
+
     public static function convById(PDO $pdo, int $id): ?array {
         $st = $pdo->prepare("SELECT * FROM conversations WHERE id = ? LIMIT 1");
         $st->execute([$id]);
@@ -258,7 +271,7 @@ final class Conv {
                 $item["title"]    = (string) ($c["title"] ?? "");
                 $item["members"]  = count(self::memberIds($pdo, $c));
                 $item["role"]     = (string) ($c["my_role"] ?? "member");
-                $item["ownerId"]  = (int) ($c["created_by"] ?? 0);
+                $item["ownerId"]  = self::uidOf($pdo, (int) ($c["created_by"] ?? 0));
                 $item["notice"]   = (string) ($c["notice"] ?? "");
             } else {
                 $other = 0;
@@ -293,7 +306,7 @@ final class Conv {
                 "title"     => (string) ($c["title"] ?? ""),
                 "members"   => count($ids),
                 "role"      => (string) ($c["my_role"] ?? "member"),
-                "ownerId"   => (int) ($c["created_by"] ?? 0),
+                "ownerId"   => self::uidOf($pdo, (int) ($c["created_by"] ?? 0)),
                 "pinned"    => !empty($c["my_pin"]),
                 "notice"    => (string) ($c["notice"] ?? ""),
                 "last"      => self::lastLine($pdo, $c),
@@ -366,7 +379,7 @@ final class Conv {
     /** 群成员 + 角色，给群资料页用（顺序：群主 → 管理员 → 成员） */
     public static function membersWithRole(PDO $pdo, array $conv): array {
         $st = $pdo->prepare(
-            "SELECT cm.member_id, cm.role, cm.joined_at, cm.invited_by, m.name, m.kind, m.avatar, m.deleted_at"
+            "SELECT cm.member_id, cm.role, cm.joined_at, cm.invited_by, m.name, m.kind, m.avatar, m.uid, m.deleted_at"
             . " FROM conv_members cm LEFT JOIN members m ON m.id = cm.member_id"
             . " WHERE cm.conv_id = ?"
             . " ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cm.joined_at ASC"
@@ -375,18 +388,27 @@ final class Conv {
         $out = [];
         foreach ($st->fetchAll() as $r) {
             $out[] = [
-                "id"   => ((string) ($r["kind"] ?? "") === "ai" ? "a_" : "h_") . (int) $r["member_id"],
+                "id"   => Ids::of($r),
                 "memberId" => (int) $r["member_id"],
                 "name" => (string) ($r["name"] ?? ""),
                 "kind" => (string) ($r["kind"] ?? ""),
                 "avatar" => (string) ($r["avatar"] ?? ""),
-                "color" => self::colorOf((int) $r["member_id"]),
+                "color" => self::memberColor(Ids::of($r)),
                 "role" => (string) $r["role"],
                 "joined" => (int) $r["joined_at"],
                 "gone" => !empty($r["deleted_at"]),
             ];
         }
         return $out;
+    }
+
+    /** 内部 id → 对外的 uid；找不到就给空串 */
+    private static function uidOf(PDO $pdo, int $memberId): string {
+        if ($memberId <= 0) return "";
+        $st = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$memberId]);
+        $row = $st->fetch();
+        return $row ? Ids::of($row) : "";
     }
 
     /** 好友备注：viewer 视角下对方的名字（没有就空串） */
@@ -458,19 +480,19 @@ final class Conv {
         return (string) ($st->fetchColumn() ?: "");
     }
 
-    /** 会话列表里显示对方用的精简资料（id 与 Compat 的对外 id 一致：h_/a_ 前缀） */
+    /** 会话列表里显示对方用的精简资料（id 是 members.uid） */
     public static function briefOf(PDO $pdo, int $memberId): array {
         if ($memberId <= 0) return ["id" => "", "name" => "", "kind" => "", "avatar" => ""];
-        $st = $pdo->prepare("SELECT id, name, kind, avatar FROM members WHERE id = ? LIMIT 1");
+        $st = $pdo->prepare("SELECT id, uid, name, kind, avatar FROM members WHERE id = ? LIMIT 1");
         $st->execute([$memberId]);
         $m = $st->fetch();
         if (!$m) return ["id" => "", "name" => "", "kind" => "", "avatar" => ""];
         return [
-            "id"     => ((string) $m["kind"] === "ai" ? "a_" : "h_") . (int) $m["id"],
+            "id"     => Ids::of($m),
             "name"   => (string) $m["name"],
             "kind"   => (string) $m["kind"],
             "avatar" => (string) ($m["avatar"] ?? ""),
-            "color"  => self::colorOf((int) $m["id"]),
+            "color"  => self::memberColor(Ids::of($m)),
         ];
     }
 }

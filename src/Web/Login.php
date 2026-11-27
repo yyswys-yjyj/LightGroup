@@ -5,6 +5,7 @@ namespace LightGroup\Web;
 
 use LightGroup\Api\Account;
 use LightGroup\Api\Captcha;
+use LightGroup\Api\Ids;
 use LightGroup\Api\Input;
 use LightGroup\Api\Session;
 use LightGroup\Api\Throttle;
@@ -143,8 +144,8 @@ final class Login {
         $ts  = lg_now();
         $new = null;
         try {
-            $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?, ?, ?, 'human', NULL, ?, ?, ?)");
-            $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), password_hash($pass, PASSWORD_DEFAULT), $ts, $ts]);
+            $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, 'human', NULL, ?, ?, ?)");
+            $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), Ids::newUid($pdo), password_hash($pass, PASSWORD_DEFAULT), $ts, $ts]);
             $new = self::memberById($pdo, (int) $pdo->lastInsertId());
         } catch (PDOException $ex) {
             $new = null; // 并发下被别人抢先建了同名，下面再查一次

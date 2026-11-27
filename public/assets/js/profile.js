@@ -310,7 +310,10 @@ export async function loadUserProfile(uid, force) {
   // 自己的资料先用内存里的，省一次请求（编辑保存后会把缓存清掉）
   if (!force && S.me && keyOf(S.me.id) === key) {
     const own = {
-      id: S.me.id, uid: key, name: S.me.name, kind: S.me.kind, role: S.me.role || 'member',
+      id: S.me.id, uid: key, name: S.me.name,
+      // 登录名只有自己看得到，me 接口带回来了，资料页的 @ 用它
+      username: S.me.username || '',
+      kind: S.me.kind, role: S.me.role || 'member',
       color: S.me.color, bio: S.me.bio || '', avatar: S.me.avatar || '', joined: S.me.joined || 0,
       owner: S.me.owner || '', isMe: true, friends: 'me',
       // 资料页要按这些字段显示：简介模式、标签、生日/年龄、性别、签名、邮箱

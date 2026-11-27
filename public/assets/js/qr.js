@@ -52,7 +52,7 @@ export function openQr(title, data, hint) {
   return wrap;
 }
 
-/** lightgroup://user/h_1?site=...&scope=1（site/scope 可缺省，老码照样能用） */
+/** lightgroup://user/8f3k2a9c1d?site=...&scope=1（site/scope 可缺省，老码照样能用） */
 function parseLg(raw) {
   const t = String(raw || '').trim();
   if (t.slice(0, 11).toLowerCase() !== 'lightgroup:') return null;

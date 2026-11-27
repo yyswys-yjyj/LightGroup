@@ -633,8 +633,6 @@ function editScopeDialog(s) {
     { value: 'server', label: '由站点下发' },
     { value: 'keep', label: '消息保留' },
   ], String(s.msg_mode ?? ''));
-  const fMsgDays = textInput('msg_keep_days', String(s.msg_keep_days ?? ''), '留空跟随站点总配置', 'number');
-  const fMsgPer = textInput('msg_keep_per_conv', String(s.msg_keep_per_conv ?? ''), '留空跟随站点总配置', 'number');
   const fMsgLocal = selectInput('msg_local', [
     { value: '', label: '跟随站点总配置' },
     { value: '1', label: '允许本机保存' },
@@ -643,8 +641,6 @@ function editScopeDialog(s) {
   const fMsgPage = textInput('msg_page_size', String(s.msg_page_size ?? ''), '留空跟随站点总配置', 'number');
   f.append(div('form-grid', [
     field('消息存储', fMsgMode, '由站点下发=按页拉、可懒加载；消息保留=只发新增、存在成员设备上'),
-    field('消息保留天数', fMsgDays, '0 表示本群不按时间删；留空跟随站点'),
-    field('每会话保留条数', fMsgPer, '0 表示本群不按条数删；留空跟随站点'),
     field('本机保存', fMsgLocal, '成员把消息缓存在自己设备上；留空跟随站点'),
     field('每次加载条数', fMsgPage, '1-100；成员点「加载更多」之前只加载这么多；留空跟随站点'),
   ]));
@@ -663,8 +659,6 @@ function editScopeDialog(s) {
           pg_create: fPgCreate.checked ? 1 : 0,
           perm_group_id: formValue(f, 'perm_group_id') || '0',
           msg_mode: fMsgMode.value,
-          msg_keep_days: fMsgDays.value.trim(),
-          msg_keep_per_conv: fMsgPer.value.trim(),
           msg_page_size: fMsgPage.value.trim(),
           msg_local: fMsgLocal.value,
         });
@@ -1987,8 +1981,6 @@ async function renderSettings(box) {
   const fPgMember = textInput('pg.member_cap', st['pg.member_cap'] || '0', '0 不限', 'number');
   const fPgSize = textInput('pg.size_cap', st['pg.size_cap'] || '0', '0 不限', 'number');
   const pruneInfo = d.prune || {};
-  const fKeepDays = textInput('msg.keep_days', String(pruneInfo.keep_days || st['msg.keep_days'] || '0'), '0 不限', 'number');
-  const fKeepPer = textInput('msg.keep_per_conv', String(pruneInfo.keep_per_conv || st['msg.keep_per_conv'] || '0'), '0 不限', 'number');
   const fKeepPage = textInput('msg.page_size', String(pruneInfo.page_size || st['msg.page_size'] || '20'), '1-100，默认 20', 'number');
   const fMsgLocal = el('input', { type: 'checkbox', checked: String(st['msg.local'] || '1') !== '0' });
   const fMsgMode = selectInput('msg.mode', [
@@ -2027,13 +2019,9 @@ async function renderSettings(box) {
   ]);
   box.append(card('私群配额', [pgForm, div('hint', [el('p', { text: '私群是成员自己拉的群，不会出现在管理员会话列表里，但后台审计能看到。' })])], { icon: 'fa-users-viewfinder' }));
 
-  // ---- 消息存储：两套策略二选一，界面跟着模式换 ----
+  // ---- 消息存储：两套策略二选一，界面跟着模式换；消息一条都不删 ----
   const serverBox = div('form-grid', [
     field('每次加载条数', fKeepPage, '成员点「加载更多消息」才会继续往前翻'),
-  ]);
-  const keepBox = div('form-grid', [
-    field('只保留最近几天', fKeepDays, '0 表示不按时间删'),
-    field('每个会话最多保留几条', fKeepPer, '0 表示不按条数删'),
   ]);
   const localBox = div('oauth-switches', [
     el('label', { class: 'switch' }, [fMsgLocal, el('span', { text: '允许成员把消息留一份在自己设备上' })]),
@@ -2041,47 +2029,34 @@ async function renderSettings(box) {
   function paintMode() {
     const keep = fMsgMode.value === 'keep';
     serverBox.style.display = keep ? 'none' : '';
-    keepBox.style.display = keep ? '' : 'none';
     localBox.style.display = keep ? '' : 'none';
   }
   fMsgMode.addEventListener('change', paintMode);
   const pruneForm = el('form', { class: 'adm-form' }, [
     div('form-grid', [field('存储方式', fMsgMode, '由站点下发=按页拉取、可选懒加载；消息保留=只发新增、存在成员设备上')]),
     serverBox,
-    keepBox,
     localBox,
   ]);
   paintMode();
-  const pruneStats = el('p', {
-    class: 'hint-p',
-    text: '当前 ' + (pruneInfo.messages || 0) + ' 条消息' +
-      (pruneInfo.last_run ? '，上次剪枝 ' + ago(pruneInfo.last_run * 1000) : '，还没跑过'),
-  });
-  const pruneNowBtn = btn('立即剪枝', 'btn-ghost', async function () {
-    const ok = await confirmBox('立即剪枝', '按当前策略清理一次旧消息？置顶消息和还有未完成群待办的消息不会被删。', true);
-    if (!ok) return;
-    try {
-      const r = await api('prune', {});
-      toast('已清理 ' + ((r.run && r.run.deleted) || 0) + ' 条');
-      go('settings');
-    } catch (e) { toast(e.message, 'err'); }
-  }, 'fa-scissors');
   box.append(card('消息存储', [
     pruneForm,
     div('hint', [
-      pruneStats,
-      el('p', { text: '策略保存后不用配系统定时任务：站点有请求进来时会自己按小时检查一次。置顶消息、还有未完成群待办的消息不会被删。' }),
+      el('p', { class: 'hint-p', text: '当前 ' + (pruneInfo.messages || 0) + ' 条消息' }),
+      el('p', { text: '消息只增不删：站点不按时间或条数删消息，切回「由站点下发」也不会缺历史。' }),
       el('p', { text: '由站点下发：打开会话先拉一页，成员点「加载更多消息」才继续往前翻。' }),
-      el('p', { text: '消息保留：站点只发新消息，历史留在成员设备上；保留天数与条数只在这套下生效。' }),
+      el('p', { text: '消息保留：站点只发新消息，历史留在成员设备上。' }),
     ]),
-    div('form-foot', [pruneNowBtn]),
   ], { icon: 'fa-box-archive' }));
 
   // ---- 文件传输：群文件与私聊附件共用这套站点策略 ----
   const fFileOn = el('input', { type: 'checkbox', checked: String(st['file.enabled'] || '1') !== '0' });
   const fFileMax = textInput('file.max_mb', st['file.max_mb'] || '50', '1-2048，默认 50', 'number');
   const fFileAtt = textInput('file.attachments', st['file.attachments'] || '3', '1-9，默认 3', 'number');
-  const fFileKeep = textInput('file.keep_days', st['file.keep_days'] || '0', '0 表示永久保留', 'number');
+  const fFileKeep = textInput('file.keep_days', st['file.keep_days'] || '180', '1-3650，默认 180', 'number');
+  const fFileQuota = textInput('file.quota_mb', st['file.quota_mb'] || '4096', '0 表示不限', 'number');
+  const fileUse = d.file_usage || {};
+  const useText = '当前已用 ' + (fileUse.files || 0) + ' 个文件，'
+    + ((fileUse.bytes || 0) / 1048576).toFixed(1) + ' MB';
   const fFileStore = selectInput('file.storage', [
     { value: 'local', label: '本地存储（数据目录 files/）' },
     { value: 'db', label: '二进制入库' },
@@ -2120,8 +2095,10 @@ async function renderSettings(box) {
     div('form-grid', [
       field('单个文件上限（MB）', fFileMax, '1-2048，默认 50'),
       field('一条消息最多几个附件', fFileAtt, '1-9，默认 3'),
-      field('文件保留天数', fFileKeep, '0 表示永久保留；到期由站点自己清理'),
+      field('文件保留天数', fFileKeep, '到期自动清理，清理后消息里只剩占位；0 表示永久保留（不推荐，会占满磁盘）'),
+      field('站点文件总容量（MB）', fFileQuota, '0 表示不限；用满后拒收新文件，不删旧文件'),
     ]),
+    div('hint', [el('p', { text: useText })]),
     div('form-grid', [field('存储方式', fFileStore)]),
     fileWarn,
     s3Box,
@@ -2262,14 +2239,13 @@ async function renderSettings(box) {
           'pg.member_cap': fPgMember.value.trim() || '0',
           'pg.size_cap': fPgSize.value.trim() || '0',
           'msg.mode': fMsgMode.value,
-    'msg.keep_days': fKeepDays.value.trim() || '0',
-          'msg.keep_per_conv': fKeepPer.value.trim() || '0',
           'msg.page_size': fKeepPage.value.trim() || '20',
           'msg.local': fMsgLocal.checked ? '1' : '0',
           'file.enabled': fFileOn.checked ? '1' : '0',
           'file.max_mb': fFileMax.value.trim() || '50',
           'file.attachments': fFileAtt.value.trim() || '3',
-          'file.keep_days': fFileKeep.value.trim() || '0',
+          'file.keep_days': fFileKeep.value.trim() || '180',
+    'file.quota_mb': fFileQuota.value.trim() || '4096',
           'file.storage': fFileStore.value,
           'file.s3.endpoint': fS3Endpoint.value.trim(),
           'file.s3.bucket': fS3Bucket.value.trim(),

@@ -425,7 +425,7 @@ final class Mcp
                     "properties" => [
                         "action" => ["type" => "string", "description" => "open / send / list"],
                         "name"   => ["type" => "string", "description" => "对方的名字"],
-                        "id"     => ["type" => "string", "description" => "对方的成员 id，如 h_12 / a_3"],
+                        "id"     => ["type" => "string", "description" => "对方的成员 uid，如 8f3k2a9c1d"],
                         "text"   => ["type" => "string", "description" => "action=send 时要发的内容"],
                     ],
                     "required" => ["action"],
@@ -601,7 +601,7 @@ final class Mcp
 
     private static function toolMembers(PDO $pdo, array $scope, array $me): array
     {
-        $st = $pdo->prepare("SELECT id, name, kind, owner_id, adapter, deleted_at FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY kind ASC, id ASC");
+        $st = $pdo->prepare("SELECT id, uid, name, kind, owner_id, adapter, deleted_at FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY kind ASC, id ASC");
         $st->execute([(int) $scope["id"]]);
         $out = [];
         foreach ($st->fetchAll() as $m) {
@@ -701,7 +701,7 @@ final class Mcp
                     $id = (int) ($row["id"] ?? 0);
                     if ($id <= 0) continue;
                     $out[$k][] = [
-                        "id"   => "h_" . $id,
+                        "id"   => self::uidOf($pdo, $id),
                         "name" => Conv::nameOf($pdo, $id),
                         "at"   => (int) ($row["at"] ?? 0),
                     ];
@@ -1032,16 +1032,17 @@ final class Mcp
     private static function findMember(PDO $pdo, array $scope, array $me, string $name, string $idRaw): ?array
     {
         $name = trim($name);
-        if ($name === "" && $idRaw !== "") {
-            if (preg_match('/^[ha]_(\d+)$/i', trim($idRaw), $mm)) {
-                $id = (int) $mm[1];
-                $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
-                $st->execute([$id]);
-                $row = $st->fetch();
-                return $row ?: null;
-            }
-            $name = trim($idRaw);
+        $idRaw = trim($idRaw);
+        // 先按 uid 认人；认不到再当名字查
+        $id = $idRaw !== "" ? Ids::resolve($pdo, $idRaw, (int) $scope["id"]) : 0;
+        if ($id <= 0 && $name !== "") $id = Ids::resolve($pdo, $name, (int) $scope["id"]);
+        if ($id > 0) {
+            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND scope_id = ? AND deleted_at IS NULL LIMIT 1");
+            $st->execute([$id, (int) $scope["id"]]);
+            $row = $st->fetch();
+            if ($row) return $row;
         }
+        if ($name === "" && $idRaw !== "") $name = $idRaw;
         if ($name === "") return null;
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? AND deleted_at IS NULL LIMIT 1");
         $st->execute([(int) $scope["id"], $name]);
@@ -1072,7 +1073,17 @@ final class Mcp
 
     private static function mid(array $m): string
     {
-        return ((string) ($m["kind"] ?? "human") === "ai" ? "a_" : "h_") . (int) $m["id"];
+        return Ids::of($m);
+    }
+
+    /** 内部 id → 对外 uid；找不到就给空串 */
+    private static function uidOf(PDO $pdo, int $id): string
+    {
+        if ($id <= 0) return "";
+        $st = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ? Ids::of($row) : "";
     }
 
     private static function abs(string $path): string

@@ -247,7 +247,7 @@ final class V1
 
     private static function members(PDO $pdo, array $scope, array $me): void
     {
-        $st = $pdo->prepare("SELECT id, name, kind, owner_id, adapter FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY kind ASC, id ASC");
+        $st = $pdo->prepare("SELECT id, uid, name, kind, owner_id, adapter FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY kind ASC, id ASC");
         $st->execute([(int) $scope["id"]]);
         $out = [];
         foreach ($st->fetchAll() as $m) {
@@ -352,7 +352,7 @@ final class V1
             $out = ["friends" => [], "incoming" => [], "outgoing" => []];
             foreach ($raw as $k => $list) {
                 foreach ($list as $row) {
-                    $out[$k][] = ["id" => "h_" . (int) $row["id"], "name" => Conv::nameOf($pdo, (int) $row["id"]), "at" => (int) ($row["at"] ?? 0)];
+                    $out[$k][] = ["id" => self::uidOf($pdo, (int) $row["id"]), "name" => Conv::nameOf($pdo, (int) $row["id"]), "at" => (int) ($row["at"] ?? 0)];
                 }
             }
             Json::out(["ok" => true] + $out);
@@ -494,11 +494,13 @@ final class V1
     {
         $name = trim($name);
         if ($name === "") return null;
-        if (preg_match('/^[ha]_(\d+)$/i', $name, $m)) {
-            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
-            $st->execute([(int) $m[1]]);
+        // 先按 uid 认人；认不到再当名字查
+        $id = Ids::resolve($pdo, $name, (int) $scope["id"]);
+        if ($id > 0) {
+            $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND scope_id = ? AND deleted_at IS NULL LIMIT 1");
+            $st->execute([$id, (int) $scope["id"]]);
             $row = $st->fetch();
-            return $row ?: null;
+            if ($row) return $row;
         }
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND name = ? AND deleted_at IS NULL LIMIT 1");
         $st->execute([(int) $scope["id"], $name]);
@@ -617,7 +619,17 @@ final class V1
 
     private static function mid(array $m): string
     {
-        return ((string) ($m["kind"] ?? "human") === "ai" ? "a_" : "h_") . (int) $m["id"];
+        return Ids::of($m);
+    }
+
+    /** 内部 id → 对外 uid；找不到就给空串 */
+    private static function uidOf(PDO $pdo, int $id): string
+    {
+        if ($id <= 0) return "";
+        $st = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ? Ids::of($row) : "";
     }
 
     private static function abs(string $path): string

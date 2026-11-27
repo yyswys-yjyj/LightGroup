@@ -370,6 +370,7 @@ function openCreateGroup() {
 // 这条关系挂在自己的哪个 AI 上（主人代管），回名字
 function aiNameOf(forRaw) {
   if (!forRaw) return '';
+  // for 是那个 AI 的 uid；老数据可能还是 a_<id>，一并容忍
   const id = String(forRaw).replace(/^a_/, '');
   const ai = (S.members || []).filter(function (x) { return String(x.id) === id; })[0];
   return ai ? (ai.name || 'AI') : 'AI';

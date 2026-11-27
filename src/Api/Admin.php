@@ -52,16 +52,8 @@ final class Admin {
             case "mail":      self::mailTest($pdo, $role, $method); break;
             case "moments":   self::momentsSetting($pdo, $me, $method); break;
             case "permgroups": self::permgroups($pdo, $role, $myScope, $method, $id, $sub); break;
-            case "prune":      $method === "POST" ? self::pruneNow($pdo, $role) : Json::ok(["prune" => Pruner::info($pdo)]); break;
             default:          Json::fail("未知管理接口");
         }
-    }
-
-    /** 手动跑一次剪枝（后台「立即剪枝」按钮） */
-    private static function pruneNow(PDO $pdo, string $role): void {
-        if ($role !== "super") Json::fail("只有超级管理员能立刻剪枝", 403);
-        $r = Pruner::run($pdo, ["limit" => 20000]);
-        Json::ok(["prune" => Pruner::info($pdo), "run" => $r]);
     }
 
     private static function role(PDO $pdo, array $m): string {
@@ -114,8 +106,6 @@ final class Admin {
             "pg_create"     => self::setting($pdo, "pg.create." . $id, "1") !== "0",
             // 消息存储：空串表示跟随站点总配置
             "msg_mode"      => self::setting($pdo, "msg." . $id . ".mode", ""),
-            "msg_keep_days" => self::setting($pdo, "msg." . $id . ".keep_days", ""),
-            "msg_keep_per_conv" => self::setting($pdo, "msg." . $id . ".keep_per_conv", ""),
             "msg_local"     => self::setting($pdo, "msg." . $id . ".local", ""),
             "msg_page_size" => self::setting($pdo, "msg." . $id . ".page_size", ""),
             "msg_policy"    => Pruner::info($pdo, $id),
@@ -254,7 +244,7 @@ final class Admin {
             }
             // 消息存储：传空串 = 跟随站点总配置（删掉覆盖键），数字 = 本群自己的策略
             $msgTouched = false;
-            foreach (["msg_keep_days" => "keep_days", "msg_keep_per_conv" => "keep_per_conv", "msg_page_size" => "page_size"] as $in => $suffix) {
+            foreach (["msg_page_size" => "page_size"] as $in => $suffix) {
                 $v = self::in($in, null);
                 if ($v === null) continue;
                 $msgTouched = true;
@@ -337,8 +327,8 @@ final class Admin {
         if ($st->fetch()) return;
         try {
             $super = self::superName($pdo);
-            $st = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, created_at) VALUES (?, ?, ?, 'human', ?, ?)");
-            $st->execute([$scopeId, $super, MemberNames::plain($pdo, $scopeId, $super), (int) $a["id"], lg_now()]);
+            $st = $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, account_id, created_at) VALUES (?, ?, ?, ?, 'human', ?, ?)");
+            $st->execute([$scopeId, $super, MemberNames::plain($pdo, $scopeId, $super), Ids::newUid($pdo), (int) $a["id"], lg_now()]);
         } catch (\Throwable $e) {
         }
     }
@@ -517,9 +507,6 @@ final class Admin {
             // 私群配额：每个成员能建几个、单个私群最多多少人（0 = 不限）
             "pg.member_cap"        => "int",
             "pg.size_cap"          => "int",
-            // 消息剪枝：0 表示不限，两项都为 0 时一条都不删
-            "msg.keep_days"        => "int",
-            "msg.keep_per_conv"    => "int",
             "msg.local"            => "int",
             "msg.page_size"        => "int",
             "oauth.enabled"        => "int",
@@ -575,6 +562,7 @@ final class Admin {
             "file.max_mb"             => "int",
             "file.attachments"        => "int",
             "file.keep_days"          => "int",
+            "file.quota_mb"           => "int",
             "file.storage"            => "filestorage",
             "file.s3.endpoint"        => "url",
             "file.s3.bucket"          => "text",
@@ -594,11 +582,13 @@ final class Admin {
             $out["msg.local"] = self::setting($pdo, "msg.local", "1");
             // 一页多少条：不配就是 20
             $out["msg.page_size"] = self::setting($pdo, "msg.page_size", "20");
-            // 文件传输：默认开、50MB、一条最多 3 个附件、永久保留、本地存储
+            // 文件传输：默认开、50MB、一条最多 3 个附件、留 180 天、总容量 4GB、本地存储
             foreach (["file.enabled" => "1", "file.max_mb" => "50", "file.attachments" => "3",
-                      "file.keep_days" => "0", "file.storage" => "local", "file.s3.region" => "auto"] as $fk => $fv) {
+                      "file.keep_days" => "180", "file.quota_mb" => "4096",
+                      "file.storage" => "local", "file.s3.region" => "auto"] as $fk => $fv) {
                 if (trim($out[$fk]) === "") $out[$fk] = $fv;
             }
+            $out["file_usage"] = Files::usage($pdo);
             // 密钥不回传明文：前端只显示「已配置」，留空保存表示不改
             $hasSecret = trim($out["oauth.client_secret"]) !== "";
             $out["oauth.client_secret"] = "";
@@ -1865,8 +1855,8 @@ final class Admin {
             return (int) $row["id"];
         }
         $memberName = self::uniqueMemberName($pdo, $name, $scopeId);
-        $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, oauth_id, created_at) VALUES (?, ?, ?, 'human', ?, ?, ?)")
-            ->execute([$scopeId, $memberName, MemberNames::plain($pdo, (int) $scopeId, $memberName), $accountId, $oauthId, lg_now()]);
+        $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, account_id, oauth_id, created_at) VALUES (?, ?, ?, ?, 'human', ?, ?, ?)")
+            ->execute([$scopeId, $memberName, MemberNames::plain($pdo, (int) $scopeId, $memberName), Ids::newUid($pdo), $accountId, $oauthId, lg_now()]);
         return (int) $pdo->lastInsertId();
     }
 

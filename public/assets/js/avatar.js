@@ -11,29 +11,26 @@ export function colorOf(name) {
   return HUES[s % HUES.length];
 }
 
-// 取色优先级：服务端给的 color > 按成员 id 取模 > 按名字哈希。
-// 用 id 才算得准：资料卡先用列表里那份（没有 color）画、再换成接口返回的，
-// 两次都按同一个 id 取模就不会「闪一下变个色」。
+// 取色优先级：服务端给的 color > 按 uid 哈希 > 按名字哈希。
+// 用 uid 才算得准：资料卡先用列表里那份（没有 color）画、再换成接口返回的，
+// 两次都按同一个 uid 哈希就不会「闪一下变个色」。
 function colorFor(m) {
   if (m && m.color) return m.color;
-  const g = /^[ha]_(\d+)$/.exec(uidOf(m));
-  if (g) return HUES[Number(g[1]) % HUES.length];
+  const u = uidOf(m);
+  if (u) return colorOf(u);
   return colorOf((m && m.name) || '?');
 }
 
 export function initial(name) { return String(name || '?').trim().slice(0, 1).toUpperCase(); }
 
-// 从成员对象（id/kind）或消息对象（from）里取对外 id："h_5" / "a_6"。
-// 消息的 m.id 是消息 id，所以 from 优先；成员的数字 id 按 kind 补前缀。
+// 取成员的对外 uid。成员对象的 id 就是 uid；消息对象的 id 是消息 id，所以 from 优先。
 export function uidOf(m) {
   if (!m) return '';
-  const raw = m.from || m.memberId || m.uid;
-  const ok = function (v) { return /^[ha]_\d+$/.test(String(v)); };
-  if (raw && ok(raw)) return String(raw);
-  const id = (m.id === null || m.id === undefined) ? '' : String(m.id);
-  if (ok(id)) return id;
-  if (/^\d+$/.test(id)) return (m.kind === 'ai' ? 'a_' : 'h_') + id;
-  return raw ? String(raw) : '';
+  const raw = m.uid || m.from || m.memberId;
+  if (raw !== undefined && raw !== null && String(raw) !== '') return String(raw);
+  const id = m.id;
+  if (id === undefined || id === null || String(id) === '') return '';
+  return String(id);
 }
 
 // m 可以是 member（id/name/avatar/kind）或消息（name/ava/kind）

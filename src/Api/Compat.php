@@ -228,13 +228,18 @@ final class Compat {
 
     public static function memberBriefPublic(PDO $pdo, array $m): array {
         $ownerName = null;
+        $ownerUid = null;
         if ((string) $m["kind"] === "ai" && (int) ($m["owner_id"] ?? 0) > 0) {
-            $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $st = $pdo->prepare("SELECT name, uid FROM members WHERE id = ? LIMIT 1");
             $st->execute([(int) $m["owner_id"]]);
-            $ownerName = (string) ($st->fetchColumn() ?: "");
+            $orow = $st->fetch();
+            if ($orow) {
+                $ownerName = (string) $orow["name"];
+                $ownerUid = Ids::of($orow);
+            }
         }
         $roles = self::badgeMap($pdo);
-        return self::memberOut($m, $ownerName, $roles[(int) ($m["account_id"] ?? 0)] ?? "");
+        return self::memberOut($m, $ownerName, $roles[(int) ($m["account_id"] ?? 0)] ?? "", $ownerUid);
     }
 
     public static function roleOfPublic(PDO $pdo, array $m): string {
@@ -390,30 +395,32 @@ final class Compat {
         "#16a34a", "#0891b2", "#475569", "#9f1239", "#4d7c0f",
     ];
 
-    private static function colorOf(int $id): string {
+    /** 成员颜色：按 uid 做稳定哈希，跟前端 avatar.js 的 colorOf 同一套算法 */
+    private static function colorOf(string $uid): string {
         $n = count(self::COLORS);
-        return self::COLORS[(($id % $n) + $n) % $n];
+        $s = 0;
+        $len = strlen($uid);
+        for ($i = 0; $i < $len; $i++) { $s = ($s * 31 + ord($uid[$i])) % 997; }
+        return self::COLORS[$s % $n];
     }
 
-    /** 对外成员 id：h_13 / a_14（内部仍是自增整数，对外统一带前缀） */
+    /** 对外成员 id：members.uid（随机串），不再带 h_/a_ 前缀 */
     private static function mid(array $m): string {
-        return ((string) $m["kind"] === "ai" ? "a_" : "h_") . (int) $m["id"];
+        return Ids::of($m);
     }
 
-    /** 解析外部成员 id：h_13 / a_14 / 13，认不出来回 0 */
-    private static function parseMid(string $raw): int {
-        if (preg_match('/^[ha]_(\d+)$/', $raw, $g)) return (int) $g[1];
-        if ($raw !== "" && ctype_digit($raw)) return (int) $raw;
-        return 0;
+    /** 解析外部成员 id：uid、纯数字，或旧的 h_13 / a_14；认不出来回 0 */
+    private static function parseMid(PDO $pdo, string $raw): int {
+        return Ids::resolve($pdo, $raw);
     }
 
-    private static function memberOut(array $m, ?string $ownerName, string $role = ""): array {
+    private static function memberOut(array $m, ?string $ownerName, string $role = "", ?string $ownerUid = null): array {
         $isAi = (string) $m["kind"] === "ai";
         $out = [
             "id"       => self::mid($m),
             "name"     => (string) $m["name"],
             "kind"     => (string) $m["kind"],
-            "color"    => self::colorOf((int) $m["id"]),
+            "color"    => self::colorOf(Ids::of($m)),
             "emoji"    => "",
             "owner"    => "",
             "ownerId"  => "",
@@ -429,12 +436,17 @@ final class Compat {
         ];
         if ($isAi && $ownerName !== null) {
             $out["owner"]   = $ownerName;
-            $out["ownerId"] = "h_" . (int) $m["owner_id"];
+            $out["ownerId"] = $ownerUid ?? "";
         }
         return $out;
     }
 
     private static function membersOf(PDO $pdo, int $scopeId): array {
+        return array_values(self::membersById($pdo, $scopeId));
+    }
+
+    /** 内部 id => 对外成员结构；memberMap 要按内部 id 取，所以单独留一份 */
+    private static function membersById(PDO $pdo, int $scopeId): array {
         $st = $pdo->prepare("SELECT * FROM members WHERE scope_id = ? AND deleted_at IS NULL ORDER BY id ASC");
         $st->execute([$scopeId]);
         $rows = $st->fetchAll();
@@ -446,12 +458,17 @@ final class Compat {
             if (!$has) $rows[] = $sup;
         }
         $names = [];
-        foreach ($rows as $r) $names[(int) $r["id"]] = $r["name"];
+        $uids = [];
+        foreach ($rows as $r) {
+            $names[(int) $r["id"]] = $r["name"];
+            $uids[(int) $r["id"]] = Ids::of($r);
+        }
         $roles = self::badgeMap($pdo);
         $out = [];
         foreach ($rows as $r) {
             $owner = isset($r["owner_id"]) && $r["owner_id"] !== null ? ($names[(int) $r["owner_id"]] ?? null) : null;
-            $out[] = self::memberOut($r, $owner, $roles[(int) ($r["account_id"] ?? 0)] ?? "");
+            $ownerUid = $owner !== null ? ($uids[(int) $r["owner_id"]] ?? null) : null;
+            $out[(int) $r["id"]] = self::memberOut($r, $owner, $roles[(int) ($r["account_id"] ?? 0)] ?? "", $ownerUid);
         }
         return $out;
     }
@@ -527,8 +544,8 @@ final class Compat {
         $plain = Token::issue();
         // 顺便发一个网页登录用的密码：进群的人不用再去注册一遍
         $pass = lg_pass();
-        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?)");
-        $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), "human", Token::hash($plain), password_hash($pass, PASSWORD_DEFAULT), lg_now(), lg_now()]);
+        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, token_hash, pass_hash, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?)");
+        $ins->execute([(int) $scope["id"], $name, MemberNames::plain($pdo, (int) $scope["id"], $name), Ids::newUid($pdo), "human", Token::hash($plain), password_hash($pass, PASSWORD_DEFAULT), lg_now(), lg_now()]);
         $newId = (int) $pdo->lastInsertId();
         self::noteJoinIp($pdo, $ip, $newId);
 
@@ -628,9 +645,9 @@ final class Compat {
 
         $plain = Token::issue();
         // 小群协议建出来的一律是 xsj 适配器：它只有大群读写这几个能力
-        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+        $ins = $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
         $ins->execute([
-            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name),
+            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name), Ids::newUid($pdo),
             "ai", (int) $human["id"], $human["oauth_id"], Token::hash($plain), "xsj", lg_now(), lg_now(),
         ]);
 
@@ -687,11 +704,11 @@ final class Compat {
         self::checkAiQuota($pdo, $scope, (int) $me["id"]);
         $plain = Token::issue();
         $ins = $pdo->prepare(
-            "INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at)"
-            . " VALUES (?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO members (scope_id, name, username, uid, kind, owner_id, oauth_id, token_hash, adapter, created_at, last_seen_at)"
+            . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
         );
         $ins->execute([
-            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $me["id"], $name),
+            (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $me["id"], $name), Ids::newUid($pdo),
             "ai", (int) $me["id"], $me["oauth_id"] ?? null, Token::hash($plain), $adapter, lg_now(), lg_now(),
         ]);
         self::aiOut($pdo, $scope, $plain, $name, $adapter, false);
@@ -814,11 +831,13 @@ final class Compat {
 
         $isAi  = (string) $m["kind"] === "ai";
         $owner = "";
+        $ownerUid = "";
         if ($isAi && $m["owner_id"] !== null) {
-            $st = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $st = $pdo->prepare("SELECT name, uid FROM members WHERE id = ? LIMIT 1");
             $st->execute([(int) $m["owner_id"]]);
             $row = $st->fetch();
             $owner = $row ? (string) $row["name"] : "";
+            $ownerUid = $row ? Ids::of($row) : "";
         }
 
         Json::ok([
@@ -827,10 +846,10 @@ final class Compat {
                 "name"     => (string) $m["name"],
                 "username" => (string) ($m["username"] ?? $m["name"]),
                 "kind"     => (string) $m["kind"],
-                "color"    => self::colorOf((int) $m["id"]),
+                "color"    => self::colorOf(Ids::of($m)),
                 "emoji"    => "",
                 "owner"    => $owner,
-                "ownerId"  => $isAi ? "h_" . (int) $m["owner_id"] : "",
+                "ownerId"  => $isAi ? $ownerUid : "",
                 "bot"      => $isAi,
                 "avatar"   => (string) ($m["avatar"] ?? ""),
                 "hasWake"  => false,
@@ -899,12 +918,12 @@ final class Compat {
         $by = "";
         $byId = "";
         if ($scope["notice_by"] !== null) {
-            $st = $pdo->prepare("SELECT id, name, kind FROM members WHERE id = ? LIMIT 1");
+            $st = $pdo->prepare("SELECT id, name, kind, uid FROM members WHERE id = ? LIMIT 1");
             $st->execute([(int) $scope["notice_by"]]);
             $row = $st->fetch();
             if ($row) {
                 $by = (string) $row["name"];
-                $byId = ((string) $row["kind"] === "ai" ? "a_" : "h_") . (int) $row["id"];
+                $byId = Ids::of($row);
             }
         }
         return ["text" => $text, "at" => (int) ($scope["notice_at"] ?? 0), "by" => $by, "byId" => $byId];
@@ -1061,7 +1080,7 @@ final class Compat {
     private static function pinSet(PDO $pdo, array $scope): void {
         $m = self::requireModerator($pdo);
         if (!Perm::can($pdo, (int) $scope["id"], "group.pin")) Json::fail("这个群没有开放置顶", 403);
-        $id = self::parseMid(Input::get("id"));
+        $id = self::parseMid($pdo, Input::get("id"));
         if ($id <= 0) $id = Input::int("id", 0);
         if ($id <= 0) Json::fail("要置顶哪一条");
         $ids = self::scopeIds($pdo, $scope);
@@ -1368,7 +1387,7 @@ final class Compat {
         }
         $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.segs, m.card_json, m.member_id, m.reply_to, m.deleted_at,"
              . " m.voice, m.dur, m.voice_text, m.pinned_at, m.sys, m.model,"
-             . " u.id AS author_id, u.name AS author, u.kind AS author_kind, u.avatar AS author_avatar,"
+             . " u.id AS author_id, u.uid AS author_uid, u.name AS author, u.kind AS author_kind, u.avatar AS author_avatar,"
              . " u.deleted_at AS author_deleted, o.name AS owner_name,"
              . " r.text AS r_text, r.img AS r_img, r.voice AS r_voice, r.dur AS r_dur, r.card_json AS r_card,"
              . " r.deleted_at AS r_deleted, ru.name AS r_name, ru.deleted_at AS ru_deleted"
@@ -1411,10 +1430,10 @@ final class Compat {
             $authorId = (int) $r["author_id"];
             $msg = [
                 "id"       => (int) $r["id"],
-                "from"     => ((string) $r["author_kind"] === "ai" ? "a_" : "h_") . $authorId,
+                "from"     => (string) ($r["author_uid"] ?? ""),
                 "name"     => $author,
                 "kind"     => $r["author_kind"],
-                "color"    => self::colorOf($authorId),
+                "color"    => self::colorOf((string) ($r["author_uid"] ?? "")),
                 "ava"      => (string) ($r["author_avatar"] ?? ""),
                 "text"     => $recalled ? "" : (string) $r["text"],
                 "ts"       => (int) $r["ts_ms"],
@@ -1600,11 +1619,7 @@ final class Compat {
 
     /** 对外成员表：内部 id => memberOut 结构 */
     private static function memberMap(PDO $pdo, array $scope): array {
-        $map = [];
-        foreach (self::membersOf($pdo, (int) $scope["id"]) as $mem) {
-            $map[self::parseMid((string) $mem["id"])] = $mem;
-        }
-        return $map;
+        return self::membersById($pdo, (int) $scope["id"]);
     }
 
     /** 会话成员：公开大群回整个 scope 的成员表，私聊只回两个人 */
@@ -1617,12 +1632,17 @@ final class Compat {
         $st->execute($ids);
         $rows = $st->fetchAll();
         $names = [];
-        foreach ($rows as $r) $names[(int) $r["id"]] = $r["name"];
+        $uids = [];
+        foreach ($rows as $r) {
+            $names[(int) $r["id"]] = $r["name"];
+            $uids[(int) $r["id"]] = Ids::of($r);
+        }
         $roles = self::badgeMap($pdo);
         $out = [];
         foreach ($rows as $r) {
             $owner = $r["owner_id"] !== null ? ($names[(int) $r["owner_id"]] ?? null) : null;
-            $out[] = self::memberOut($r, $owner, $roles[(int) ($r["account_id"] ?? 0)] ?? "");
+            $ownerUid = $owner !== null ? ($uids[(int) $r["owner_id"]] ?? null) : null;
+            $out[] = self::memberOut($r, $owner, $roles[(int) ($r["account_id"] ?? 0)] ?? "", $ownerUid);
         }
         return $out;
     }
@@ -1639,7 +1659,13 @@ final class Compat {
         if (!$isPublic && (string) ($conv["kind"] ?? "") === "pg") {
             $out["title"]    = (string) ($conv["title"] ?? "");
             $out["role"]     = Conv::roleIn($pdo, (int) $conv["id"], (int) $me["id"]);
-            $out["ownerId"]  = (int) ($conv["created_by"] ?? 0);
+            $oRow = null;
+            if ((int) ($conv["created_by"] ?? 0) > 0) {
+                $ost = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+                $ost->execute([(int) $conv["created_by"]]);
+                $oRow = $ost->fetch();
+            }
+            $out["ownerId"]  = $oRow ? Ids::of($oRow) : "";
             $out["notice"]   = (string) ($conv["notice"] ?? "");
             $out["noticeAt"] = (int) ($conv["notice_at"] ?? 0);
             return $out;
@@ -1822,12 +1848,12 @@ final class Compat {
             $by = "";
             $byKey = "";
             if ($byId > 0) {
-                $stn = $pdo->prepare("SELECT name, kind FROM members WHERE id = ? LIMIT 1");
+                $stn = $pdo->prepare("SELECT name, kind, uid FROM members WHERE id = ? LIMIT 1");
                 $stn->execute([$byId]);
                 $row = $stn->fetch();
                 if ($row) {
                     $by = (string) $row["name"];
-                    $byKey = ((string) $row["kind"] === "ai" ? "a_" : "h_") . $byId;
+                    $byKey = Ids::of($row);
                 }
             }
             $out["notice"] = [
@@ -1859,8 +1885,18 @@ final class Compat {
         foreach ($rel["friends"] as $it) {
             $mem = $map[$it["id"]] ?? null;
             if ($mem === null) continue;
-            // 这条关系挂在自己的 AI 上时标出来，UI 才不会当成「我的好友」
-            if (!empty($it["for"])) $mem["for"] = "a_" . (int) $it["for"];
+            // 这条关系挂在自己的 AI 上时标出来，UI 才不会当成「我的好友」；for 给的是那个 AI 的 uid
+            if (!empty($it["for"])) {
+                $forAi = $map[(int) $it["for"]] ?? null;
+                if ($forAi !== null) {
+                    $mem["for"] = (string) $forAi["id"];
+                } else {
+                    $ost = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+                    $ost->execute([(int) $it["for"]]);
+                    $orow = $ost->fetch();
+                    if ($orow) $mem["for"] = Ids::of($orow);
+                }
+            }
             if (!empty($it["remark"])) $mem["remark"] = (string) $it["remark"];
             $friends[] = $mem;
         }
@@ -1893,13 +1929,16 @@ final class Compat {
             $mem = $map[$it["id"]] ?? null;
             if ($mem === null) continue;
             $row = [
-                "id"     => (string) $mem["id"],
+                "id"     => Ids::of($mem),
                 "name"   => (string) $mem["name"],
-                "color"  => self::colorOf((int) $mem["id"]),
+                "color"  => self::colorOf(Ids::of($mem)),
                 "avatar" => (string) $mem["avatar"],
                 "at"     => (int) $it["at"],
             ];
-            if (!empty($it["for"])) $row["for"] = "a_" . (int) $it["for"];
+            if (!empty($it["for"])) {
+                $forMem = $map[(int) $it["for"]] ?? null;
+                $row["for"] = $forMem ? $forMem["id"] : (string) (int) $it["for"];
+            }
             $out[] = $row;
         }
         return $out;
@@ -1908,7 +1947,7 @@ final class Compat {
     /** 申请对象：body 给 id 或 name，只认同 scope 的活人 */
     private static function friendTarget(PDO $pdo, array $scope): int {
         $raw = Input::get("id");
-        $id  = $raw !== "" ? self::parseMid($raw) : 0;
+        $id  = $raw !== "" ? self::parseMid($pdo, $raw) : 0;
         if ($id > 0) return $id;
         $name = Input::get("name");
         if ($name !== "") {
@@ -1929,12 +1968,13 @@ final class Compat {
         ];
     }
 
-    /** 主人替 AI 处理好友：body 里的 for = a_<id> 或数字 */
-    private static function friendForId(): int {
+    /** 主人替 AI 处理好友：body 里的 for = 那个 AI 的 uid（老格式 a_<id> 或纯数字也认） */
+    private static function friendForId(PDO $pdo): int {
         $raw = trim((string) Input::get("for"));
         if ($raw === "") return 0;
         if (preg_match('/^a_(\d+)$/i', $raw, $mm)) return (int) $mm[1];
-        return ctype_digit($raw) ? (int) $raw : 0;
+        if (ctype_digit($raw)) return (int) $raw;
+        return Ids::resolve($pdo, $raw);
     }
 
     private static function friendRequest(PDO $pdo, array $scope): void {
@@ -1946,21 +1986,21 @@ final class Compat {
 
     private static function friendAccept(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::accept($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     private static function friendReject(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::reject($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     private static function friendRemove(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::remove($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
@@ -1968,7 +2008,7 @@ final class Compat {
     /** POST api/friends/remark：给好友设备注（只影响自己看到的称呼） */
     private static function friendRemark(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::remark($pdo, $scope, $me, self::friendTarget($pdo, $scope), Input::get("remark"), $for > 0 ? $for : null);
         Json::ok(["remark" => trim(Input::get("remark"))]);
     }
@@ -1976,14 +2016,14 @@ final class Compat {
     /** POST api/friends/block：拉黑（同时解除好友，之后无法再加） */
     private static function friendBlock(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::block($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
 
     private static function friendUnblock(PDO $pdo, array $scope): void {
         $me = self::requireMember($pdo);
-        $for = self::friendForId();
+        $for = self::friendForId($pdo);
         Social::unblock($pdo, $scope, $me, self::friendTarget($pdo, $scope), $for > 0 ? $for : null);
         Json::ok(self::friendCounts($pdo, $me));
     }
@@ -2114,15 +2154,16 @@ final class Compat {
                 $ai = $exist;
             } else {
                 self::checkAiQuota($pdo, $scope, (int) $human["id"]);
+                $aiUid = Ids::newUid($pdo);
                 $pdo->prepare(
-                    "INSERT INTO members (scope_id, name, username, kind, owner_id, oauth_id, token_hash, created_at, last_seen_at)"
-                    . " VALUES (?,?,?,?,?,?,?,?,?)"
+                    "INSERT INTO members (scope_id, name, username, uid, kind, owner_id, oauth_id, token_hash, created_at, last_seen_at)"
+                    . " VALUES (?,?,?,?,?,?,?,?,?,?)"
                 )->execute([
-                    (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name),
+                    (int) $scope["id"], $name, MemberNames::forAi($pdo, (int) $scope["id"], (int) $human["id"], $name), $aiUid,
                     "ai", (int) $human["id"], $human["oauth_id"], Token::hash($plain), $now, $now,
                 ]);
                 $ai = [
-                    "id" => (int) $pdo->lastInsertId(), "name" => $name, "kind" => "ai",
+                    "id" => (int) $pdo->lastInsertId(), "name" => $name, "kind" => "ai", "uid" => $aiUid,
                     "scope_id" => (int) $scope["id"], "owner_id" => (int) $human["id"],
                 ];
             }
@@ -2187,11 +2228,11 @@ final class Compat {
 
     /** 群内成员名 => 对外 id，用于把 @名字 认成 mentions */
     private static function memberIdMap(PDO $pdo, array $scope): array {
-        $st = $pdo->prepare("SELECT id, name, kind FROM members WHERE scope_id = ? AND deleted_at IS NULL");
+        $st = $pdo->prepare("SELECT id, name, kind, uid FROM members WHERE scope_id = ? AND deleted_at IS NULL");
         $st->execute([(int) $scope["id"]]);
         $map = [];
         foreach ($st->fetchAll() as $row) {
-            $map[(string) $row["name"]] = ((string) $row["kind"] === "ai" ? "a_" : "h_") . (int) $row["id"];
+            $map[(string) $row["name"]] = Ids::of($row);
         }
         return $map;
     }
@@ -2248,7 +2289,7 @@ final class Compat {
     private static function memberByNameOrNull(PDO $pdo, array $scope, string $raw): ?array {
         $raw = trim($raw);
         if ($raw === "") return null;
-        $id = self::parseMid($raw);
+        $id = self::parseMid($pdo, $raw);
         if ($id > 0) {
             $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
             $st->execute([$id]);
@@ -2257,7 +2298,7 @@ final class Compat {
         }
         foreach (self::membersOf($pdo, (int) $scope["id"]) as $one) {
             if ((string) $one["name"] === $raw) {
-                $mid = self::parseMid((string) $one["id"]);
+                $mid = self::parseMid($pdo, (string) $one["id"]);
                 if ($mid <= 0) continue;
                 $st = $pdo->prepare("SELECT * FROM members WHERE id = ? AND deleted_at IS NULL LIMIT 1");
                 $st->execute([$mid]);
@@ -2555,7 +2596,7 @@ final class Compat {
         $m = self::requireMember($pdo);
         lg_session_release();
         $row = \LightGroup\Store\Files::find($pdo, $id);
-        if ($row === null) Json::fail("文件不在了", 404);
+        if ($row === null) Json::fail("这个文件已经过期或被清理了", 410);
         if ((int) $row["scope_id"] !== (int) $scope["id"]) Json::fail("没有权限看这个文件", 403);
         // 私聊 / 私群的附件只给会话成员
         $msgId = (int) ($row["message_id"] ?? 0);

@@ -2,6 +2,7 @@
 import { S, h, icon, api, btn, convTime, go, emit, siteName, siteMark, applyLayout, openSheet, closeSheet, toast } from './core.js';
 import { avatar } from './avatar.js';
 import { unreadCount } from './notices.js';
+import { canScan } from './qr.js';
 
 let listHost = null;
 
@@ -106,10 +107,10 @@ function openNewMenu(anchor) {
   const old = document.querySelector('.conv-menu');
   if (old) old.remove();
   const menu = h('div', 'rail-menu conv-menu');
-  const items = [
-    ['扫一扫', 'fa-qrcode', function () { go('#/scan'); }],
-    ['添加好友', 'fa-user-plus', openFindFriend],
-  ];
+  // 扫一扫只在能扫码的设备上出现：桌面浏览器没有摄像头入口，菜单里就别摆一项点不动的
+  const items = [];
+  if (canScan()) items.push(['扫一扫', 'fa-qrcode', function () { go('#/scan'); }]);
+  items.push(['添加好友', 'fa-user-plus', openFindFriend]);
   items.forEach(function (it) {
     const b = document.createElement('button');
     b.type = 'button';

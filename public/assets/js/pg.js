@@ -140,7 +140,7 @@ function noticeCard(g, role, members) {
         String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') : '';
       const nid = String(g.noticeBy || '');
       const who = (members || []).filter(function (m) {
-        return String(m.id).replace(/^[ha]_/, '') === nid;
+        return String(m.id) === nid;
       })[0];
       const by = who ? who.name : '';
       card.appendChild(h('div', 'pg-meta', [by, when].filter(Boolean).join(' · ')));

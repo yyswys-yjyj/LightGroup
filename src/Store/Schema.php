@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 20;
+    public const VERSION = 21;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -45,6 +45,8 @@ final class Schema {
                 "owner_id"         => "BIGINT NULL",
             ],
             "members"  => [
+                // 对外 id：随机串，注册时生成，之后不变（搜索/二维码/接口都用它）
+                "uid"          => "VARCHAR(32) NULL",
                 // 登录名：创建时默认等于昵称，之后不可改，昵称可以随便改
                 "username"     => "VARCHAR(191) NULL",
                 "theme"        => "VARCHAR(64) NULL",
@@ -157,7 +159,41 @@ final class Schema {
             } catch (\Throwable $e) {
             }
         }
+        self::ensureUids($pdo);
         self::ensureConversations($pdo);
+    }
+
+    /**
+     * 给还没有对外 id 的老成员补一个随机 uid。生成规则只有随机，不带站点名、
+     * 不带 h_/a_ 前缀；撞上了就换一个（10 位 36 进制，撞的概率可以忽略）。
+     */
+    private static function ensureUids(PDO $pdo): void {
+        try {
+            $rows = $pdo->query("SELECT id FROM members WHERE uid IS NULL OR uid = ''")->fetchAll();
+        } catch (\Throwable $e) {
+            return;
+        }
+        if (!$rows) return;
+        $st = $pdo->prepare("UPDATE members SET uid = ? WHERE id = ?");
+        foreach ($rows as $row) {
+            for ($i = 0; $i < 12; $i++) {
+                try {
+                    $st->execute([self::randomUid(), (int) $row["id"]]);
+                    break;
+                } catch (\Throwable $e) {
+                    // 唯一索引撞了就换一个
+                }
+            }
+        }
+    }
+
+    private static function randomUid(): string {
+        $abc = "0123456789abcdefghijklmnopqrstuvwxyz";
+        $out = "";
+        for ($i = 0; $i < 10; $i++) {
+            $out .= $abc[random_int(0, 35)];
+        }
+        return $out;
     }
 
     /**
@@ -278,7 +314,8 @@ final class Schema {
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_accounts_name ON accounts(name)",
             "CREATE TABLE IF NOT EXISTS members ("
-                . "id $pk, scope_id BIGINT NOT NULL, name $short NOT NULL, username $short NULL, kind VARCHAR(8) NOT NULL,"
+                . "id $pk, scope_id BIGINT NOT NULL, name $short NOT NULL, username $short NULL, uid VARCHAR(32) NULL,"
+                . " kind VARCHAR(8) NOT NULL,"
                 . " account_id BIGINT NULL, owner_id BIGINT NULL, oauth_id BIGINT NULL,"
                 . " token_hash $hash NULL, avatar $short NULL, bio $text NULL, styles_css $text NULL, wall $text NULL,"
                 . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
@@ -290,6 +327,7 @@ final class Schema {
                 . " email VARCHAR(191) NULL, tags $text NULL, discover TINYINT NOT NULL DEFAULT 1,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_seen_at BIGINT NULL"
                 . ")$suffix",
+            "CREATE UNIQUE INDEX {$idx}idx_members_uid ON members(uid)",
             "CREATE UNIQUE INDEX {$idx}idx_members_name ON members(scope_id, name)",
             "CREATE UNIQUE INDEX {$idx}idx_members_username ON members(scope_id, username)",
             "CREATE UNIQUE INDEX {$idx}idx_members_token ON members(token_hash)",

@@ -8,37 +8,33 @@ use PDO;
 /**
  * 消息存储策略：站点给总配置，每个群（作用域）可以覆盖；群没覆盖时跟着总配置走。
  *
- * 两套策略，一次只走一套：
+ * 两套：
  *   msg.mode = server  由站点下发：客户端每次要一页，翻历史靠「加载更多」（msg.page_size）
- *   msg.mode = keep    消息保留：只在客户端本机留一份，站点只回新增；保留天数/条数在这套里配
- *
- * 另外几项（只有保留模式才生效）：
- *   msg.keep_days      只留最近 N 天（0 = 不限）
- *   msg.keep_per_conv  每个会话只留最近 N 条（0 = 不限）
+ *   msg.mode = keep    消息保留：只在成员设备上留一份，站点只回新增
  *   msg.local          是否允许成员把消息留一份在自己设备上
  *
- * 作用域覆盖写在 settings 里：msg.<scopeId>.mode / .keep_days / .keep_per_conv / .local / .page_size，
- * 空值表示「跟随总配置」。剪枝不依赖系统计划任务：请求时按小时惰性触发 + 文件锁。
+ * 消息只增不删：平台不做任何按时间/按条数的消息剪枝。剪枝之后如果切回「由站点下发」，
+ * 被删掉的历史就永久缺了，这属于平台造成的数据丢失，任何情况下都不做。
  *
- * 永远不剪：置顶消息、还有未完成群待办挂着的消息。
+ * 附件到期清理按 file.keep_days（默认 0 = 永久）：只有管理员显式设了保留天数才删；
+ * 纯 PHP 在请求里按小时惰性触发，不依赖系统计划任务。
  */
 final class Pruner
 {
     public const MODE = "msg.mode";
+    /** 旧键：还认得出来，但不再产生任何删除 */
     public const KEEP_DAYS = "msg.keep_days";
     public const KEEP_PER_CONV = "msg.keep_per_conv";
     public const LOCAL = "msg.local";
     public const PAGE_SIZE = "msg.page_size";
     public const PAGE_DEFAULT = 20;
     public const LAST_RUN = "msg.prune.at";
-    /** 两次自动剪枝之间至少隔这么久（秒） */
+    /** 两次清理之间至少隔这么久（秒） */
     public const INTERVAL = 3600;
-    /** 单次最多删这么多条 */
-    public const BATCH = 5000;
 
     private static $checked = false;
 
-    /** 请求里的顺手检查：到点才真剪，平时只多一条 settings 查询 */
+    /** 请求里的顺手检查：到点才清过期附件，消息一条都不动 */
     public static function maybeRun(PDO $pdo): void
     {
         if (self::$checked) return;
@@ -46,11 +42,7 @@ final class Pruner
         try {
             $last = (int) self::setting($pdo, self::LAST_RUN, "0");
             if ($last > 0 && time() - $last < self::INTERVAL) return;
-            // 消息剪枝：没配保留策略就一条都不动
-            if (self::hasPolicy($pdo)) {
-                self::run($pdo);
-            }
-            // 附件到期清理跟着这次检查一起做：纯 PHP，不依赖系统定时任务
+            // 文件到期清理跟着这次检查一起做：纯 PHP，不依赖系统定时任务
             try {
                 if (Files::config($pdo)["keepDays"] > 0) Files::cleanup($pdo);
             } catch (\Throwable $e) {
@@ -65,29 +57,22 @@ final class Pruner
     public static function policy(PDO $pdo, int $scopeId = 0): array
     {
         $gMode = self::modeOf(self::setting($pdo, self::MODE, "server"));
-        $gDays = (int) self::setting($pdo, self::KEEP_DAYS, "0");
-        $gPer = (int) self::setting($pdo, self::KEEP_PER_CONV, "0");
         $gLocal = self::setting($pdo, self::LOCAL, "1") !== "0";
         // 由站点下发时一页多少条；翻历史靠用户点「加载更多」，不点就不多给
         $gPage = (int) self::setting($pdo, self::PAGE_SIZE, (string) self::PAGE_DEFAULT);
         if ($gPage <= 0) $gPage = self::PAGE_DEFAULT;
         $gPage = max(1, min(100, $gPage));
         if ($scopeId <= 0) {
-            return self::pack($gMode, $gDays, $gPer, $gLocal, $gPage, true);
+            return self::pack($gMode, $gLocal, $gPage, true);
         }
         $sm = self::setting($pdo, "msg." . $scopeId . ".mode", "");
-        $mode = $sm === "" ? $gMode : self::modeOf($sm);
-        $sd = self::setting($pdo, "msg." . $scopeId . ".keep_days", "");
-        $sp = self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", "");
         $sl = self::setting($pdo, "msg." . $scopeId . ".local", "");
         $sq = self::setting($pdo, "msg." . $scopeId . ".page_size", "");
         return self::pack(
-            $mode,
-            $sd === "" ? $gDays : max(0, (int) $sd),
-            $sp === "" ? $gPer : max(0, (int) $sp),
+            $sm === "" ? $gMode : self::modeOf($sm),
             $sl === "" ? $gLocal : ($sl !== "0"),
             $sq === "" ? $gPage : max(1, min(100, (int) $sq)),
-            ($sm === "" && $sd === "" && $sp === "" && $sl === "" && $sq === "")
+            ($sm === "" && $sl === "" && $sq === "")
         );
     }
 
@@ -97,13 +82,14 @@ final class Pruner
     }
 
     /** 两套策略的差别都在这里：保留模式不做懒加载，站点只发新增 */
-    private static function pack(string $mode, int $days, int $per, bool $local, int $page, bool $inherited): array
+    private static function pack(string $mode, bool $local, int $page, bool $inherited): array
     {
         $keep = $mode === "keep";
         return [
             "mode" => $mode,
-            "days" => $keep ? $days : 0,
-            "per_conv" => $keep ? $per : 0,
+            // 字段留着给老的调用方读，平台已经不按天数/条数删消息了
+            "days" => 0,
+            "per_conv" => 0,
             // 由站点下发时也把拉过的消息在本机留一份，下次先画缓存、只补增量（漫游）
             "local" => $keep ? $local : true,
             "page_size" => $keep ? 0 : max(1, min(100, $page)),
@@ -111,57 +97,7 @@ final class Pruner
         ];
     }
 
-    /**
-     * 真跑一次；$opt 里带 days / per_conv 时按它临时覆盖全部群（命令行与「立即剪枝」用）。
-     * @return array{deleted:int,scopes:int,live:bool,days:int,per_conv:int}
-     */
-    public static function run(PDO $pdo, array $opt = []): array
-    {
-        $override = [];
-        if (array_key_exists("days", $opt)) $override["days"] = max(0, (int) $opt["days"]);
-        if (array_key_exists("per_conv", $opt)) $override["per_conv"] = max(0, (int) $opt["per_conv"]);
-
-        $out = ["deleted" => 0, "scopes" => 0, "live" => false, "days" => 0, "per_conv" => 0];
-        $lock = self::lock();
-        if ($lock === null) return $out; // 另一个请求正在剪
-        $out["live"] = true;
-        try {
-            $st = $pdo->query("SELECT id FROM scopes");
-            $ids = [];
-            foreach ($st->fetchAll() as $row) $ids[] = (int) $row["id"];
-            foreach ($ids as $sid) {
-                $pol = $override + self::policy($pdo, $sid);
-                $days = (int) $pol["days"];
-                $per = (int) $pol["per_conv"];
-                if ($days <= 0 && $per <= 0) continue;
-                $out["scopes"]++;
-                $out["days"] = $days;
-                $out["per_conv"] = $per;
-                if ($days > 0) {
-                    $cut = lg_now() - $days * 86400000;
-                    $rows = self::pick($pdo,
-                        "SELECT id FROM messages WHERE scope_id = ? AND ts_ms < ? AND " . self::safe(),
-                        [$sid, $cut], self::BATCH);
-                    $out["deleted"] += self::remove($pdo, $rows);
-                }
-                if ($per > 0) {
-                    foreach (self::fatConvs($pdo, $sid, $per) as $convId) {
-                        $rows = self::pick($pdo,
-                            "SELECT id FROM messages WHERE scope_id = ? AND conv_id = ? AND " . self::safe()
-                                . " ORDER BY id DESC LIMIT 100000 OFFSET " . $per,
-                            [$sid, $convId], self::BATCH);
-                        $out["deleted"] += self::remove($pdo, $rows);
-                    }
-                }
-            }
-            self::touch($pdo);
-        } finally {
-            self::unlock($lock);
-        }
-        return $out;
-    }
-
-    /** 当前策略与统计，后台页面用；给 scopeId 时返回这个群的实际生效值 */
+    /** 当前策略与统计，后台页面用 */
     public static function info(PDO $pdo, int $scopeId = 0): array
     {
         $pol = self::policy($pdo, $scopeId);
@@ -173,8 +109,6 @@ final class Pruner
         }
         return [
             "mode" => (string) $pol["mode"],
-            "keep_days" => (int) $pol["days"],
-            "keep_per_conv" => (int) $pol["per_conv"],
             "local" => (bool) $pol["local"],
             "page_size" => (int) $pol["page_size"],
             "inherited" => (bool) $pol["inherited"],
@@ -182,68 +116,10 @@ final class Pruner
             "last_run" => (int) self::setting($pdo, self::LAST_RUN, "0"),
             "scoped" => [
                 "mode" => self::setting($pdo, "msg." . $scopeId . ".mode", ""),
-                "keep_days" => self::setting($pdo, "msg." . $scopeId . ".keep_days", ""),
-                "keep_per_conv" => self::setting($pdo, "msg." . $scopeId . ".keep_per_conv", ""),
                 "local" => self::setting($pdo, "msg." . $scopeId . ".local", ""),
                 "page_size" => self::setting($pdo, "msg." . $scopeId . ".page_size", ""),
             ],
         ];
-    }
-
-    /** 有没有任何生效策略（总配置或某个群覆盖） */
-    private static function hasPolicy(PDO $pdo): bool
-    {
-        if (self::setting($pdo, self::KEEP_DAYS, "0") !== "0") return true;
-        if (self::setting($pdo, self::KEEP_PER_CONV, "0") !== "0") return true;
-        $st = $pdo->query("SELECT COUNT(*) FROM settings WHERE k LIKE 'msg.%keep%' AND v <> '' AND v <> '0'");
-        return (int) $st->fetchColumn() > 0;
-    }
-
-    /** 可删条件：没置顶、没挂没关闭的群待办 */
-    private static function safe(): string
-    {
-        return "pinned_at IS NULL AND id NOT IN (SELECT msg_id FROM todos WHERE closed_at IS NULL AND msg_id IS NOT NULL)";
-    }
-
-    private static function fatConvs(PDO $pdo, int $scopeId, int $per): array
-    {
-        // 数字直接拼：SQLite 里整数和文本比较按类型排序，绑成字符串会永远比不过
-        $st = $pdo->prepare(
-            "SELECT conv_id FROM messages WHERE scope_id = " . $scopeId
-            . " GROUP BY conv_id HAVING COUNT(*) > " . max(1, $per)
-        );
-        $st->execute([]);
-        $out = [];
-        foreach ($st->fetchAll() as $row) $out[] = (int) $row["conv_id"];
-        return $out;
-    }
-
-    private static function pick(PDO $pdo, string $sql, array $args, int $limit): array
-    {
-        $st = $pdo->prepare($sql);
-        // 时间戳必须按 INT 绑，否则 SQLite 拿文本比数字，条件会恒真
-        foreach (array_values($args) as $i => $v) {
-            $st->bindValue($i + 1, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-        }
-        $st->execute();
-        $ids = [];
-        foreach ($st->fetchAll() as $row) {
-            $ids[] = (int) $row["id"];
-            if (count($ids) >= $limit) break;
-        }
-        return $ids;
-    }
-
-    private static function remove(PDO $pdo, array $ids): int
-    {
-        if (!$ids) return 0;
-        $in = implode(",", array_fill(0, count($ids), "?"));
-        // 先撤掉指向这些消息的引用，别留下点不开的待办
-        $pdo->prepare("DELETE FROM todos WHERE msg_id IN ($in)")->execute($ids);
-        $pdo->prepare("DELETE FROM todo_done WHERE todo_id NOT IN (SELECT id FROM todos)")->execute();
-        $st = $pdo->prepare("DELETE FROM messages WHERE id IN ($in)");
-        $st->execute($ids);
-        return $st->rowCount();
     }
 
     private static function touch(PDO $pdo): void
@@ -265,26 +141,5 @@ final class Pruner
         $st->execute([$key]);
         $v = $st->fetchColumn();
         return $v === false || $v === null ? $default : (string) $v;
-    }
-
-    /** @return resource|null */
-    private static function lock()
-    {
-        $dir = defined("APP_ROOT") ? APP_ROOT . "/data" : sys_get_temp_dir();
-        if (!is_dir($dir)) $dir = sys_get_temp_dir();
-        $fh = @fopen($dir . "/prune.lock", "c");
-        if ($fh === false) return null;
-        if (!@flock($fh, LOCK_EX | LOCK_NB)) {
-            fclose($fh);
-            return null;
-        }
-        return $fh;
-    }
-
-    /** @param resource $fh */
-    private static function unlock($fh): void
-    {
-        @flock($fh, LOCK_UN);
-        @fclose($fh);
     }
 }

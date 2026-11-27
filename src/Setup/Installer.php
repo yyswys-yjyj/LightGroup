@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace LightGroup\Setup;
 
+use LightGroup\Api\Ids;
 use LightGroup\Api\Token;
 use LightGroup\Store\Db;
 use LightGroup\Store\MemberNames;
@@ -188,8 +189,8 @@ final class Installer
             $adminId = (int) $pdo->lastInsertId();
 
             $token = Token::issue();
-            $pdo->prepare("INSERT INTO members (scope_id, name, username, kind, account_id, owner_id, oauth_id, token_hash, avatar, banned, deleted_at, created_at, last_seen_at) VALUES (?, ?, ?, 'human', ?, NULL, ?, ?, NULL, 0, NULL, ?, ?)")
-                ->execute([$scopeId, $admin, MemberNames::plain($pdo, (int) $scopeId, $admin), $adminId, $adminOauthId, Token::hash($token), $now, $now]);
+            $pdo->prepare("INSERT INTO members (scope_id, name, username, uid, kind, account_id, owner_id, oauth_id, token_hash, avatar, banned, deleted_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, 'human', ?, NULL, ?, ?, NULL, 0, NULL, ?, ?)")
+                ->execute([$scopeId, $admin, MemberNames::plain($pdo, (int) $scopeId, $admin), Ids::newUid($pdo), $adminId, $adminOauthId, Token::hash($token), $now, $now]);
 
             if ($oauthOn) {
                 $bound = $pdo->prepare('SELECT oauth_id FROM accounts WHERE id = ?');

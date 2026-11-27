@@ -86,15 +86,17 @@ final class PrivateGroup {
         $perm = Perm::forClientConv($pdo, $conv);
         // 成员列表也受权限组管；群主/管理员要管理成员，始终能看
         $showMembers = $role !== "member" || ($perm["memberList"] ?? true);
+        $ownerUid = self::memberUid($pdo, (int) ($conv["created_by"] ?? 0));
+        $noticeUid = self::memberUid($pdo, (int) ($conv["notice_by"] ?? 0));
         Json::ok([
             "group" => [
                 "id"        => (int) $conv["id"],
                 "title"     => (string) ($conv["title"] ?? ""),
                 "notice"    => (string) ($conv["notice"] ?? ""),
                 "noticeAt"  => (int) ($conv["notice_at"] ?? 0),
-                "noticeBy"  => (int) ($conv["notice_by"] ?? 0),
+                "noticeBy"  => $noticeUid,
                 "role"      => $role,
-                "ownerId"   => (int) ($conv["created_by"] ?? 0),
+                "ownerId"   => $ownerUid,
                 "members"   => count($members),
                 "createdAt" => (int) ($conv["created_at"] ?? 0),
                 "isOwner"   => $role === "owner",
@@ -123,7 +125,7 @@ final class PrivateGroup {
         if (!is_array($raw)) $raw = [];
         $ids = [];
         foreach ($raw as $v) {
-            $mid = self::parseId($v);
+            $mid = self::parseId($pdo, $v);
             if ($mid > 0 && $mid !== (int) $me["id"]) $ids[$mid] = true;
         }
         if (count($ids) < self::MIN_INVITE) {
@@ -211,7 +213,7 @@ final class PrivateGroup {
                 if (!is_array($raw)) $raw = [];
                 $ids = [];
                 foreach ($raw as $v) {
-                    $mid = self::parseId($v);
+                    $mid = self::parseId($pdo, $v);
                     if ($mid > 0) $ids[$mid] = true;
                 }
                 if (!$ids) Json::fail("先选要拉进来的人");
@@ -242,7 +244,7 @@ final class PrivateGroup {
             case "remove":
                 self::mustAdmin($role, "只有群主或管理员能移出成员");
                 if (!Perm::canForConv($pdo, $conv, "group.admin")) Json::fail("这个群没有开放成员管理", 403);
-                $target = self::parseId($body["member"] ?? 0);
+                $target = self::parseId($pdo, $body["member"] ?? 0);
                 if ($target <= 0) Json::fail("缺少成员");
                 if ($target === (int) ($conv["created_by"] ?? 0)) Json::fail("不能移出群主");
                 if ($target === $myId) Json::fail("要退出请用「退出群聊」");
@@ -258,7 +260,7 @@ final class PrivateGroup {
             case "role":
                 self::mustOwner($role, "只有群主能设置管理员");
                 if (!Perm::canForConv($pdo, $conv, "group.admin")) Json::fail("这个群没有开放设置管理员", 403);
-                $target = self::parseId($body["member"] ?? 0);
+                $target = self::parseId($pdo, $body["member"] ?? 0);
                 $want   = (string) ($body["role"] ?? "member");
                 if (!in_array($want, ["admin", "member"], true)) Json::fail("不认识的成员角色");
                 if ($target <= 0) Json::fail("缺少成员");
@@ -271,7 +273,7 @@ final class PrivateGroup {
 
             case "transfer":
                 self::mustOwner($role, "只有群主能转让群主");
-                $target = self::parseId($body["member"] ?? 0);
+                $target = self::parseId($pdo, $body["member"] ?? 0);
                 if ($target <= 0 || $target === $myId) Json::fail("选一个别的成员");
                 if (Conv::roleIn($pdo, $id, $target) === "") Json::fail("这个人不在群里");
                 Conv::setRole($pdo, $id, $myId, "admin");
@@ -347,15 +349,23 @@ final class PrivateGroup {
         }
     }
 
+    /** 内部成员 id → 对外 uid；找不到给空串 */
+    private static function memberUid(PDO $pdo, int $id): string {
+        if ($id <= 0) return "";
+        $st = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ? Ids::of($row) : "";
+    }
+
     private static function note(PDO $pdo, array $scope, int $convId, int $by, string $what): void {
         Compat::systemMessage($pdo, (int) $scope["id"], $convId, $by, $what);
     }
 
-    /** 前端可能送 h_5 / a_7，也可能送数字 */
-    private static function parseId(mixed $v): int {
+    /** 前端送的是成员 uid；老客户端可能还送数字，一并认 */
+    private static function parseId(PDO $pdo, mixed $v): int {
         if (is_int($v)) return max(0, $v);
         $s = trim((string) $v);
-        if ($s !== "" && ($s[0] === "h" || $s[0] === "a") && ($s[1] ?? "") === "_") $s = substr($s, 2);
-        return ctype_digit($s) ? (int) $s : 0;
+        return $s === "" ? 0 : Ids::resolve($pdo, $s);
     }
 }

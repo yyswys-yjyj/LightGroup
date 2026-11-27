@@ -25,7 +25,7 @@ final class Discover {
         $me = Compat::requireMemberPublic($pdo);
         if (!Features::social($pdo, "discover")) Json::fail("本站没有开放「发现」", 403);
 
-        // 搜索：按 ID（h_12 / 12）、用户名、昵称、邮箱找同群的人
+        // 搜索：按会员 ID（uid）、用户名、昵称、邮箱找同群的人
         $q = trim((string) Input::get("q"));
         if ($q !== "") {
             self::search($pdo, $scope, $me, $q);
@@ -33,7 +33,7 @@ final class Discover {
         }
 
         $st = $pdo->prepare(
-            "SELECT id, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
+            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
             . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
             . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0 AND discover = 1"
             . " ORDER BY last_seen_at DESC LIMIT 300"
@@ -75,8 +75,8 @@ final class Discover {
             }
 
             $items[] = [
-                "id"        => (int) $r["id"],
-                "uid"       => "h_" . (int) $r["id"],
+                "id"        => Ids::of($r),
+                "uid"       => Ids::of($r),
                 "name"      => (string) $r["name"],
                 "username"  => (string) ($r["username"] ?? $r["name"]),
                 "avatar"    => (string) ($r["avatar"] ?? ""),
@@ -127,18 +127,18 @@ final class Discover {
         if (mb_strlen($q) > 60) Json::fail("搜索词太长");
         $sid = (int) $scope["id"];
         $raw = strtolower(ltrim($q, "@"));
-        $num = 0;
-        if (preg_match('/^(?:h_)?(\d+)$/', $raw, $m)) $num = (int) $m[1];
+        // uid 是唯一的外部 ID：精确命中就只出这一个人
+        $idExact = Ids::resolve($pdo, $raw, $sid);
 
         $like = "%" . $q . "%";
         $st = $pdo->prepare(
-            "SELECT id, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
+            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
             . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
             . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0"
-            . " AND (id = ? OR LOWER(username) = ? OR LOWER(username) LIKE ? OR name LIKE ? OR LOWER(email) = ?)"
+            . " AND (uid = ? OR id = ? OR LOWER(username) = ? OR LOWER(username) LIKE ? OR name LIKE ? OR LOWER(email) = ?)"
             . " ORDER BY last_seen_at DESC LIMIT 30"
         );
-        $st->execute([$sid, (int) $me["id"], $num, $raw, $raw . "%", $like, $raw]);
+        $st->execute([$sid, (int) $me["id"], $raw, $idExact, $raw, $raw . "%", $like, $raw]);
         $rows = $st->fetchAll();
 
         $items = [];
@@ -154,8 +154,8 @@ final class Discover {
     /** 列表里用的精简资料（搜索与「猜你想了解」共用） */
     private static function brief(array $r): array {
         return [
-            "id"        => (int) $r["id"],
-            "uid"       => "h_" . (int) $r["id"],
+            "id"        => Ids::of($r),
+            "uid"       => Ids::of($r),
             "name"      => (string) $r["name"],
             "username"  => (string) ($r["username"] ?? $r["name"]),
             "avatar"    => (string) ($r["avatar"] ?? ""),

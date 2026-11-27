@@ -29,7 +29,10 @@ final class Files {
             "enabled"     => self::get($pdo, "file.enabled", "1") !== "0",
             "maxMB"       => max(1, min(2048, (int) self::get($pdo, "file.max_mb", "50"))),
             "attachments" => max(1, min(9, (int) self::get($pdo, "file.attachments", "3"))),
-            "keepDays"    => max(0, min(3650, (int) self::get($pdo, "file.keep_days", "0"))),
+            // 文件是大块数据，默认只留 180 天：永久保留会把磁盘占满，运维上撑不住
+            "keepDays"    => max(0, min(3650, (int) self::get($pdo, "file.keep_days", "180"))),
+            // 站点文件总容量上限（MB），0 = 不限；超过就拒收新文件，不删旧文件
+            "quotaMB"     => max(0, min(1048576, (int) self::get($pdo, "file.quota_mb", "4096"))),
             "storage"     => $storage,
             "dbLimitMB"   => 8,
             "s3"          => [
@@ -50,8 +53,20 @@ final class Files {
             "enabled"     => $c["enabled"],
             "maxMB"       => $c["maxMB"],
             "attachments" => $c["attachments"],
+            "keepDays"    => $c["keepDays"],
             "storage"     => $c["storage"],
         ];
+    }
+
+    /** 当前占用：文件数与总字节数（不含临时分块） */
+    public static function usage(PDO $pdo): array {
+        try {
+            $st = $pdo->query("SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM files WHERE deleted_at IS NULL");
+            $row = $st->fetch();
+            return ["files" => (int) ($row["n"] ?? 0), "bytes" => (int) ($row["b"] ?? 0)];
+        } catch (\Throwable $e) {
+            return ["files" => 0, "bytes" => 0];
+        }
     }
 
     private static function get(PDO $pdo, string $k, string $d = ""): string {
@@ -103,6 +118,19 @@ final class Files {
         if (!$c["enabled"]) Json::fail("本站没有开放文件传输", 403);
         if ($size <= 0) Json::fail("空文件不用发");
         if ($size > $c["maxMB"] * 1024 * 1024) Json::fail("文件最多 " . $c["maxMB"] . "MB");
+        // 容量兜底：超配额就拒收，不删已经传上来的文件
+        if ($c["quotaMB"] > 0) {
+            $u = self::usage($pdo);
+            if ($u["bytes"] + $size > $c["quotaMB"] * 1024 * 1024) {
+                Json::fail("站点的文件空间已经用满（" . round($u["bytes"] / 1048576) . "/" . $c["quotaMB"] . "MB），暂时不能上传新文件", 507);
+            }
+        }
+        if ($c["storage"] === "local") {
+            $free = @disk_free_space(self::dataDir());
+            if ($free !== false && $free < $size + 64 * 1024 * 1024) {
+                Json::fail("服务器磁盘快满了，暂时不能上传新文件", 507);
+            }
+        }
         if ($chunks <= 0) $chunks = (int) ceil($size / self::CHUNK);
         if ($chunks > 4096) Json::fail("文件太大，分块太多");
         $uid = bin2hex(random_bytes(12));

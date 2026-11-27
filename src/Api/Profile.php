@@ -12,7 +12,7 @@ use PDO;
  *
  *   GET  api/profile        我的资料，返回 profile + me
  *   POST api/profile        改昵称（name）/ 简介（bio，兼容老前端的 intro）/ 头像（avatar）
- *   GET  api/u/{h_1|a_2}    同一个群里的任意成员资料（供悬浮资料卡与资料页用）
+ *   GET  api/u/{uid}        同一个群里的任意成员资料（供悬浮资料卡与资料页用）
  *
  * 只认这两个路径，别的返回 false 交回 Compat::handle。
  * 简介原样存 markdown（只把 CRLF 归一成 LF、去掉 \0），上限 2000 字。
@@ -137,7 +137,7 @@ final class Profile {
      */
     private static function show(PDO $pdo, array $scope, string $raw): void {
         $me = self::requireMember($pdo, $scope);
-        $id = self::parseMid($raw);
+        $id = self::parseMid($pdo, $raw);
         $target = $id > 0 ? Social::scopeMember($pdo, $scope, $id) : null;
 
         if ($target === null) {
@@ -210,19 +210,18 @@ final class Profile {
     }
 
     /**
-     * 对外资料。id 仍是内部数字（一开始就这么给，别改坏第三方客户端），
-     * 另外多给一个 uid（h_1 / a_2），前端路由用它。
+     * 对外资料。id 与 uid 都是 members.uid（随机串）：对外不再暴露数据库自增 id。
      */
     private static function out(PDO $pdo, array $m): array {
         $out = [
-            "id"     => (int) $m["id"],
-            "uid"    => self::mid($m),
+            "id"     => Ids::of($m),
+            "uid"    => Ids::of($m),
             "name"   => (string) $m["name"],
             // 对外用户 ID：资料页显示成 @username，登录名不再只留在 me 接口
             "username" => (string) ($m["username"] ?? $m["name"]),
             "kind"   => (string) $m["kind"],
             "role"   => self::roleOf($pdo, $m),
-            "color"  => self::colorOf((int) $m["id"]),
+            "color"  => self::colorOf(Ids::of($m)),
             "bio"    => (string) ($m["bio"] ?? ""),
             "bioMode" => (string) ($m["bio_mode"] ?? "plain") === "markdown" ? "markdown" : "plain",
             "tags"    => self::tagsOf($m),
@@ -257,15 +256,15 @@ final class Profile {
             $owner = $row ? (string) $row["name"] : "";
         }
         return [
-            "id"       => self::mid($m),
+            "id"       => Ids::of($m),
             "name"     => (string) $m["name"],
             // 登录名只有本人看得到（me 接口），不进公开资料
             "username" => (string) ($m["username"] ?? $m["name"]),
             "kind"     => (string) $m["kind"],
-            "color"    => self::colorOf((int) $m["id"]),
+            "color"    => self::colorOf(Ids::of($m)),
             "emoji"    => "",
             "owner"    => $owner,
-            "ownerId"  => $isAi ? "h_" . (int) $m["owner_id"] : "",
+            "ownerId"  => $isAi ? self::uidOf($pdo, (int) ($m["owner_id"] ?? 0)) : "",
             "bot"      => $isAi,
             "avatar"   => (string) ($m["avatar"] ?? ""),
             "hasWake"  => false,
@@ -408,18 +407,25 @@ final class Profile {
 
     private const COLORS = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#475569", "#9f1239", "#4d7c0f"];
 
-    private static function colorOf(int $id): string {
+    /** 成员颜色：按 uid 做稳定哈希，跟前端 avatar.js 的 colorOf 同一套算法 */
+    private static function colorOf(string $uid): string {
         $n = count(self::COLORS);
-        return self::COLORS[(($id % $n) + $n) % $n];
+        $s = 0;
+        $len = strlen($uid);
+        for ($i = 0; $i < $len; $i++) { $s = ($s * 31 + ord($uid[$i])) % 997; }
+        return self::COLORS[$s % $n];
     }
 
-    private static function mid(array $m): string {
-        return ((string) $m["kind"] === "ai" ? "a_" : "h_") . (int) $m["id"];
+    /** 内部 id → 对外 uid；找不到就给空串 */
+    private static function uidOf(PDO $pdo, int $id): string {
+        if ($id <= 0) return "";
+        $st = $pdo->prepare("SELECT id, uid FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$id]);
+        $row = $st->fetch();
+        return $row ? Ids::of($row) : "";
     }
 
-    private static function parseMid(string $raw): int {
-        if (preg_match('/^[ha]_(\d+)$/', $raw, $g)) return (int) $g[1];
-        if ($raw !== "" && ctype_digit($raw)) return (int) $raw;
-        return 0;
+    private static function parseMid(PDO $pdo, string $raw): int {
+        return Ids::resolve($pdo, $raw);
     }
 }
