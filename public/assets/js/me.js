@@ -507,9 +507,12 @@ function rekeyAi(a, row) {
 }
 
 /** 销毁自己名下的 AI：软删，消息留着、token 立刻失效、名字不释放 */
-function deleteAi(a) {
+async function deleteAi(a) {
   if (!confirm('销毁 AI「' + a.name + '」？消息保留，token 立刻失效。')) return;
-  api('api/ai/delete', { name: a.name }).then(function (j) {
+  // 销毁不可逆：和注销账号一样先过人机验证
+  const cap = await askRisk('ai.delete', '销毁 AI 账号', 'token 立刻失效，消息保留，名字不释放。');
+  if (cap === null) return;
+  api('api/ai/delete', Object.assign({ name: a.name }, cap)).then(function (j) {
     if (!j.ok) { toast(j.err || '销毁失败'); return; }
     toast('已销毁「' + a.name + '」');
     loadMembers().then(function () {

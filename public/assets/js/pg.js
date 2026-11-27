@@ -313,9 +313,12 @@ function leaveGroup() {
   });
 }
 
-function dissolveGroup() {
+async function dissolveGroup() {
   if (!confirm('解散「' + ((data.group && data.group.title) || '这个群') + '」？成员会被请出，聊天记录不会再出现在他们的列表里。')) return;
-  api('api/groups/' + curId, { op: 'dissolve' }).then(function (j) {
+  // 解散不可逆：和转让一样先过人机验证
+  const cap = await requireRisk('group.dissolve', '解散群聊', '成员会被请出，聊天记录不再出现在他们的列表里。');
+  if (cap === null) return;
+  api('api/groups/' + curId, Object.assign({ op: 'dissolve' }, cap)).then(function (j) {
     if (!j.ok) { toast(j.err || '解散失败'); return; }
     toast('群聊已解散');
     if (conv && conv.load) conv.load();
