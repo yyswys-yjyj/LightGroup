@@ -20,7 +20,7 @@ use PDO;
 final class PrivateGroup {
     private const TITLE_MAX  = 24;
     private const NOTICE_MAX = 500;
-    private const MIN_INVITE = 3;   // 建群时除群主外至少要拉的人
+    private const MIN_INVITE = 2;   // 建群时除群主外至少要拉的人
 
     public static function handle(PDO $pdo, array $scope, string $path): void {
         $me = Compat::requireMemberPublic($pdo);

@@ -86,6 +86,9 @@
   gap: 8px;
   margin-top: 12px;
 }
+/* 白底按钮和卡片背景同色时看不出边界，补细边 */
+.pf-pop-acts .btn-ghost,
+.pf-hero-acts .btn-ghost{border:1px solid var(--border);background:var(--surface)}
 
 /* 窄屏：贴底弹层 */
 .pf-pop.pf-pop-sheet {

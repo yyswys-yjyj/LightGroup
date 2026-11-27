@@ -41,7 +41,7 @@ window.addEventListener('lg:notices', function () { paintMailBadge(); });
 export function renderMore(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('更多', '站内信、空间、发现与扫一扫'));
+  page.appendChild(pageHead('更多', '站内信、空间、发现与扫一扫', [], { back: false }));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);

@@ -10,7 +10,11 @@
   background:var(--cover-grad)}
 /* 名字落在封面下面的底色上，不要压在深色封面上（深浅主题都读得清） */
 .sp-profile{display:flex;align-items:flex-end;gap:14px;padding:8px 6px 0;position:relative}
-.sp-profile .ava{flex:none;margin-top:-38px;box-shadow:0 0 0 4px var(--bg);border-radius:50%}
+.sp-profile-mark{flex:none;width:64px;height:64px;margin-top:-38px;border-radius:16px;overflow:hidden;
+  box-shadow:0 0 0 4px var(--bg);background:var(--surface)}
+.sp-profile-mark .icon-mask{width:100%;height:100%;border-radius:0}
+.sp-site-mark{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  font-size:26px;color:var(--text-dim);background:var(--surface-2)}
 .sp-profile-meta{flex:1;min-width:0;padding-bottom:2px}
 .sp-profile-meta b{display:block;font-size:18px;font-weight:600;color:var(--text);letter-spacing:.2px}
 .sp-profile-meta span{display:block;margin-top:4px;font-size:12.5px;color:var(--text-dim);
@@ -33,6 +37,14 @@
 .sp-nav i{width:16px;text-align:center;flex:none;font-size:13px}
 .sp-nav span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sp-side-label{padding:4px 10px 0;font-size:11.5px;color:var(--text-faint)}
+
+/* ---------- 手机顶栏 ---------- */
+/* 空间是独立页，窄屏没有返回按钮的话只能靠浏览器后退 */
+.sp-top{display:none;position:sticky;top:0;z-index:30;align-items:center;gap:6px;
+  height:52px;padding:0 8px;box-sizing:border-box;background:var(--bg);border-bottom:1px solid var(--border)}
+.sp-top b{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-top-acts{flex:none;display:flex;align-items:center;gap:6px}
 
 /* ---------- 页签（只有手机上显示） ---------- */
 .sp-tabs{display:flex;gap:2px;margin:14px 0 0;overflow-x:auto;border-bottom:1px solid var(--border)}
@@ -150,10 +162,12 @@
 }
 
 @media (max-width:860px){
+  .sp-top{display:flex}
   .sp-inner{padding:0 10px 8px}
   .sp-cover{height:118px;border-radius:10px}
   .sp-profile{gap:11px;padding:7px 4px 0}
-  .sp-profile .ava{width:56px;height:56px;margin-top:-30px}
+  .sp-profile-mark{width:56px;height:56px;margin-top:-30px;border-radius:14px}
+  .sp-site-mark{font-size:22px}
   .sp-profile-meta b{font-size:16.5px}
   .sp-profile-acts .btn{padding:0 11px}
   .sp-page{padding:0 0 84px}

@@ -198,6 +198,8 @@ function renderProfileEdit(host) {
     head.appendChild(h('b', '', '介绍'));
     const pv = h('div', 'bio-preview');
     pv.hidden = true;
+    // 两个按钮放一组靠右，别被 space-between 摊到标题和按钮中间
+    const editActs = h('div', 'bio-edit-acts');
     if (mdMode) {
       const pvBtn = btn('预览', 'btn btn-ghost btn-xs', function () {
         if (pv.hidden) {
@@ -209,12 +211,13 @@ function renderProfileEdit(host) {
           pvBtn.textContent = '预览';
         }
       });
-      head.appendChild(pvBtn);
+      editActs.appendChild(pvBtn);
     }
-    head.appendChild(btn(mdMode ? '用纯文本' : '高级模式（Markdown）', 'btn btn-ghost btn-xs', function () {
+    editActs.appendChild(btn(mdMode ? '用纯文本' : '高级模式（Markdown）', 'btn btn-ghost btn-xs', function () {
       mdMode = !mdMode;
       paintIntro();
     }));
+    head.appendChild(editActs);
     introWrap.appendChild(head);
 
     const ta = document.createElement('textarea');
@@ -583,6 +586,10 @@ function saveProfile(mdMode) {
     // 保存完回个人首页，别停在表单上
     meView = 'home';
     paintMe();
+    // 资料页有自己的缓存：不清的话刚改的简介/模式要刷新才看得到
+    import('./profile.js').then(function (m) {
+      if (m && typeof m.refreshProfile === 'function') m.refreshProfile();
+    }).catch(function (e) { void e; });
   }).catch(function (e) { toast(String((e && e.message) || e)); });
 }
 

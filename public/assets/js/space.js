@@ -1,5 +1,5 @@
 // LightGroup · 空间：群里的小广场（动态）
-import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteName, hhmm } from './core.js';
+import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteName, siteMark, hhmm } from './core.js';
 import { avatar, uidOf } from './avatar.js';
 
 // 站点功能开关：空间总开关与发/赞/评三项，都在 S.me.features 里
@@ -34,6 +34,7 @@ export function renderSpace(host) {
     host.appendChild(empty);
     return;
   }
+  host.appendChild(spTop());
   const body = h('div', 'page-body sp-page');
   host.appendChild(body);
   const inner = h('div', 'sp-inner');
@@ -119,13 +120,31 @@ function repaint() {
   if (sideEl && sideEl.isConnected) renderSideList(sideEl);
 }
 
+/** 手机上的顶栏：空间是独立页，没有返回就只能靠浏览器的后退键 */
+function spTop() {
+  const top = h('div', 'sp-top only-narrow');
+  top.appendChild(iconBtn('fa-chevron-left', '返回', function () {
+    if (history.length > 1) history.back();
+    else go('#/more');
+  }));
+  top.appendChild(h('b', '', '空间'));
+  const acts = h('div', 'sp-top-acts');
+  if (feat('space', 'post')) {
+    acts.appendChild(btn('发动态', 'btn btn-primary btn-xs', openComposer));
+  }
+  top.appendChild(acts);
+  return top;
+}
+
 /** 顶上的封面 + 头像 + 发动态入口，朋友圈那一路 */
 function cover() {
   const wrap = h('div', 'sp-cover-wrap');
   wrap.appendChild(h('div', 'sp-cover'));
 
   const row = h('div', 'sp-profile');
-  row.appendChild(avatar(S.me || { name: '我' }, 64));
+  const mark = h('div', 'sp-profile-mark');
+  mark.appendChild(siteMark('sp-site-mark'));
+  row.appendChild(mark);
 
   const meta = h('div', 'sp-profile-meta');
   meta.appendChild(h('b', '', siteName() || '空间'));

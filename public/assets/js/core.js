@@ -120,14 +120,20 @@ export function siteMark(cls) {
 }
 
 // 二级页通用头：返回 + 标题 +（可选）右侧按钮
-export function pageHead(title, sub, acts) {
+// opts.back=false 用于底栏一级页（更多/联系人）：那里没有上一级，不该给返回
+// opts.backTo 指定返回目标；默认按页面栈后退，栈里没有才回会话
+export function pageHead(title, sub, acts, opts) {
+  const o = opts || {};
   const head = h('header', 'chat-head');
-  const back = iconBtn('fa-chevron-left', '返回聊天', function () {
-    setListOpen(true);
-    go('#/c/' + (S.curId || 0));
-  });
-  back.classList.add('only-narrow');
-  head.appendChild(back);
+  if (o.back !== false) {
+    const back = iconBtn('fa-chevron-left', '返回', function () {
+      if (o.backTo) { go(o.backTo); return; }
+      if (history.length > 1) { history.back(); return; }
+      go('#/c/' + (S.curId || 0));
+    });
+    back.classList.add('only-narrow');
+    head.appendChild(back);
+  }
   const t = h('div', 'chat-title');
   t.appendChild(h('b', '', title));
   if (sub) t.appendChild(h('span', 'chat-sub', sub));

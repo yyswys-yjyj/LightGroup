@@ -342,6 +342,12 @@ export async function loadUserProfile(uid, force) {
 
 function clearProfileCache() { CACHE.clear(); }
 
+// 资料保存后调用：清掉缓存，正在看自己的资料页就重画一遍，不然还停在旧简介
+export function refreshProfile() {
+  clearProfileCache();
+  if (uidFromHash()) checkRoute(true);
+}
+
 // ---------- 悬浮资料卡 ----------
 let popEl = null;
 let maskEl = null;
@@ -544,11 +550,7 @@ function cardActions(box, data, p, compact) {
     return;
   }
   if (isMe) {
-    box.appendChild(btn('编辑简介', 'btn btn-sm btn-ghost', function () {
-      openBioEditor((p && p.bio) || (S.me && S.me.bio) || '', function () {
-        clearProfileCache();
-      });
-    }));
+    // 编辑入口在「个人 → 我的资料」，资料卡上不再放按钮
     return;
   }
   if (st === 'friend') {
@@ -659,8 +661,12 @@ async function stopChat() {
 }
 
 function backFromUser() {
+  if (lastNonUserHash && lastNonUserHash !== String(location.hash || '')) {
+    go(lastNonUserHash);
+    return;
+  }
   if (history.length > 1) { history.back(); return; }
-  go('#/c/' + (S.curId || 0));
+  go('#/me');
 }
 
 let hostWaits = 0;
@@ -1217,6 +1223,10 @@ function enhanceMePage() {
   box.appendChild(line);
 }
 
+// 进入 #/u/ 之前是哪一页：移动端 history 有时只有一条，
+// backFromUser 直接 history.back() 会掉到会话列表，所以先记住来源
+let lastNonUserHash = '';
+
 // ---------- 路由接管 ----------
 // profile.js 由 people.js 在 app.js 之前加载，所以这里的 hashchange 比 core.js:startRouter 先注册；
 // 命中 #/u/ 时 stopImmediatePropagation 掉，app.js 就不会再把它当成未知路由去 chat.mount(0)。
@@ -1227,6 +1237,7 @@ function onHash(ev) {
     checkRoute();
     return;
   }
+  lastNonUserHash = String(location.hash || '');
   setTimeout(enhanceMePage, 0);
   setTimeout(enhanceMePage, 150);
 }

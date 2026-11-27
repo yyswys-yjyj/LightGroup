@@ -202,7 +202,7 @@ function paintFriends() {
   host.textContent = '';
   const page = h('div', 'chat-page');
   const total = (S.friends.friends || []).length;
-  page.appendChild(pageHead('联系人', total ? '共 ' + total + ' 位好友' : '还没有好友'));
+  page.appendChild(pageHead('联系人', total ? '共 ' + total + ' 位好友' : '还没有好友', [], { back: false }));
   page.appendChild(contactNav('friends'));
 
   const tabs = h('div', 'friend-tabs');
@@ -265,7 +265,7 @@ function paintGroups() {
   host.textContent = '';
   const gs = (S.groups && S.groups.groups) || [];
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('联系人', gs.length ? '群聊 · ' + gs.length + ' 个' : '群聊'));
+  page.appendChild(pageHead('联系人', gs.length ? '群聊 · ' + gs.length + ' 个' : '群聊', [], { back: false }));
   page.appendChild(contactNav('groups'));
   const body = h('div', 'page-body');
   page.appendChild(body);
@@ -274,7 +274,7 @@ function paintGroups() {
   const canCreate = !S.groups || !S.groups.perm || S.groups.perm.create !== false;
   if (canCreate) {
     body.appendChild(btn('＋ 创建群聊', 'btn btn-primary btn-block', openCreateGroup));
-    body.appendChild(h('div', 'page-tip', '至少拉 3 个人或 AI 才能建群。'));
+    body.appendChild(h('div', 'page-tip', '至少拉 2 个人或 AI 才能建群。'));
   } else {
     body.appendChild(h('div', 'page-tip', '这个群没有开放创建私群。'));
   }
@@ -340,20 +340,20 @@ function openCreateGroup() {
     row.appendChild(list);
   });
 
-  const tip = h('div', 'page-tip', '至少选 3 位');
+  const tip = h('div', 'page-tip', '至少选 2 位');
   wrap.appendChild(tip);
   const ok = btn('创建群聊', 'btn btn-primary btn-block', doCreate);
   wrap.appendChild(ok);
   function refresh() {
     const n = Object.keys(picked).length;
-    tip.textContent = n ? '已选 ' + n + ' 位' + (n < 3 ? '，还差 ' + (3 - n) + ' 位' : '') : '至少选 3 位';
-    tip.classList.toggle('warn', n > 0 && n < 3);
+    tip.textContent = n ? '已选 ' + n + ' 位' + (n < 2 ? '，还差 ' + (2 - n) + ' 位' : '') : '至少选 2 位';
+    tip.classList.toggle('warn', n > 0 && n < 2);
   }
   async function doCreate() {
     const title = nameInp.value.trim();
     const ids = Object.keys(picked);
     if (!title) { toast('给群起个名字'); return; }
-    if (ids.length < 3) { toast('至少拉 3 个人或 AI 才能建群'); return; }
+    if (ids.length < 2) { toast('至少拉 2 个人或 AI 才能建群'); return; }
     ok.disabled = true;
     const j = await api('api/groups/create', { title: title, members: ids });
     ok.disabled = false;
