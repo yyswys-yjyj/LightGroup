@@ -177,7 +177,7 @@ function paintDm(body) {
   top.appendChild(avatar(m, 54));
   const tx = h('div', 'cs-who-t');
   tx.appendChild(h('b', '', m.name || ''));
-  if (m.username) tx.appendChild(h('div', 'cs-meta', '@' + m.username));
+  if (m.uid) tx.appendChild(h('div', 'cs-meta', '@' + m.uid));
   top.appendChild(tx);
   who.appendChild(top);
   body.appendChild(who);

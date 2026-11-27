@@ -133,28 +133,33 @@ async function paint(box) {
 
 function subscribeCard(s) {
   const card = h('div', 'sp-sub');
+  card.appendChild(h('b', '', '邮件提醒'));
   if (!s.available) {
-    card.appendChild(h('b', '', '邮件提醒'));
     card.appendChild(h('div', 'sp-empty', '邮件提醒暂时不可用'));
     return card;
   }
-  card.appendChild(h('b', '', '邮件提醒'));
-  card.appendChild(h('div', 'sp-sub-tip', '收到站内信时会发一封邮件到你填的邮箱。聊天消息不会发邮件。'));
+  if (!s.hasEmail) {
+    card.appendChild(h('div', 'sp-sub-tip', '邮件提醒发到资料卡里填的邮箱。'));
+    card.appendChild(h('div', 'sp-empty', '还没填邮箱。'));
+    card.appendChild(btn('去填邮箱', 'btn-ghost btn-sm', function () { go('#/me'); }));
+    return card;
+  }
+
+  card.appendChild(h('div', 'sp-sub-tip', '收到站内信时会发一封邮件。聊天消息不会发邮件。'));
+  card.appendChild(h('div', 'sp-sub-line', '收件邮箱：' + s.email));
 
   if (s.subscribed) {
-    card.appendChild(h('div', 'sp-sub-line', '已订阅：' + s.email));
-    const off = btn('取消订阅', 'btn-ghost btn-sm', async function () {
+    card.appendChild(btn('取消订阅', 'btn-ghost btn-sm', async function () {
       const r = await api('api/subscribe', { op: 'off' });
       if (!r || !r.ok) { toast('取消失败'); return; }
       toast('已取消');
       repaint();
-    });
-    card.appendChild(off);
+    }));
     return card;
   }
 
   if (s.pending) {
-    card.appendChild(h('div', 'sp-sub-line', '激活邮件已发给 ' + s.email));
+    card.appendChild(h('div', 'sp-sub-tip', '验证码已发到上面这个邮箱。'));
     const row = h('div', 'sp-cbox');
     const code = document.createElement('input');
     code.type = 'text';
@@ -162,37 +167,33 @@ function subscribeCard(s) {
     code.placeholder = '邮件里的 6 位验证码';
     code.maxLength = 6;
     row.appendChild(code);
-    const ok = btn('确认', 'btn-primary btn-sm', async function () {
+    row.appendChild(btn('确认', 'btn-primary btn-sm', async function () {
       const v = String(code.value || '').trim();
       if (!v) { toast('填验证码'); return; }
       const r = await api('api/subscribe/verify', { code: v });
       if (!r || !r.ok) { toast((r && r.err) || '验证失败'); return; }
       toast('订阅成功');
       repaint();
-    });
-    row.appendChild(ok);
+    }));
     card.appendChild(row);
+    const again = btn('重新发送', 'btn-ghost btn-sm', async function () {
+      again.disabled = true;
+      const r = await api('api/subscribe', {});
+      again.disabled = false;
+      if (!r || !r.ok) { toast((r && r.err) || '发不出去'); return; }
+      toast('验证码重新发出去了');
+      repaint();
+    });
+    card.appendChild(again);
     return card;
   }
 
-  const row = h('div', 'sp-cbox');
-  const email = document.createElement('input');
-  email.type = 'email';
-  email.className = 'tb';
-  email.placeholder = '你的邮箱';
-  row.appendChild(email);
-  const send = btn('发激活邮件', 'btn-primary btn-sm', async function () {
-    const v = String(email.value || '').trim();
-    if (!v) { toast('填邮箱'); return; }
-    send.disabled = true;
-    const r = await api('api/subscribe', { email: v });
-    send.disabled = false;
+  card.appendChild(btn('发送验证码', 'btn-primary btn-sm', async function () {
+    const r = await api('api/subscribe', {});
     if (!r || !r.ok) { toast((r && r.err) || '发不出去'); return; }
-    toast('激活邮件发出去了，去收一下');
+    toast('验证码发出去了，去收一下');
     repaint();
-  });
-  row.appendChild(send);
-  card.appendChild(row);
+  }));
   return card;
 }
 

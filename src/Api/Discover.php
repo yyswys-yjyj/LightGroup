@@ -7,15 +7,17 @@ use LightGroup\Http\Json;
 use PDO;
 
 /**
- * 发现：按资料相似度给同群的人排个序（只排人类成员，AI 不参与）。
+ * 发现：一个「推荐好友」列表 + 按 uid 精确找人。
  *
- * 打分（从高到低）：
- *   年龄差  —— 越接近越高，最多 40 分
- *   标签    —— 共同标签每个 12 分，最多 36 分
- *   性别    —— 不同 10 分、相同 4 分
- *   签名    —— 中文二字词交集，每个 3 分，最多 12 分
- * 同群基础分 5 分，保证人人有分、列表稳定。
+ * 推荐逻辑是自己的，不照搬任何现成产品：
+ *   同群      5 分（基础，保证列表稳定）
+ *   年龄差    越接近越高，最多 40 分
+ *   同城      +15 分（住址前两级市名相同）
+ *   标签      共同标签每个 12 分，最多 36 分
+ *   性别      +10 / +4（不同 / 相同）
+ *   签名      中文二字词交集，每个 3 分，最多 12 分
  *
+ * 搜索只认 uid：用户名、昵称、邮箱都能被拿去撞库对号，不提供按它们搜索。
  * 只看同作用域、未注销、未封禁、自己没关掉「出现在发现里」的人。
  */
 final class Discover {
@@ -25,7 +27,6 @@ final class Discover {
         $me = Compat::requireMemberPublic($pdo);
         if (!Features::social($pdo, "discover")) Json::fail("本站没有开放「发现」", 403);
 
-        // 搜索：按会员 ID（uid）、用户名、昵称、邮箱找同群的人
         $q = trim((string) Input::get("q"));
         if ($q !== "") {
             self::search($pdo, $scope, $me, $q);
@@ -33,7 +34,7 @@ final class Discover {
         }
 
         $st = $pdo->prepare(
-            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
+            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, address, discover, last_seen_at"
             . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
             . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0 AND discover = 1"
             . " ORDER BY last_seen_at DESC LIMIT 300"
@@ -45,12 +46,14 @@ final class Discover {
         $myAge  = self::ageOf((string) ($me["birthday"] ?? ""));
         $mySex  = strtolower((string) ($me["gender"] ?? ""));
         $mySig  = self::bigrams((string) ($me["signature"] ?? ""));
+        $myCity = self::cityOf((string) ($me["address"] ?? ""));
 
         $items = [];
         foreach ($rows as $r) {
             $tags = self::tagsOf($r);
             $age  = self::ageOf((string) ($r["birthday"] ?? ""));
             $sex  = strtolower((string) ($r["gender"] ?? ""));
+            $city = self::cityOf((string) ($r["address"] ?? ""));
             $score = 5;
             $why = ["同一群"];
 
@@ -58,6 +61,10 @@ final class Discover {
                 $diff = abs($myAge - $age);
                 $score += max(0, 40 - $diff * 4);
                 if ($diff <= 3) $why[] = "年龄相近";
+            }
+            if ($myCity !== "" && $city !== "" && $myCity === $city) {
+                $score += 15;
+                $why[] = "同城";
             }
             $same = array_values(array_intersect($myTags, $tags));
             if ($same) {
@@ -74,21 +81,10 @@ final class Discover {
                 $why[] = "签名里有共同的字眼";
             }
 
-            $items[] = [
-                "id"        => Ids::of($r),
-                "uid"       => Ids::of($r),
-                "name"      => (string) $r["name"],
-                "username"  => (string) ($r["username"] ?? $r["name"]),
-                "avatar"    => (string) ($r["avatar"] ?? ""),
-                "signature" => (string) ($r["signature"] ?? ""),
-                "tags"      => $tags,
-                "age"       => $age,
-                "gender"    => $sex,
-                "bio"       => mb_substr((string) ($r["bio"] ?? ""), 0, 60),
-                "score"     => $score,
-                "why"       => array_values(array_unique($why)),
-                "last_seen" => (int) ($r["last_seen_at"] ?? 0),
-            ];
+            $it = self::brief($r);
+            $it["score"] = $score;
+            $it["why"]   = array_values(array_unique($why));
+            $items[] = $it;
         }
         usort($items, function ($a, $b) {
             if ($a["score"] !== $b["score"]) return $b["score"] <=> $a["score"];
@@ -96,76 +92,83 @@ final class Discover {
         });
         $items = array_slice($items, 0, self::LIMIT);
 
-        // 猜你想了解：同群最近活跃的人，去掉已经在匹配结果里的
-        $seen = [];
-        foreach ($items as $it) $seen[(int) $it["id"]] = true;
-        $suggest = [];
-        foreach ($rows as $r) {
-            $mid = (int) $r["id"];
-            if (isset($seen[$mid])) continue;
-            $suggest[] = self::brief($r);
-            if (count($suggest) >= 8) break;
-        }
-
         Json::ok([
-            "mode"    => "match",
-            "items"   => $items,
-            "suggest" => $suggest,
-            // 自己的资料越全，匹配越准：前端据此提示去补资料
+            "mode"  => "match",
+            "items" => $items,
+            // 自己的资料越全，推荐越准：前端据此提示去补资料
             "mine"  => [
                 "age"       => $myAge,
                 "gender"    => $mySex,
                 "tags"      => $myTags,
                 "signature" => (string) ($me["signature"] ?? ""),
-                "complete"  => ($myAge > 0 ? 1 : 0) + (count($myTags) > 0 ? 1 : 0) + ($mySex !== "" ? 1 : 0) + (trim((string) ($me["signature"] ?? "")) !== "" ? 1 : 0),
+                "city"      => $myCity,
+                "complete"  => ($myAge > 0 ? 1 : 0) + (count($myTags) > 0 ? 1 : 0) + ($mySex !== "" ? 1 : 0) + (trim((string) ($me["signature"] ?? "")) !== "" ? 1 : 0) + ($myCity !== "" ? 1 : 0),
             ],
         ]);
     }
 
-    /** 按 ID / 用户名 / 昵称 / 邮箱精确或前缀找人（只找同群、未注销、未封禁的人） */
+    /** 只能按 uid 找人：只出精确命中的那一个人 */
     private static function search(PDO $pdo, array $scope, array $me, string $q): void {
-        if (mb_strlen($q) > 60) Json::fail("搜索词太长");
-        $sid = (int) $scope["id"];
-        $raw = strtolower(ltrim($q, "@"));
-        // uid 是唯一的外部 ID：精确命中就只出这一个人
-        $idExact = Ids::resolve($pdo, $raw, $sid);
-
-        $like = "%" . $q . "%";
+        if (mb_strlen($q) > 40) Json::fail("搜索词太长");
+        $uid = strtolower(ltrim($q, "@"));
+        if (!preg_match('/^[a-z0-9]{4,32}$/', $uid)) {
+            Json::ok([
+                "mode"  => "search",
+                "q"     => $q,
+                "items" => [],
+                "total" => 0,
+                "hint"  => "只能按对方的 uid 找人",
+            ]);
+            return;
+        }
         $st = $pdo->prepare(
-            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
+            "SELECT id, uid, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, address, discover, last_seen_at"
             . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
-            . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0"
-            . " AND (uid = ? OR id = ? OR LOWER(username) = ? OR LOWER(username) LIKE ? OR name LIKE ? OR LOWER(email) = ?)"
-            . " ORDER BY last_seen_at DESC LIMIT 30"
+            . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0 AND uid = ? LIMIT 1"
         );
-        $st->execute([$sid, (int) $me["id"], $raw, $idExact, $raw, $raw . "%", $like, $raw]);
-        $rows = $st->fetchAll();
+        $st->execute([(int) $scope["id"], (int) $me["id"], $uid]);
+        $row = $st->fetch();
 
         $items = [];
-        foreach ($rows as $r) {
-            $it = self::brief($r);
+        if ($row) {
+            $it = self::brief($row);
             $it["score"] = 0;
             $it["why"] = ["搜索命中"];
             $items[] = $it;
         }
-        Json::ok(["mode" => "search", "q" => $q, "items" => $items, "total" => count($items)]);
+        Json::ok([
+            "mode"  => "search",
+            "q"     => $q,
+            "items" => $items,
+            "total" => count($items),
+            "hint"  => $row ? "" : "没找到这个 uid 的人",
+        ]);
     }
 
-    /** 列表里用的精简资料（搜索与「猜你想了解」共用） */
+    /** 列表里用的精简资料（推荐与搜索共用） */
     private static function brief(array $r): array {
         return [
             "id"        => Ids::of($r),
             "uid"       => Ids::of($r),
             "name"      => (string) $r["name"],
-            "username"  => (string) ($r["username"] ?? $r["name"]),
             "avatar"    => (string) ($r["avatar"] ?? ""),
             "signature" => (string) ($r["signature"] ?? ""),
             "tags"      => self::tagsOf($r),
             "age"       => self::ageOf((string) ($r["birthday"] ?? "")),
             "gender"    => strtolower((string) ($r["gender"] ?? "")),
+            "city"      => self::cityOf((string) ($r["address"] ?? "")),
             "bio"       => mb_substr((string) ($r["bio"] ?? ""), 0, 60),
             "last_seen" => (int) ($r["last_seen_at"] ?? 0),
         ];
+    }
+
+    /** 住址取到市：广东省深圳市南山区 → 深圳市；北京市朝阳区 → 北京市 */
+    private static function cityOf(string $addr): string {
+        $addr = trim($addr);
+        if ($addr === "") return "";
+        if (preg_match('/([^省市]{2,10}市)/u', $addr, $m)) return $m[1];
+        if (preg_match('/([^省市]{2,10}(?:州|盟|地区))/u', $addr, $m)) return $m[1];
+        return mb_substr($addr, 0, 3);
     }
 
     private static function tagsOf(array $m): array {

@@ -1458,7 +1458,7 @@ async function renderMail(box) {
     el('form', { class: 'adm-form' }, [
       div('oauth-switches', [
         el('label', { class: 'switch' }, [fOn, el('span', { text: '总开关：允许发信' })]),
-        el('label', { class: 'switch' }, [fNotify, el('span', { text: '成员收到站内信时发邮件（成员要先在「空间 → 通知」里订阅并验证邮箱）' })]),
+        el('label', { class: 'switch' }, [fNotify, el('span', { text: '成员收到站内信时发邮件（成员在「站内信」页验证资料卡邮箱后生效）' })]),
       ]),
       div('hint', [el('p', { text: '只对站内信发信。私聊、群消息、空间动态本身都不会发邮件。' })]),
     ]),

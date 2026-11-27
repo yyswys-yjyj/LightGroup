@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 21;
+    public const VERSION = 22;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -70,6 +70,8 @@ final class Schema {
                 "birthday"     => "VARCHAR(10) NULL",
                 "gender"       => "VARCHAR(8) NULL",
                 "signature"    => "VARCHAR(80) NULL",
+                // 住址：精确到区/县/乡，只用来算「同城」，不做门牌定位
+                "address"      => "VARCHAR(80) NULL",
                 // 邮箱只给本人看（资料编辑页），不进出口的公开资料
                 "email"        => "VARCHAR(191) NULL",
                 // 标签：JSON 数组，1-5 个
@@ -324,6 +326,7 @@ final class Schema {
                 . " mute_until BIGINT NOT NULL DEFAULT 0,"
                 . " perm_group_id BIGINT NULL, bio_mode VARCHAR(8) NOT NULL DEFAULT 'plain',"
                 . " birthday VARCHAR(10) NULL, gender VARCHAR(8) NULL, signature VARCHAR(80) NULL,"
+                . " address VARCHAR(80) NULL,"
                 . " email VARCHAR(191) NULL, tags $text NULL, discover TINYINT NOT NULL DEFAULT 1,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_seen_at BIGINT NULL"
                 . ")$suffix",

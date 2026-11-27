@@ -59,6 +59,7 @@ final class Profile {
             $birthday = self::field("birthday", null);
             $gender = self::field("gender", null);
             $signature = self::field("signature", null);
+            $address = self::field("address", null);
             $email = self::field("email", null);
             $tagsRaw = self::rawField("tags", null);
             $discover = self::field("discover", null);
@@ -109,12 +110,24 @@ final class Profile {
                 $pdo->prepare("UPDATE members SET signature = ? WHERE id = ?")->execute([$signature === "" ? null : $signature, (int) $m["id"]]);
                 $m["signature"] = $signature;
             }
+            if ($address !== null) {
+                // 只到区/县/乡，不要门牌：去换行、压空格、限 80 字
+                $address = trim(preg_replace('/\s+/u', " ", str_replace([ "\r", "\n", "\0" ], " ", $address)));
+                if (mb_strlen($address) > 80) Json::fail("住址最多 80 个字");
+                $pdo->prepare("UPDATE members SET address = ? WHERE id = ?")->execute([$address === "" ? null : $address, (int) $m["id"]]);
+                $m["address"] = $address;
+            }
             if ($email !== null) {
                 $email = trim($email);
                 if ($email !== "" && !filter_var($email, FILTER_VALIDATE_EMAIL)) Json::fail("邮箱格式不对");
                 if (mb_strlen($email) > 191) Json::fail("邮箱太长了");
+                $oldEmail = (string) ($m["email"] ?? "");
                 $pdo->prepare("UPDATE members SET email = ? WHERE id = ?")->execute([$email === "" ? null : $email, (int) $m["id"]]);
                 $m["email"] = $email;
+                // 资料卡的邮箱就是站内信邮件提醒的地址；换了地址，旧验证作废
+                if (strcasecmp($email, $oldEmail) !== 0) {
+                    Notices::profileEmailChanged($pdo, (int) $m["id"], $email);
+                }
             }
             if ($tagsRaw !== null) {
                 $tags = self::cleanTags($tagsRaw);
@@ -217,18 +230,17 @@ final class Profile {
             "id"     => Ids::of($m),
             "uid"    => Ids::of($m),
             "name"   => (string) $m["name"],
-            // 对外用户 ID：资料页显示成 @username，登录名不再只留在 me 接口
-            "username" => (string) ($m["username"] ?? $m["name"]),
             "kind"   => (string) $m["kind"],
             "role"   => self::roleOf($pdo, $m),
             "color"  => self::colorOf(Ids::of($m)),
             "bio"    => (string) ($m["bio"] ?? ""),
             "bioMode" => (string) ($m["bio_mode"] ?? "plain") === "markdown" ? "markdown" : "plain",
             "tags"    => self::tagsOf($m),
-            "birthday" => (string) ($m["birthday"] ?? ""),
+            // 具体生日不对外：资料页只显示年龄，减少拿生日去对号的风险
             "age"     => self::ageOf((string) ($m["birthday"] ?? "")),
             "gender"  => (string) ($m["gender"] ?? ""),
             "signature" => (string) ($m["signature"] ?? ""),
+            "address" => (string) ($m["address"] ?? ""),
             "discover" => (int) ($m["discover"] ?? 1) === 1,
             "avatar" => (string) ($m["avatar"] ?? ""),
             "joined" => (int) ($m["created_at"] ?? 0),
@@ -257,6 +269,7 @@ final class Profile {
         }
         return [
             "id"       => Ids::of($m),
+            "uid"      => Ids::of($m),
             "name"     => (string) $m["name"],
             // 登录名只有本人看得到（me 接口），不进公开资料
             "username" => (string) ($m["username"] ?? $m["name"]),
@@ -278,6 +291,7 @@ final class Profile {
             "age"      => self::ageOf((string) ($m["birthday"] ?? "")),
             "gender"   => (string) ($m["gender"] ?? ""),
             "signature"=> (string) ($m["signature"] ?? ""),
+            "address"  => (string) ($m["address"] ?? ""),
             // 邮箱只给本人：公开资料（out）不带它
             "email"    => (string) ($m["email"] ?? ""),
             "discover" => (int) ($m["discover"] ?? 1) === 1,

@@ -1,4 +1,4 @@
-// LightGroup · 发现：搜索同群的人，或按资料相似度推荐
+// LightGroup · 发现：一个推荐好友列表 + 按 uid 精确找人
 import { S, h, icon, btn, api, go, pageHead, toast } from './core.js';
 import { avatar } from './avatar.js';
 
@@ -15,9 +15,9 @@ function dcCard(it, showScore) {
   const main = h('div', 'dc-main');
   const top = h('div', 'dc-top');
   top.appendChild(h('b', '', it.name || '匿名'));
-  if (it.username && it.username !== it.name) top.appendChild(h('span', 'dc-meta', '@' + it.username));
   if (it.age) top.appendChild(h('span', 'dc-meta', it.age + ' 岁'));
   if (it.gender) top.appendChild(h('span', 'dc-meta', genderText(it.gender)));
+  if (it.city) top.appendChild(h('span', 'dc-meta', it.city));
   main.appendChild(top);
   if (it.signature) main.appendChild(h('div', 'dc-sign', it.signature));
   if (Array.isArray(it.tags) && it.tags.length) {
@@ -37,7 +37,7 @@ function dcCard(it, showScore) {
 export function renderDiscover(host) {
   host.textContent = '';
   const page = h('div', 'chat-page');
-  page.appendChild(pageHead('发现', '按 ID、邮箱、用户名找人，或者看看聊得来的人'));
+  page.appendChild(pageHead('发现', '按 uid 找人，或者看看谁和你聊得来'));
   const body = h('div', 'page-body');
   page.appendChild(body);
   host.appendChild(page);
@@ -50,13 +50,13 @@ export function renderDiscover(host) {
   const inp = document.createElement('input');
   inp.className = 'tb dc-find';
   inp.type = 'search';
-  inp.placeholder = 'ID、邮箱、用户名';
+  inp.placeholder = '输入对方的 uid';
+  inp.autocomplete = 'off';
   search.appendChild(inp);
-  const goBtn = btn('搜索', 'btn btn-primary btn-sm', function () {
+  search.appendChild(btn('搜索', 'btn btn-primary btn-sm', function () {
     q = inp.value.trim();
     load();
-  });
-  search.appendChild(goBtn);
+  }));
   body.appendChild(search);
 
   const box = h('div', 'dc-box');
@@ -90,10 +90,10 @@ export function renderDiscover(host) {
   function paintSearch(j) {
     const items = j.items || [];
     if (!items.length) {
-      box.appendChild(h('div', 'pf-empty', '没有找到「' + q + '」'));
+      box.appendChild(h('div', 'pf-empty', j.hint || '没有找到这个 uid 的人'));
       return;
     }
-    box.appendChild(h('div', 'dc-head', '搜索结果 · ' + items.length));
+    box.appendChild(h('div', 'dc-head', '搜索结果'));
     const list = h('div', 'dc-list');
     items.forEach(function (it) { list.appendChild(dcCard(it, false)); });
     box.appendChild(list);
@@ -101,12 +101,13 @@ export function renderDiscover(host) {
 
   function paintMatch(j) {
     const mine = j.mine || {};
-    if (!mine.age || !(mine.tags && mine.tags.length)) {
+    if (!mine.age || !(mine.tags && mine.tags.length) || !mine.city) {
       const tip = h('div', 'dc-tip');
       const txt = h('div', 'dc-tip-txt');
-      txt.appendChild(h('b', '', '资料再全一点，匹配会更准'));
+      txt.appendChild(h('b', '', '资料再全一点，推荐会更准'));
       txt.appendChild(h('span', '', [
         mine.age ? '' : '补上生日能算年龄',
+        mine.city ? '' : '填上住址能算同城',
         (mine.tags && mine.tags.length) ? '' : '加几个标签',
         mine.signature ? '' : '写一句签名'
       ].filter(Boolean).join('、') || '去资料页看看'));
@@ -117,20 +118,12 @@ export function renderDiscover(host) {
 
     const items = j.items || [];
     if (items.length) {
-      box.appendChild(h('div', 'dc-head', '聊得来的人'));
+      box.appendChild(h('div', 'dc-head', '推荐好友'));
       const list = h('div', 'dc-list');
       items.forEach(function (it) { list.appendChild(dcCard(it, true)); });
       box.appendChild(list);
     } else {
       box.appendChild(h('div', 'pf-empty', '还没有可推荐的人，等更多成员填好资料再来。'));
-    }
-
-    const sg = j.suggest || [];
-    if (sg.length) {
-      box.appendChild(h('div', 'dc-head', '猜你想了解'));
-      const list2 = h('div', 'dc-list');
-      sg.forEach(function (it) { list2.appendChild(dcCard(it, false)); });
-      box.appendChild(list2);
     }
   }
 

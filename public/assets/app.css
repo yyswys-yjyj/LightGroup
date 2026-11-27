@@ -694,3 +694,19 @@ body.has-wall{background-color:var(--bg);background-size:cover;background-positi
 .file-card-t{display:flex;flex-direction:column;gap:2px;min-width:0}
 .file-card-t>b{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-card-s{font-size:11.5px;color:var(--text-faint)}
+
+/* 资料页住址：只用来算同城 */
+.pf-hero-city{font-size:12px;color:var(--text-dim);margin-top:4px}
+.pf-pop-city{font-size:12px;color:var(--text-dim);margin:2px 0 8px}
+
+/* 住址：输入框 + 选择器 */
+.f-line{display:flex;gap:8px;align-items:center}
+.f-line .tb{flex:1;min-width:0}
+.f-line .btn{flex:0 0 auto;height:40px}
+.rg-box{display:flex;flex-direction:column;gap:10px}
+.rg-tip{font-size:12px;color:var(--text-faint)}
+.rg-row{display:flex;gap:8px}
+.rg-row .rg-sel{flex:1;min-width:0}
+.rg-row .rg-street{flex:1;min-width:0}
+.rg-preview{font-size:13px;color:var(--text-dim);padding:10px 12px;border-radius:10px;background:var(--surface-2,var(--input-bg));border:1px solid var(--border)}
+.rg-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}

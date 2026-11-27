@@ -138,7 +138,8 @@ function openFindFriend() {
   const inp = document.createElement('input');
   inp.className = 'tb';
   inp.type = 'search';
-  inp.placeholder = 'ID、邮箱、用户名';
+  inp.placeholder = '输入对方的 uid';
+  inp.autocomplete = 'off';
   row.appendChild(inp);
   const goBtn = btn('搜索', 'btn-primary btn-sm', run);
   row.appendChild(goBtn);
@@ -149,7 +150,7 @@ function openFindFriend() {
 
   async function run() {
     const q = String(inp.value || '').trim();
-    if (!q) { toast('填 ID、邮箱或用户名'); return; }
+    if (!q) { toast('填对方的 uid'); return; }
     const my = ++reqId;
     box.textContent = '';
     box.appendChild(h('div', 'sp-empty', '搜索中…'));
@@ -158,7 +159,7 @@ function openFindFriend() {
     box.textContent = '';
     if (!j || !j.ok) { box.appendChild(h('div', 'sp-empty', (j && j.err) || '搜索失败')); return; }
     const items = j.items || [];
-    if (!items.length) { box.appendChild(h('div', 'sp-empty', '没有找到这个人')); return; }
+    if (!items.length) { box.appendChild(h('div', 'sp-empty', j.hint || '没有找到这个 uid 的人')); return; }
     items.forEach(function (it) {
       const u = document.createElement('button');
       u.type = 'button';
@@ -167,7 +168,7 @@ function openFindFriend() {
       const info = h('div', 'm-row-i');
       const nm = h('div', 'm-row-n');
       nm.appendChild(h('b', '', it.name || '匿名'));
-      if (it.username && it.username !== it.name) nm.appendChild(h('span', 'conv-find-at', '@' + it.username));
+      nm.appendChild(h('span', 'conv-find-at', '@' + it.uid));
       info.appendChild(nm);
       info.appendChild(h('div', 'm-row-s', it.signature || ''));
       u.appendChild(info);

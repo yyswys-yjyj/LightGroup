@@ -154,56 +154,112 @@ final class Notices {
 
     // ---------- 邮箱订阅 ----------
 
+    /** 资料卡上的邮箱：站内信邮件提醒就发这个地址 */
+    public static function profileEmail(PDO $pdo, int $memberId): string {
+        if ($memberId <= 0) return "";
+        $st = $pdo->prepare("SELECT email FROM members WHERE id = ? LIMIT 1");
+        $st->execute([$memberId]);
+        $v = $st->fetchColumn();
+        return trim((string) ($v === false ? "" : $v));
+    }
+
+    private static function subRow(PDO $pdo, int $memberId): ?array {
+        $st = $pdo->prepare("SELECT * FROM notice_subs WHERE member_id = ? LIMIT 1");
+        $st->execute([$memberId]);
+        $row = $st->fetch();
+        return $row ?: null;
+    }
+
+    private static function verifyHtml(string $code): string {
+        $esc = fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, "UTF-8");
+        return "<div style=\"font-family:system-ui,-apple-system,'PingFang SC',sans-serif;line-height:1.7\">"
+            . "<h2 style=\"margin:0 0 10px;font-size:17px\">确认订阅站内信提醒</h2>"
+            . "<p style=\"margin:0\">把下面这串验证码填回浏览器，订阅才会生效：</p>"
+            . "<p style=\"margin:14px 0;font-size:26px;letter-spacing:6px;font-weight:700\">" . $esc($code) . "</p>"
+            . "<p style=\"margin:0;color:#8a93a0;font-size:12px\">10 分钟内有效。不是你本人操作的，忽略这封邮件就行。</p>"
+            . "</div>";
+    }
+
+    /**
+     * 生成新的验证码并写进 notice_subs；$sendNow=true 时当场发信（发不出去会抛），
+     * false 时走 sendLater（请求返回后再发，不拖慢保存资料）。
+     */
+    public static function resetVerify(PDO $pdo, int $memberId, string $email, bool $sendNow): void {
+        if ($memberId <= 0) return;
+        $email = trim($email);
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) throw new \RuntimeException("邮箱格式不对");
+        $code = (string) random_int(100000, 999999);
+        $now = lg_now();
+        $row = self::subRow($pdo, $memberId);
+        if ($row) {
+            $pdo->prepare("UPDATE notice_subs SET email = ?, code = ?, verified_at = NULL, updated_at = ? WHERE member_id = ?")
+                ->execute([$email, $code, $now, $memberId]);
+        } else {
+            $pdo->prepare("INSERT INTO notice_subs (member_id, email, code, verified_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)")
+                ->execute([$memberId, $email, $code, $now, $now]);
+        }
+        if (!Mailer::notifyOn($pdo)) return;
+        $html = self::verifyHtml($code);
+        if ($sendNow) {
+            Mailer::sendNow($pdo, $email, "确认订阅站内信提醒", $html);
+        } else {
+            Mailer::sendLater($pdo, $email, "确认订阅站内信提醒", $html);
+        }
+    }
+
+    /**
+     * 资料卡换了邮箱：订阅过的跟着换地址，旧验证作废，重新发一封验证码。
+     * 从没订阅过的什么都不做，免得「改个资料就收到邮件」。
+     */
+    public static function profileEmailChanged(PDO $pdo, int $memberId, string $email): void {
+        if ($memberId <= 0) return;
+        $email = trim($email);
+        if ($email === "") {
+            $pdo->prepare("DELETE FROM notice_subs WHERE member_id = ?")->execute([$memberId]);
+            return;
+        }
+        if (self::subRow($pdo, $memberId) === null) return;
+        try {
+            self::resetVerify($pdo, $memberId, $email, false);
+        } catch (\Throwable $e) {
+            error_log("profile email resync failed: " . $e->getMessage());
+        }
+    }
+
     private static function subscribe(PDO $pdo, array $me): void {
         $mid = (int) $me["id"];
-        $st = $pdo->prepare("SELECT * FROM notice_subs WHERE member_id = ? LIMIT 1");
-        $st->execute([$mid]);
-        $row = $st->fetch();
+        $profile = self::profileEmail($pdo, $mid);
+        $row = self::subRow($pdo, $mid);
 
         $method = strtoupper((string) ($_SERVER["REQUEST_METHOD"] ?? "GET"));
         if ($method === "DELETE" || $method === "POST" && (string) (Input::body()["op"] ?? "") === "off") {
-            $st = $pdo->prepare("DELETE FROM notice_subs WHERE member_id = ?");
-            $st->execute([$mid]);
+            $pdo->prepare("DELETE FROM notice_subs WHERE member_id = ?")->execute([$mid]);
             Json::ok(["subscribed" => false]);
             return;
         }
 
         if ($method === "POST") {
-            $email = (string) (Input::body()["email"] ?? "");
-            if ($email === "" || !filter_var($email, FILTER_VALIDATE_EMAIL)) Json::fail("邮箱格式不对");
+            // 地址只认资料卡：不再单独填邮箱，避免两处地址对不上
+            if ($profile === "") Json::fail("先在「我的资料」里填邮箱");
             if (!Mailer::notifyOn($pdo)) Json::fail("站点还没开邮件提醒，先找管理员");
-
-            $code = (string) random_int(100000, 999999);
-            $now = lg_now();
-            if ($row) {
-                $st = $pdo->prepare("UPDATE notice_subs SET email = ?, code = ?, verified_at = NULL, updated_at = ? WHERE member_id = ?");
-                $st->execute([$email, $code, $now, $mid]);
-            } else {
-                $st = $pdo->prepare("INSERT INTO notice_subs (member_id, email, code, verified_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)");
-                $st->execute([$mid, $email, $code, $now, $now]);
-            }
-
-            $esc = fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, "UTF-8");
-            $html = "<div style=\"font-family:system-ui,-apple-system,'PingFang SC',sans-serif;line-height:1.7\">"
-                . "<h2 style=\"margin:0 0 10px;font-size:17px\">确认订阅站内信提醒</h2>"
-                . "<p style=\"margin:0\">把下面这串验证码填回浏览器，订阅才会生效：</p>"
-                . "<p style=\"margin:14px 0;font-size:26px;letter-spacing:6px;font-weight:700\">" . $esc($code) . "</p>"
-                . "<p style=\"margin:0;color:#8a93a0;font-size:12px\">10 分钟内有效。不是你本人操作的，忽略这封邮件就行。</p>"
-                . "</div>";
             try {
-                Mailer::sendNow($pdo, $email, "确认订阅站内信提醒", $html);
+                self::resetVerify($pdo, $mid, $profile, true);
             } catch (\Throwable $e) {
                 Json::fail("激活邮件没发出去：" . $e->getMessage());
             }
-            Json::ok(["subscribed" => false, "pending" => true, "email" => $email]);
+            Json::ok(["subscribed" => false, "pending" => true, "email" => $profile]);
             return;
         }
 
+        $subEmail = $row ? (string) $row["email"] : "";
+        $same = $profile !== "" && strcasecmp($subEmail, $profile) === 0;
         Json::ok([
-            "available"  => Mailer::notifyOn($pdo),
-            "subscribed" => $row && $row["verified_at"] !== null,
-            "pending"    => $row && $row["verified_at"] === null,
-            "email"      => $row ? (string) $row["email"] : "",
+            "available"    => Mailer::notifyOn($pdo),
+            "subscribed"   => $row !== null && $row["verified_at"] !== null && $same,
+            "pending"      => $row !== null && $row["verified_at"] === null && $same,
+            "email"        => $profile !== "" ? $profile : $subEmail,
+            "profileEmail" => $profile,
+            "hasEmail"     => $profile !== "",
         ]);
     }
 

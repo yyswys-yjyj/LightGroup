@@ -870,6 +870,7 @@ final class Compat {
                 "age"      => Profile::ageOf((string) ($m["birthday"] ?? "")),
                 "gender"   => (string) ($m["gender"] ?? ""),
                 "signature"=> (string) ($m["signature"] ?? ""),
+                "address"  => (string) ($m["address"] ?? ""),
                 "email"    => (string) ($m["email"] ?? ""),
                 "discover" => (int) ($m["discover"] ?? 1) === 1,
                 // 前端按这两份开关隐藏入口；真正的拦截在后端各接口里

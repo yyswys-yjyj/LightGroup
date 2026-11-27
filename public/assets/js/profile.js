@@ -323,6 +323,7 @@ export async function loadUserProfile(uid, force) {
       age: S.me.age || 0,
       gender: S.me.gender || '',
       signature: S.me.signature || '',
+      address: S.me.address || '',
       email: S.me.email || '',
       discover: S.me.discover !== false
     };
@@ -400,6 +401,7 @@ function paintCard(el, member, p) {
   el.appendChild(head);
 
   if (p && p.signature) el.appendChild(h('div', 'pf-pop-sign', String(p.signature)));
+  if (p && p.address) el.appendChild(h('div', 'pf-pop-city', '📍 ' + String(p.address)));
 
   const bio = h('div', 'pf-pop-bio');
   if (!p) {
@@ -762,9 +764,9 @@ function paintUserPage(uid, p) {
   nm.appendChild(h('b', '', (d && d.name) || '匿名'));
   if (d) badges(nm, d);
   info.appendChild(nm);
-  // 用户 ID 用 username，不从昵称推
+  // 对外只给 uid：username 是登录名，露出去等于给人爆破目标
   info.appendChild(h('div', 'pf-hero-handle',
-    d ? '@' + String(d.username || d.uid || '') : '加载中…'));
+    d ? '@' + String(d.uid || '') : '加载中…'));
   if (d) {
     const bits = [];
     if (d.kind === 'ai') bits.push(d.owner ? 'AI · ' + d.owner + ' 的' : 'AI 成员');
@@ -778,6 +780,7 @@ function paintUserPage(uid, p) {
     info.appendChild(h('div', 'pf-hero-sub', bits.join(' · ')));
 
     if (d.signature) info.appendChild(h('div', 'pf-hero-sign', String(d.signature)));
+    if (d.address) info.appendChild(h('div', 'pf-hero-city', '📍 ' + String(d.address)));
 
     const bio = h('div', 'pf-hero-bio');
     if (!String(d.bio || '').trim()) {

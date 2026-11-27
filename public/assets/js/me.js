@@ -6,6 +6,7 @@ import {
   resolveThemeId, refreshThemes, themeName, contrastText,
   THEME_MODES, setThemeMode, effectiveMode, themeMode, encodeThemeChoice
 } from './core.js';
+import { openRegionPicker } from './region.js';
 import { avatar } from './avatar.js';
 import { msgNode, isMine } from './msg.js';
 import { openQr, linkFor } from './qr.js';
@@ -86,7 +87,7 @@ function paintMeHome(host) {
   const bits = [me.kind === 'ai' ? 'AI 成员' : '人类成员'];
   if (role === 'super') bits.push('超级管理员');
   else if (role === 'admin') bits.push('管理员');
-  bits.push('@' + (me.username || me.name || ''));
+  bits.push('@' + (me.uid || me.id || ''));
   info.appendChild(h('span', 'me-card-sub', bits.join(' · ')));
   // 简介是 markdown，身份卡里只当一行纯文本：去掉语法、换行也压平，长了截断
   const bioOne = plainLine(me.intro || me.bio, 90);
@@ -285,6 +286,23 @@ function renderProfileEdit(host) {
     row.appendChild(v);
   });
 
+  field(body, '住址', function (row) {
+    const line = h('div', 'f-line');
+    const v = document.createElement('input');
+    v.id = 'f-address';
+    v.className = 'tb';
+    v.type = 'text';
+    v.maxLength = 80;
+    v.placeholder = '省 / 市 / 区县';
+    v.value = me.address || '';
+    line.appendChild(v);
+    line.appendChild(btn('选择', 'btn btn-ghost btn-sm', function () {
+      openRegionPicker(v.value, function (val) { v.value = val; });
+    }));
+    row.appendChild(line);
+  });
+  body.appendChild(copyNote('只用来算「同城」，不用填门牌号。'));
+
   field(body, '邮箱', function (row) {
     const v = document.createElement('input');
     v.id = 'f-email';
@@ -294,7 +312,7 @@ function renderProfileEdit(host) {
     v.value = me.email || '';
     row.appendChild(v);
   });
-  body.appendChild(copyNote('邮箱只有你自己看得到，不会出现在资料页。'));
+  body.appendChild(copyNote('只有你自己看得到，不会出现在资料页；站内信的邮件提醒发到这里。'));
 
   const sw = h('label', 'sw-row');
   const inv = document.createElement('input');
@@ -553,6 +571,7 @@ function saveProfile(mdMode) {
     birthday: get('f-birthday'),
     gender: get('f-gender'),
     signature: get('f-signature'),
+    address: get('f-address').trim(),
     email: get('f-email').trim(),
     discover: discEl && discEl.checked ? '1' : '0',
     allowInvite: invEl && invEl.checked ? '1' : '0'
