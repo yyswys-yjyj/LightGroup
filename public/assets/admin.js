@@ -11,6 +11,7 @@ const S = {
   me: null,
   scopes: [],
   tab: '',
+  arg: '',
   loaded: {},
 };
 
@@ -334,13 +335,27 @@ function buildShell() {
   adm.append(div('adm-shell', [side, div('adm-main', [top, body])]));
 }
 
-function setCrumb(tab) {
+function setCrumb(tab, arg) {
   const c = document.getElementById('adm-crumb');
   if (!c) return;
   c.innerHTML = '';
   c.append(el('span', { class: 'adm-crumb-root', text: '管理后台' }));
   c.append(icon('fa-chevron-right', 'adm-crumb-sep'));
-  c.append(el('b', { text: TITLES[tab] || tab }));
+  const first = el('b', { text: TITLES[tab] || tab });
+  if (arg) {
+    first.style.cursor = 'pointer';
+    first.addEventListener('click', function () { go(tab); });
+  }
+  c.append(first);
+  if (arg) {
+    c.append(icon('fa-chevron-right', 'adm-crumb-sep'));
+    c.append(el('b', { text: '详情' }));
+  }
+}
+
+function splitPath(p) {
+  const i = p.indexOf('/');
+  return i < 0 ? { tab: p, arg: '' } : { tab: p.slice(0, i), arg: p.slice(i + 1) };
 }
 
 const RENDERERS = {
@@ -360,14 +375,17 @@ const RENDERERS = {
   update: renderUpdate,
 };
 
-async function go(tab) {
-  if (!TITLES[tab]) tab = 'dashboard';
+async function go(tab, arg) {
+  if (!TITLES[tab]) { tab = 'dashboard'; arg = ''; }
+  const argStr = arg === undefined || arg === null ? '' : String(arg);
   S.tab = tab;
+  S.arg = argStr;
+  const path = tab + (argStr ? '/' + argStr : '');
   document.querySelectorAll('.adm-nav-item').forEach(function (a) {
     a.classList.toggle('on', a.getAttribute('data-tab') === tab);
   });
-  setCrumb(tab);
-  if (location.hash !== '#' + tab) history.replaceState(null, '', '#' + tab);
+  setCrumb(tab, argStr);
+  if (location.hash !== '#' + path) history.replaceState(null, '', '#' + path);
   const body = document.getElementById('adm-body');
   if (!body) return;
   body.innerHTML = '';
@@ -375,12 +393,12 @@ async function go(tab) {
   const wrap = div('adm-wrap', []);
   body.append(wrap);
   try {
-    await RENDERERS[tab](wrap);
+    await RENDERERS[tab](wrap, argStr);
   } catch (e) {
     wrap.innerHTML = '';
     wrap.append(div('card', [div('card-body', [
       div('adm-error', [icon('fa-triangle-exclamation'), el('div', { text: e.message || '加载失败' })]),
-      btn('重试', 'btn-ghost', function () { go(tab); }, 'fa-rotate'),
+      btn('重试', 'btn-ghost', function () { go(tab, argStr); }, 'fa-rotate'),
     ])]));
   }
 }
@@ -750,7 +768,7 @@ async function renderPermGroups(box) {
     });
     holder.append(card('生效结果 · ' + title, [
       table(['群功能', '状态'], effRows, '没有可配置的群功能', 'fa-toggle-on'),
-      div('hint', [el('p', { text: '平台默认组先铺底，这个群套的组再盖一层。组里只存「改过的键」，没列出来的跟着默认走。' })]),
+      div('card-foot', [div('hint', [el('p', { text: '平台默认组先铺底，这个群套的组再盖一层。组里只存「改过的键」，没列出来的跟着默认走。' })])]),
     ], { icon: 'fa-toggle-on', flush: true }));
 
     const groupRows = groups.map(function (g) {
@@ -1645,7 +1663,8 @@ function clusterScopeDialog(c) {
 
 // ---------------------------------------------------------------- 会话审计
 
-async function renderConvs(box) {
+async function renderConvs(box, arg) {
+  if (arg) { await renderConvAudit(box, Number(arg) || 0); return; }
   const filter = { kind: '', kw: '' };
 
   async function paint() {
@@ -1686,7 +1705,7 @@ async function renderConvs(box) {
         el('td', { class: 'num', text: String(c.memberCount) }),
         el('td', { class: 'num', text: String(c.msgCount) }),
         el('td', { class: 'muted', text: c.lastAt ? ago(c.lastAt) : '—' }),
-        el('td', {}, [btn('查看', 'btn-ghost btn-sm', function () { viewConv(c, paint); }, 'fa-eye')]),
+        el('td', {}, [btn('查看', 'btn-ghost btn-sm', function () { go('convs', String(c.id)); }, 'fa-eye')]),
       ];
     });
 
@@ -1721,120 +1740,149 @@ function convMetaItem(label, value) {
   ]);
 }
 
-async function viewConv(c, refresh) {
-  const body = div('conv-view', [loading()]);
-  const kindText = c.isPublic ? '大群' : (c.private ? '私群' : '私聊');
-  const m = modal(kindText + ' · ' + (c.title || '') + (c.dissolved ? '（已解散）' : ''), [body], [btn('关闭', 'btn-ghost', function () { m.close(); })]);
-
-  // 每次操作后整块重画，省得自己去跟踪哪一条变了
+/** 会话审计详情：独立子页 #/convs/<id>，信息面板放全，不再用弹窗 */
+async function renderConvAudit(box, id) {
+  box.classList.add('conv-audit');
   async function paint() {
-    try {
-      const d = await api('convs/' + c.id);
-      const cv = d.conv || {};
-      const rows = cv.memberRows || [];
-      body.innerHTML = '';
-
-      body.append(div('conv-meta', [
-        convMetaItem('群组', cv.scopeTitle),
-        convMetaItem('类型', kindText),
-        convMetaItem('创建者', cv.creator),
-        convMetaItem('创建时间', cv.createdAt ? fmtDT(cv.createdAt) : ''),
-        convMetaItem('成员', String(rows.length)),
+    box.innerHTML = '';
+    box.append(loading());
+    let d;
+    try { d = await api('convs/' + id); }
+    catch (e) {
+      box.innerHTML = '';
+      box.append(div('conv-audit-head', [
+        btn('返回会话列表', 'btn-ghost btn-sm', function () { go('convs'); }, 'fa-arrow-left'),
       ]));
-
-      if (cv.private) {
-        const opts = [{ value: '0', label: '跟随主群' }].concat((cv.permGroups || []).map(function (g) {
-          return { value: String(g.id), label: g.name + (g.is_default ? '（平台默认）' : '') };
-        }));
-        const sel = selectInput('perm_group', opts, cv.permOwn ? String(cv.permGroupId) : '0');
-        const savePerm = btn('保存权限组', 'btn-primary btn-sm', async function () {
-          try {
-            await api('convs/' + c.id + '/perm_group', { group: sel.value });
-            toast('权限组已保存');
-            paint();
-            if (refresh) refresh();
-          } catch (e) { toast(e.message, 'err'); }
-        }, 'fa-floppy-disk');
-        body.append(div('conv-perm', [
-          el('span', { class: 'conv-perm-t', text: '这个私群的权限组' }),
-          sel,
-          savePerm,
-        ]));
-        const on = Object.keys(cv.perm || {}).filter(function (k) { return cv.perm[k]; });
-        const off = Object.keys(cv.perm || {}).filter(function (k) { return !cv.perm[k]; });
-        if (off.length) {
-          body.append(el('p', { class: 'conv-perm-hint', text: '关掉的功能：' + off.join('、') }));
-        } else {
-          body.append(el('p', { class: 'conv-perm-hint', text: '群功能全部开着。' }));
-        }
-      } else {
-        body.append(div('conv-perm', [
-          el('span', { class: 'conv-perm-t', text: '权限组' }),
-          el('span', { class: 'muted', text: cv.permGroupName || '默认权限组' }),
-        ]));
-      }
-
-      if (cv.notice) {
-        body.append(div('conv-notice', [
-          el('b', { text: '群公告' }),
-          el('div', { class: 'conv-notice-t', text: cv.notice }),
-        ]));
-      }
-
-      if (rows.length) {
-        body.append(div('conv-sec', [
-          el('b', { text: '成员' }),
-          div('conv-members', rows.map(function (x) {
-            return el('span', { class: 'conv-member' }, [
-              el('span', { text: x.name }),
-              x.role === 'owner' ? badge('admin', '群主') : (x.role === 'admin' ? badge('admin', '管理员') : null),
-            ]);
-          })),
-        ]));
-      }
-
-      const info = div('conv-info', [
-        el('span', { class: 'muted', text: '共 ' + (d.msgs || []).length + ' 条' }),
-        div('conv-info-sp'),
-        btn('清空历史', 'btn-danger btn-sm', async function () {
-          if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。', true))) return;
-          try {
-            const r = await api('convs/' + c.id + '/clear', {});
-            toast('已清空 ' + r.cleared + ' 条');
-            paint();
-          } catch (e) { toast(e.message, 'err'); }
-        }, 'fa-broom'),
-      ]);
-      body.append(info);
-      const list = div('conv-msgs', []);
-      (d.msgs || []).forEach(function (msg) {
-        const canDel = !msg.sys && !msg.recalled;
-        list.append(div('conv-msg' + (msg.sys ? ' sys' : ''), [
-          div('conv-msg-head', [
-            el('b', { text: msg.name || '?' }),
-            msg.kind === 'ai' ? badge('ai') : null,
-            el('span', { class: 'muted', text: fmtDT(msg.ts) }),
-            div('conv-msg-sp'),
-            canDel ? btn('删除', 'btn-ghost btn-sm', async function () {
-              if (!(await confirmBox('删除消息', '这条消息会从这个会话里消失，之后会留下一条系统提示。', true))) return;
-              try {
-                await api('messages/' + msg.id, { op: 'delete' });
-                toast('已删除');
-                paint();
-              } catch (e) { toast(e.message, 'err'); }
-            }, 'fa-trash-can') : null,
-          ]),
-          div('conv-msg-text', [document.createTextNode(adminMsgText(msg))]),
-        ]));
-      });
-      if (!(d.msgs || []).length) list.append(div('adm-empty', [icon('fa-comments'), el('div', { text: '这个会话还没有消息' })]));
-      body.append(list);
-    } catch (e) {
-      body.innerHTML = '';
-      body.append(div('adm-error', [icon('fa-triangle-exclamation'), el('div', { text: e.message })]));
+      box.append(card('读取失败', [div('adm-error', [icon('fa-circle-exclamation'), el('div', { text: e.message })])], { icon: 'fa-triangle-exclamation' }));
+      return;
     }
+    const cv = d.conv || {};
+    const rows = cv.memberRows || [];
+    const msgs = d.msgs || [];
+    const kindText = cv.isPublic ? '大群' : (cv.private ? '私群' : '私聊');
+    const title = (cv.title || ('会话 #' + id)) + (cv.dissolved ? '（已解散）' : '');
+    const memberName = function (mid) {
+      for (let i = 0; i < rows.length; i++) if (Number(rows[i].id) === Number(mid)) return rows[i].name;
+      return mid ? ('#' + mid) : '';
+    };
+
+    box.innerHTML = '';
+    box.append(div('conv-audit-head', [
+      btn('返回会话列表', 'btn-ghost btn-sm', function () { go('convs'); }, 'fa-arrow-left'),
+      div('conv-audit-title', [
+        el('h1', { class: 'page-title', text: title }),
+        el('p', { class: 'page-desc', text: kindText + ' · ' + (cv.scopeTitle || '') + ' · 会话 #' + (cv.id || id) }),
+      ]),
+    ]));
+
+    const metaPairs = [
+      ['会话 ID', String(cv.id || id)],
+      ['群组', cv.scopeTitle || '—'],
+      ['类型', kindText + (cv.dissolved ? ' · 已解散' : '')],
+      ['创建者', cv.creator || '—'],
+      ['创建时间', cv.createdAt ? fmtDT(cv.createdAt) : '—'],
+      ['最后活跃', cv.lastAt ? ago(cv.lastAt) : '—'],
+      ['成员数', String(rows.length)],
+      ['消息数', String(cv.msgCount === undefined ? msgs.length : cv.msgCount)],
+    ];
+    box.append(card('基本信息', [div('conv-meta', metaPairs.map(function (kv) { return convMetaItem(kv[0], kv[1]); }))], { icon: 'fa-circle-info' }));
+
+    const permKids = [];
+    if (cv.private) {
+      const opts = [{ value: '0', label: '跟随主群' }].concat((cv.permGroups || []).map(function (g) {
+        return { value: String(g.id), label: g.name + (g.is_default ? '（平台默认）' : '') };
+      }));
+      const sel = selectInput('perm_group', opts, cv.permOwn ? String(cv.permGroupId) : '0');
+      const savePerm = btn('保存权限组', 'btn-primary btn-sm', async function () {
+        try {
+          await api('convs/' + id + '/perm_group', { group: sel.value });
+          toast('权限组已保存');
+          paint();
+        } catch (e) { toast(e.message, 'err'); }
+      }, 'fa-floppy-disk');
+      permKids.push(div('conv-perm', [
+        el('span', { class: 'conv-perm-t', text: '这个私群的权限组' }),
+        sel,
+        savePerm,
+        el('span', { class: 'conv-perm-cur', text: '当前：' + (cv.permOwn ? (cv.permGroupName || '单独') : ('跟随主群（' + (cv.permGroupName || '默认权限组') + '）')) }),
+      ]));
+    } else {
+      permKids.push(div('conv-perm', [
+        el('span', { class: 'conv-perm-t', text: '权限组' }),
+        el('span', { class: 'conv-perm-cur', text: cv.permGroupName || '默认权限组' }),
+      ]));
+    }
+    const permMeta = cv.permMeta || [];
+    const chips = permMeta.map(function (m) {
+      const raw = String(m.key).split('.').pop();
+      const camel = raw.replace(/_([a-z])/g, function (_, c) { return c.toUpperCase(); });
+      const on = !!(cv.perm || {})[camel];
+      return el('span', { class: 'perm-chip ' + (on ? 'on' : 'off') }, [
+        icon(on ? 'fa-circle-check' : 'fa-circle-xmark'),
+        document.createTextNode(m.label || m.key),
+      ]);
+    });
+    if (chips.length) permKids.push(div('conv-perm-grid', chips));
+    box.append(card('权限组与群功能', permKids, { icon: 'fa-user-lock' }));
+
+    if (cv.notice) {
+      box.append(card('群公告', [
+        div('conv-notice-t', [document.createTextNode(cv.notice)]),
+        div('conv-notice-meta', [document.createTextNode((cv.noticeBy ? memberName(cv.noticeBy) : '') + (cv.noticeAt ? ' · ' + fmtDT(cv.noticeAt) : ''))]),
+      ], { icon: 'fa-bullhorn' }));
+    }
+
+    const memberRows = rows.map(function (m) {
+      return [
+        el('td', {}, [div('cell-name', [el('b', { text: m.name || ('#' + m.id) }), m.gone ? el('span', { class: 'badge muted', text: '已退出' }) : null])]),
+        el('td', { class: 'muted', text: m.username || '—' }),
+        el('td', {}, [m.kind === 'ai' ? badge('ai') : el('span', { class: 'muted', text: '人' })]),
+        el('td', {}, [m.role === 'owner' ? badge('admin', '群主') : (m.role === 'admin' ? badge('admin', '管理员') : el('span', { class: 'muted', text: '—' }))]),
+        el('td', { class: 'muted', text: m.joined ? fmtDT(m.joined) : '—' }),
+        el('td', { class: 'muted', text: m.invitedBy || '—' }),
+        el('td', { class: 'muted', text: m.lastRead ? ('#' + m.lastRead) : '—' }),
+      ];
+    });
+    box.append(card('成员 · ' + rows.length + ' 人', [
+      table(['名称', '用户名', '类型', '角色', '加入时间', '邀请人', '最后已读'], memberRows, '没有成员', 'fa-users'),
+    ], { icon: 'fa-users', flush: true }));
+
+    const info = div('conv-info', [
+      el('span', { class: 'conv-count', text: '最近 ' + msgs.length + ' 条' }),
+      btn('清空历史', 'btn-danger btn-sm', async function () {
+        if (!(await confirmBox('清空历史', '这个会话里的所有消息都会消失，成员和会话本身不动。', true))) return;
+        try {
+          const r = await api('convs/' + id + '/clear', {});
+          toast('已清空 ' + r.cleared + ' 条');
+          paint();
+        } catch (e) { toast(e.message, 'err'); }
+      }, 'fa-broom'),
+    ]);
+    const list = div('conv-msgs', []);
+    msgs.forEach(function (msg) {
+      const canDel = !msg.sys && !msg.recalled;
+      list.append(div('conv-msg' + (msg.sys ? ' sys' : ''), [
+        div('conv-msg-head', [
+          el('b', { text: msg.name || '?' }),
+          msg.kind === 'ai' ? badge('ai') : null,
+          el('span', { class: 'muted', text: fmtDT(msg.ts) }),
+          div('conv-msg-sp'),
+          canDel ? btn('删除', 'btn-ghost btn-sm', async function () {
+            if (!(await confirmBox('删除消息', '这条消息会从这个会话里消失，之后会留下一条系统提示。', true))) return;
+            try {
+              await api('messages/' + msg.id, { op: 'delete' });
+              toast('已删除');
+              paint();
+            } catch (e) { toast(e.message, 'err'); }
+          }, 'fa-trash-can') : null,
+        ]),
+        div('conv-msg-text', [document.createTextNode(adminMsgText(msg))]),
+      ]));
+    });
+    if (!msgs.length) list.append(div('adm-empty', [icon('fa-comments'), el('div', { text: '这个会话还没有消息' })]));
+    box.append(card('消息', [info, list], { icon: 'fa-comments' }));
   }
-  paint();
+  await paint();
 }
 
 // ---------------------------------------------------------------- 站点设置
@@ -2255,13 +2303,15 @@ async function boot() {
     S.scopes = o.scopes || [];
     buildShell();
     const want = (location.hash || '').replace('#', '');
-    const known = Object.keys(TITLES);
-    go(known.indexOf(want) >= 0 ? want : 'dashboard');
+    const route = splitPath(want);
+    go(RENDERERS[route.tab] ? route.tab : 'dashboard', route.arg);
     // 首屏渲染完再查更新，查到之后从右上角滑进来，不挡任何操作
     maybeUpdateToast();
     window.addEventListener('hashchange', function () {
       const t = (location.hash || '').replace('#', '');
-      if (t && t !== S.tab) go(t);
+      if (!t) return;
+      const route = splitPath(t);
+      if (route.tab !== S.tab || route.arg !== S.arg) go(RENDERERS[route.tab] ? route.tab : 'dashboard', route.arg);
     });
   } catch (e) {
     const msg = e.message || '';

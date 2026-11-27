@@ -493,3 +493,43 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
 .adm-switch-grid { display: flex; flex-wrap: wrap; gap: 9px 26px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }
 .adm-subhead { font-size: 12px; font-weight: 600; color: var(--text-dim); margin: 10px 0 0; }
 .adm-perm-keys { display: flex; flex-wrap: wrap; gap: 9px 26px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }
+
+/* ---------------------------------------------------------------- 会话审计弹窗 */
+.conv-view { display: flex; flex-direction: column; gap: 14px; }
+.conv-meta {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 18px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px;
+}
+.conv-meta-i { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px; }
+.conv-meta-l { color: var(--text-faint); flex: 0 0 auto; }
+.conv-meta-v { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-perm { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.conv-perm-t { font-size: 12.5px; color: var(--text-dim); }
+.conv-perm .adm-input { max-width: 240px; }
+.conv-perm-hint { margin: -4px 0 0; font-size: 12px; color: var(--text-faint); }
+.conv-notice { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: var(--surface-2); border-radius: 10px; }
+.conv-notice b { font-size: 12.5px; color: var(--text-dim); }
+.conv-notice-t { font-size: 12.5px; line-height: 1.7; color: var(--text-dim); white-space: pre-wrap; }
+.conv-sec b { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 8px; }
+.conv-members { display: flex; flex-wrap: wrap; gap: 8px; }
+.conv-member { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); font-size: 12.5px; }
+.conv-info { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.conv-info .conv-count { color: var(--text-faint); }
+.conv-info .btn { margin-left: auto; }
+.card-foot { padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+.adm-perm-groups { display: flex; flex-direction: column; gap: 16px; }
+
+/* ---------------------------------------------------------------- 会话审计子页 */
+.conv-audit-head { display: flex; align-items: flex-start; gap: 14px; }
+.conv-audit-title { min-width: 0; }
+.conv-audit-title .page-title { margin: 0 0 2px; font-size: 19px; }
+.conv-audit-title .page-desc { margin: 0; }
+.conv-audit .conv-meta { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.conv-audit .conv-msgs { max-height: none; }
+.conv-audit .card-body.flush { overflow-x: auto; }
+.conv-perm-cur { font-size: 12.5px; color: var(--text-dim); }
+.conv-perm-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.perm-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); color: var(--text-dim); background: var(--surface-2); }
+.perm-chip.on { color: #15803d; border-color: rgba(21,128,61,.28); background: rgba(21,128,61,.08); }
+.perm-chip.off { color: var(--text-faint); }
+.conv-notice-meta { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }

@@ -1156,17 +1156,50 @@ final class Admin {
         $isPg  = (string) $conv["kind"] === "pg";
         $people = self::convPeople($pdo, $conv);
 
-        // 私群成员带角色（群主/管理员/成员），大群和私聊没有角色
-        $memberRows = [];
+        // 成员明细：姓名、用户名、角色、加入时间、邀请人、最后已读
+        $roleRows = $isPg ? Conv::membersWithRole($pdo, $conv) : [];
+        $ids = $isPg
+            ? array_map(fn($m) => (int) ($m["memberId"] ?? 0), $roleRows)
+            : array_map(fn($m) => (int) $m["id"], $people);
+        $ids = array_values(array_filter($ids));
+        $prof = [];
+        if ($ids) {
+            $in = implode(",", array_fill(0, count($ids), "?"));
+            $q = $pdo->prepare("SELECT id, name, username, kind, created_at, last_read_id FROM members WHERE id IN ($in)");
+            $q->execute($ids);
+            foreach ($q->fetchAll() as $r) $prof[(int) $r["id"]] = $r;
+        }
+        $cm = [];
         if ($isPg) {
-            foreach (Conv::membersWithRole($pdo, $conv) as $m) {
+            $q = $pdo->prepare("SELECT member_id, last_read_id, invited_by FROM conv_members WHERE conv_id = ?");
+            $q->execute([(int) $conv["id"]]);
+            foreach ($q->fetchAll() as $r) $cm[(int) $r["member_id"]] = $r;
+        }
+        $nameOf = function (int $mid) use ($prof): string {
+            return (string) (($prof[$mid]["name"] ?? "") ?: "");
+        };
+        $memberRows = [];
+        foreach ($roleRows as $m) {
+            $mid = (int) ($m["memberId"] ?? 0);
+            $inv = (int) ($cm[$mid]["invited_by"] ?? 0);
+            $memberRows[] = [
+                "id" => $mid, "name" => (string) $m["name"], "username" => (string) ($prof[$mid]["username"] ?? ""),
+                "kind" => (string) $m["kind"], "role" => (string) $m["role"],
+                "joined" => (int) ($m["joined"] ?? 0), "invitedBy" => $inv > 0 ? $nameOf($inv) : "",
+                "lastRead" => (int) (($cm[$mid]["last_read_id"] ?? 0) ?: ($prof[$mid]["last_read_id"] ?? 0)),
+                "gone" => !empty($m["gone"]),
+            ];
+        }
+        if (!$isPg) {
+            foreach ($people as $m) {
+                $mid = (int) $m["id"];
                 $memberRows[] = [
-                    "id" => (int) ($m["memberId"] ?? 0), "name" => (string) $m["name"],
-                    "kind" => (string) $m["kind"], "role" => (string) $m["role"],
+                    "id" => $mid, "name" => (string) $m["name"], "username" => (string) ($prof[$mid]["username"] ?? ""),
+                    "kind" => (string) $m["kind"], "role" => "",
+                    "joined" => (int) ($prof[$mid]["created_at"] ?? 0), "invitedBy" => "",
+                    "lastRead" => (int) ($prof[$mid]["last_read_id"] ?? 0), "gone" => false,
                 ];
             }
-        } else {
-            foreach ($people as $m) $memberRows[] = ["id" => (int) $m["id"], "name" => $m["name"], "kind" => $m["kind"], "role" => ""];
         }
 
         $creator = "";
@@ -1189,6 +1222,11 @@ final class Admin {
         }
 
         $notice = $isPub ? (string) ($scope["notice"] ?? "") : ($isPg ? (string) ($conv["notice"] ?? "") : "");
+        $noticeAt = $isPub ? (int) ($scope["notice_at"] ?? 0) : ($isPg ? (int) ($conv["notice_at"] ?? 0) : 0);
+        $noticeBy = $isPub ? (int) ($scope["notice_by"] ?? 0) : ($isPg ? (int) ($conv["notice_by"] ?? 0) : 0);
+        $q = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE conv_id = ? AND deleted_at IS NULL");
+        $q->execute([(int) $conv["id"]]);
+        $msgCount = (int) $q->fetchColumn();
 
         // 回看一次就留一次痕（同一人同一会话一分钟内只写一条，免得刷新刷屏）
         self::auditMark($pdo, $conv, (int) $scope["id"], $role);
@@ -1209,7 +1247,12 @@ final class Admin {
                 "memberRows" => $memberRows,
                 "creator"    => $creator,
                 "createdAt"  => (int) ($conv["created_at"] ?? 0),
+                "lastAt"     => (int) ($conv["last_msg_at"] ?? 0),
+                "msgCount"   => $msgCount,
                 "notice"     => $notice,
+                "noticeAt"   => $noticeAt,
+                "noticeBy"   => $noticeBy,
+                "permMeta"   => Perm::meta(),
                 "permGroupId"   => $gid,
                 "permGroupName" => $gname !== "" ? $gname : "默认权限组",
                 "permOwn"       => (int) ($conv["perm_group_id"] ?? 0) > 0,
