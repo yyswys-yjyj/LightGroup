@@ -6,6 +6,7 @@ namespace LightGroup\Api;
 use LightGroup\Http\Json;
 use LightGroup\Store\MemberNames;
 use LightGroup\Store\Pruner;
+use LightGroup\Store\Files;
 use LightGroup\Web\Favicon;
 use LightGroup\Web\Site;
 use PDO;
@@ -569,6 +570,18 @@ final class Admin {
             "feature.social.scan"     => "int",
             "feature.social.qr"       => "int",
             "feature.social.discover" => "int",
+            // 文件传输：站点级开关与存储方式，群文件、私聊附件共用
+            "file.enabled"            => "int",
+            "file.max_mb"             => "int",
+            "file.attachments"        => "int",
+            "file.keep_days"          => "int",
+            "file.storage"            => "filestorage",
+            "file.s3.endpoint"        => "url",
+            "file.s3.bucket"          => "text",
+            "file.s3.region"          => "text",
+            "file.s3.key"             => "text",
+            "file.s3.secret"          => "secret",
+            "file.s3.prefix"          => "text",
         ];
         if ($method === "GET") {
             $out = [];
@@ -581,6 +594,11 @@ final class Admin {
             $out["msg.local"] = self::setting($pdo, "msg.local", "1");
             // 一页多少条：不配就是 20
             $out["msg.page_size"] = self::setting($pdo, "msg.page_size", "20");
+            // 文件传输：默认开、50MB、一条最多 3 个附件、永久保留、本地存储
+            foreach (["file.enabled" => "1", "file.max_mb" => "50", "file.attachments" => "3",
+                      "file.keep_days" => "0", "file.storage" => "local", "file.s3.region" => "auto"] as $fk => $fv) {
+                if (trim($out[$fk]) === "") $out[$fk] = $fv;
+            }
             // 密钥不回传明文：前端只显示「已配置」，留空保存表示不改
             $hasSecret = trim($out["oauth.client_secret"]) !== "";
             $out["oauth.client_secret"] = "";
@@ -593,6 +611,9 @@ final class Admin {
             // 语音转写的 Key 同理
             $hasSttKey = trim($out["stt.key"]) !== "";
             $out["stt.key"] = "";
+            // S3 的 Secret 同理
+            $hasFileS3 = trim($out["file.s3.secret"]) !== "";
+            $out["file.s3.secret"] = "";
             $callback = OAuth::callbackUrl($pdo);
             Json::ok([
                 "settings"      => $out,
@@ -603,6 +624,7 @@ final class Admin {
                 "mail_configured"    => Mailer::configured($pdo),
                 "mail_ready"         => Mailer::notifyOn($pdo),
                 "has_stt_key"        => $hasSttKey,
+                "has_file_s3_secret" => $hasFileS3,
                 "stt_ready"          => Stt::configured($pdo),
                 "mcp_url"            => Site::baseUrl() . "mcp",
                 "callback_url"  => $callback,
@@ -671,6 +693,8 @@ final class Admin {
                 }
             } elseif ($kind === "mcptransport") {
                 if (!in_array($v, ["both", "stream", "sse"], true)) Json::fail("MCP 连接方式只能是 both / stream / sse");
+            } elseif ($kind === "filestorage") {
+                if (!in_array($v, ["local", "db", "s3"], true)) Json::fail("文件存储只能是本地 / 二进制入库 / 对象存储");
             } elseif ($kind === "email") {
                 if ($v !== "" && !filter_var($v, FILTER_VALIDATE_EMAIL)) Json::fail("「" . $k . "」不是有效的邮箱地址");
             }
@@ -694,6 +718,23 @@ final class Admin {
             $changed[] = "oauth.enabled";
         }
         if (!$changed) Json::fail("没有要改的内容");
+        // 二进制入库与对象存储有硬条件，组合不对直接拒绝，不留半套配置
+        if (in_array("file.storage", $changed, true) || in_array("file.max_mb", $changed, true)
+            || in_array("file.s3.endpoint", $changed, true) || in_array("file.s3.bucket", $changed, true)
+            || in_array("file.s3.key", $changed, true) || in_array("file.s3.secret", $changed, true)) {
+            $fs = self::setting($pdo, "file.storage", "local");
+            $mx = (int) self::setting($pdo, "file.max_mb", "50");
+            if ($fs === "db" && $mx > 8) {
+                Json::fail("二进制入库最多 8MB，先把「文件大小上限」调到 8 或更小");
+            }
+            if ($fs === "s3") {
+                foreach (["endpoint", "bucket", "key", "secret"] as $sk) {
+                    if (self::setting($pdo, "file.s3." . $sk, "") === "") {
+                        Json::fail("用对象存储要把 endpoint、bucket、Access Key、Secret Key 都填上");
+                    }
+                }
+            }
+        }
         // 换了站点图标就顺手重建标签页图标，否则浏览器还是显示上一份 favicon.ico
         if (in_array("site.icon_light", $changed, true) || in_array("site.icon_dark", $changed, true)) {
             Favicon::rebuild(
@@ -1006,6 +1047,163 @@ final class Admin {
             return;
         }
 
+        $scopeRow = self::scopeRow($pdo, $role, $myScope, (int) $conv["scope_id"]);
+        if ($scopeRow === null) Json::fail("没有权限操作这个会话");
+        $adminMe = Session::member($pdo);
+        if ($adminMe === null) Json::fail("要登录后台才能操作");
+
+        // 广播：往这个会话里发一条系统提示（灰色居中，不算任何人说话）
+        if ($sub === "broadcast") {
+            $text = trim((string) self::in("text", ""));
+            if ($text === "") Json::fail("广播内容不能为空");
+            if (mb_strlen($text) > 500) Json::fail("广播最多 500 字");
+            Compat::systemMessage($pdo, (int) $conv["scope_id"], $convId, (int) $adminMe["id"], "【广播】" . $text);
+            self::log($pdo, "conv.broadcast", "会话 #" . $convId . " 广播");
+            Json::ok(["broadcast" => true]);
+            return;
+        }
+
+        // 群封禁：封了之后谁都不能发消息（群主/管理员也不行），解封由后台操作
+        if ($sub === "ban") {
+            $on = (string) self::in("on", "1") !== "0";
+            $pdo->prepare("UPDATE scopes SET banned = ? WHERE id = ?")->execute([$on ? 1 : 0, (int) $conv["scope_id"]]);
+            Compat::systemMessage(
+                $pdo,
+                (int) $conv["scope_id"],
+                $convId,
+                (int) $adminMe["id"],
+                $on ? "这个群已被管理员封禁，暂时不能发消息" : "这个群已解封"
+            );
+            self::noteAdmin($pdo, (int) $conv["scope_id"], $convId, $on ? "封禁了这个群" : "解除了这个群的封禁");
+            self::log($pdo, "conv.ban", "会话 #" . $convId . " " . ($on ? "封禁" : "解封"));
+            Json::ok(["banned" => $on]);
+            return;
+        }
+
+        // 群注销：大群注销整个作用域，私群解散会话；所有成员收到站内信
+        if ($sub === "dissolve") {
+            $now = lg_now();
+            $sid = (int) $conv["scope_id"];
+            $title = (int) $conv["is_public"] === 1
+                ? (string) $scopeRow["title"]
+                : ((string) (trim((string) ($conv["title"] ?? "")) !== "" ? $conv["title"] : "未命名群聊"));
+            if ((int) $conv["is_public"] === 1) {
+                $pdo->prepare("UPDATE scopes SET archived = 1 WHERE id = ?")->execute([$sid]);
+                $pdo->prepare("UPDATE conversations SET dissolved_at = ? WHERE scope_id = ? AND dissolved_at IS NULL")->execute([$now, $sid]);
+            } elseif ((string) $conv["kind"] === "pg") {
+                $pdo->prepare("UPDATE conversations SET dissolved_at = ? WHERE id = ? AND dissolved_at IS NULL")->execute([$now, $convId]);
+            } else {
+                Json::fail("私聊不能注销");
+            }
+            Compat::systemMessage($pdo, $sid, $convId, (int) $adminMe["id"], "管理员「" . (string) $adminMe["name"] . "」注销了这个群");
+            $ids = (int) $conv["is_public"] === 1
+                ? array_map(fn($r) => (int) $r["id"], $pdo->query("SELECT id FROM members WHERE scope_id = " . $sid . " AND deleted_at IS NULL")->fetchAll())
+                : Conv::memberIds($pdo, $conv);
+            foreach ($ids as $mid) {
+                Notices::pushToMember(
+                    $pdo,
+                    $mid,
+                    "group",
+                    "群已注销",
+                    "「" . $title . "」已被管理员注销，历史消息仍保留在审计里。",
+                    "",
+                    (int) $adminMe["id"]
+                );
+            }
+            self::log($pdo, "conv.dissolve", "注销会话 #" . $convId . "（" . $title . "）");
+            Json::ok(["dissolved" => true, "notified" => count($ids)]);
+            return;
+        }
+
+        // 私群成员管理：加人 / 移出 / 设管理员 / 转让群主
+        if ($sub === "member") {
+            if ((int) $conv["is_public"] === 1) Json::fail("大群的成员请到「群成员」页管理");
+            if ((string) $conv["kind"] !== "pg") Json::fail("私聊没有成员管理");
+            $op = (string) self::in("op", "");
+            $what = "";
+            if ($op === "add") {
+                $raw = self::in("ids", "[]");
+                $arr = is_array($raw) ? $raw : json_decode((string) $raw, true);
+                if (!is_array($arr)) $arr = [];
+                $ids = [];
+                foreach ($arr as $v) $ids[] = (int) $v;
+                $ids = array_values(array_unique(array_filter($ids, fn($v) => $v > 0)));
+                if (!$ids) Json::fail("要加谁");
+                $in = implode(",", array_fill(0, count($ids), "?"));
+                $st = $pdo->prepare("SELECT id, name FROM members WHERE id IN ($in) AND scope_id = ? AND deleted_at IS NULL");
+                $st->execute([...$ids, (int) $conv["scope_id"]]);
+                $okRows = $st->fetchAll();
+                if (count($okRows) !== count($ids)) Json::fail("成员不存在或已注销");
+                $added = [];
+                foreach ($okRows as $r) {
+                    $mid = (int) $r["id"];
+                    if (Conv::roleIn($pdo, $convId, $mid) !== "") continue;
+                    Conv::addMember($pdo, $convId, $mid, (int) $adminMe["id"]);
+                    $added[] = (string) $r["name"];
+                }
+                $what = "把「" . implode("」「", $added) . "」拉进了这个群";
+            } elseif ($op === "remove") {
+                $mid = (int) self::in("member", "0");
+                if ($mid <= 0) Json::fail("要移出谁");
+                $r = Conv::roleIn($pdo, $convId, $mid);
+                if ($r === "") Json::fail("这个人不在这个群");
+                if ($r === "owner") Json::fail("群主要先转让才能移出");
+                Conv::removeMember($pdo, $convId, $mid);
+                $what = "把「" . Conv::nameOf($pdo, $mid) . "」移出了这个群";
+            } elseif ($op === "role") {
+                $mid = (int) self::in("member", "0");
+                $roleTo = (string) self::in("role", "member");
+                if ($mid <= 0) Json::fail("要设置谁");
+                if ($roleTo !== "admin" && $roleTo !== "member") Json::fail("角色只能是管理员或成员");
+                $r = Conv::roleIn($pdo, $convId, $mid);
+                if ($r === "") Json::fail("这个人不在这个群");
+                if ($r === "owner") Json::fail("群主的角色不能这样改，请用转让群主");
+                Conv::setRole($pdo, $convId, $mid, $roleTo);
+                $what = ($roleTo === "admin" ? "把「" : "撤销了「") . Conv::nameOf($pdo, $mid) . "」的管理员";
+            } elseif ($op === "owner") {
+                $mid = (int) self::in("member", "0");
+                if ($mid <= 0) Json::fail("要转让给谁");
+                if (Conv::roleIn($pdo, $convId, $mid) === "") Json::fail("这个人不在这个群");
+                $old = Conv::roleIn($pdo, $convId, (int) $adminMe["id"]);
+                if ($old === "owner" && $mid === (int) $adminMe["id"]) Json::fail("你已经是群主了");
+                Conv::setRole($pdo, $convId, $mid, "owner");
+                // 原来的群主降成管理员
+                $st = $pdo->prepare("SELECT member_id FROM conv_members WHERE conv_id = ? AND role = 'owner' AND member_id <> ?");
+                $st->execute([$convId, $mid]);
+                foreach ($st->fetchAll() as $r) Conv::setRole($pdo, $convId, (int) $r["member_id"], "admin");
+                $what = "把群主转让给了「" . Conv::nameOf($pdo, $mid) . "」";
+            } else {
+                Json::fail("未知操作");
+            }
+            self::noteAdmin($pdo, (int) $conv["scope_id"], $convId, $what);
+            self::log($pdo, "conv.member", "会话 #" . $convId . " " . $what);
+            Json::ok(["ok" => true]);
+            return;
+        }
+
+        // 禁言：群主能禁言管理员，管理员只能禁言普通成员；全员禁言只有群主/超管能开
+        if ($sub === "mute") {
+            $mid = (int) self::in("member", "0");
+            $minutes = (int) self::in("minutes", "0");
+            if ($minutes < 0) $minutes = 0;
+            if ($minutes > 43200) $minutes = 43200;
+            $until = $minutes > 0 ? lg_now() + $minutes * 60 * 1000 : 0;
+            Moderation::mute($pdo, $scopeRow, $conv, $mid, $until, $adminMe);
+            self::log($pdo, "conv.mute", "会话 #" . $convId . " 禁言 " . $mid . " -> " . $until);
+            Json::ok(["muteUntil" => $until]);
+            return;
+        }
+        if ($sub === "mute_all") {
+            $on = (string) self::in("on", "1") !== "0";
+            $minutes = (int) self::in("minutes", "60");
+            if ($minutes <= 0) $minutes = 60;
+            $until = $on ? lg_now() + $minutes * 60 * 1000 : 0;
+            Moderation::muteAll($pdo, $scopeRow, $conv, $until, $adminMe);
+            self::log($pdo, "conv.mute_all", "会话 #" . $convId . " 全员禁言 -> " . $until);
+            Json::ok(["wholeMuteUntil" => $until]);
+            return;
+        }
+
         if ($sub === "clear") {
             $now = lg_now();
             $st = $pdo->prepare("UPDATE messages SET deleted_at = ?, deleted_by = 0 WHERE conv_id = ? AND deleted_at IS NULL");
@@ -1165,13 +1363,13 @@ final class Admin {
         $prof = [];
         if ($ids) {
             $in = implode(",", array_fill(0, count($ids), "?"));
-            $q = $pdo->prepare("SELECT id, name, username, kind, created_at, last_read_id FROM members WHERE id IN ($in)");
+            $q = $pdo->prepare("SELECT id, name, username, kind, created_at, last_read_id, mute_until FROM members WHERE id IN ($in)");
             $q->execute($ids);
             foreach ($q->fetchAll() as $r) $prof[(int) $r["id"]] = $r;
         }
         $cm = [];
         if ($isPg) {
-            $q = $pdo->prepare("SELECT member_id, last_read_id, invited_by FROM conv_members WHERE conv_id = ?");
+            $q = $pdo->prepare("SELECT member_id, last_read_id, invited_by, mute_until FROM conv_members WHERE conv_id = ?");
             $q->execute([(int) $conv["id"]]);
             foreach ($q->fetchAll() as $r) $cm[(int) $r["member_id"]] = $r;
         }
@@ -1187,6 +1385,7 @@ final class Admin {
                 "kind" => (string) $m["kind"], "role" => (string) $m["role"],
                 "joined" => (int) ($m["joined"] ?? 0), "invitedBy" => $inv > 0 ? $nameOf($inv) : "",
                 "lastRead" => (int) (($cm[$mid]["last_read_id"] ?? 0) ?: ($prof[$mid]["last_read_id"] ?? 0)),
+                "muteUntil" => (int) (($cm[$mid]["mute_until"] ?? 0) ?: 0),
                 "gone" => !empty($m["gone"]),
             ];
         }
@@ -1197,7 +1396,8 @@ final class Admin {
                     "id" => $mid, "name" => (string) $m["name"], "username" => (string) ($prof[$mid]["username"] ?? ""),
                     "kind" => (string) $m["kind"], "role" => "",
                     "joined" => (int) ($prof[$mid]["created_at"] ?? 0), "invitedBy" => "",
-                    "lastRead" => (int) ($prof[$mid]["last_read_id"] ?? 0), "gone" => false,
+                    "lastRead" => (int) ($prof[$mid]["last_read_id"] ?? 0),
+                    "muteUntil" => (int) ($prof[$mid]["mute_until"] ?? 0), "gone" => false,
                 ];
             }
         }
@@ -1220,6 +1420,17 @@ final class Admin {
         foreach (Perm::groups($pdo, (int) $conv["scope_id"], $role === "super") as $g) {
             $groups[] = ["id" => (int) $g["id"], "name" => (string) $g["name"], "is_default" => (bool) $g["is_default"]];
         }
+
+        $me = Session::member($pdo);
+        $myRole = $me === null ? "none" : Moderation::convRole($pdo, $scope, $conv, $me);
+        $ownerId = (int) ($scope["owner_id"] ?? 0);
+        $ownerName = "";
+        if ($ownerId > 0) {
+            $q = $pdo->prepare("SELECT name FROM members WHERE id = ? LIMIT 1");
+            $q->execute([$ownerId]);
+            $ownerName = (string) ($q->fetchColumn() ?: "");
+        }
+        $wholeMute = $isPub ? (int) ($scope["whole_mute_until"] ?? 0) : (int) ($conv["whole_mute_until"] ?? 0);
 
         $notice = $isPub ? (string) ($scope["notice"] ?? "") : ($isPg ? (string) ($conv["notice"] ?? "") : "");
         $noticeAt = $isPub ? (int) ($scope["notice_at"] ?? 0) : ($isPg ? (int) ($conv["notice_at"] ?? 0) : 0);
@@ -1258,6 +1469,12 @@ final class Admin {
                 "permOwn"       => (int) ($conv["perm_group_id"] ?? 0) > 0,
                 "perm"          => Perm::forClientConv($pdo, $conv),
                 "permGroups"    => $groups,
+                "banned"        => (int) ($scope["banned"] ?? 0) === 1,
+                "archived"      => (int) ($scope["archived"] ?? 0) === 1,
+                "ownerId"       => $ownerId,
+                "ownerName"     => $ownerName,
+                "wholeMuteUntil" => $wholeMute,
+                "myRole"        => $myRole,
             ],
             "msgs" => $msgs,
             "now"  => lg_now(),

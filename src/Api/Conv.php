@@ -162,7 +162,7 @@ final class Conv {
     /** 会话的最后一条消息摘要，给会话列表用 */
     public static function lastLine(PDO $pdo, array $conv, ?array $convIds = null): ?array {
         $cid = (int) $conv["id"];
-        $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.voice, m.deleted_at, m.sys, u.name, u.id AS uid"
+        $sql = "SELECT m.id, m.ts_ms, m.text, m.img, m.voice, m.segs, m.deleted_at, m.sys, u.name, u.id AS uid"
             . " FROM messages m LEFT JOIN members u ON u.id = m.member_id";
         $args = [];
         if ($convIds !== null && count($convIds) > 1) {
@@ -183,6 +183,7 @@ final class Conv {
         if (!empty($row["deleted_at"])) $text = "[已撤回]";
         elseif ($text === "" && !empty($row["voice"])) $text = "[语音]";
         elseif ($text === "" && !empty($row["img"])) $text = "[图片]";
+        elseif ($text === "" && !empty($row["segs"]) && str_contains((string) $row["segs"], '"file"')) $text = "[文件]";
         // 系统提示不算谁说的话，摘要前面加个标记，别给会话列表带上人名
         $isSys = !empty($row["sys"]);
         if ($isSys) $text = "[系统] " . $text;

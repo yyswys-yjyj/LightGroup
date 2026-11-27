@@ -977,7 +977,7 @@ export function emit(ev, data) {
 
 // ---------- 路由 ----------
 // #/c/<id>  #/friends  #/groups  #/pg/<id>  #/members  #/me  #/appearance
-const PAGES = ['chat', 'friends', 'groups', 'members', 'me', 'appearance', 'space', 'scan', 'more', 'discover'];
+const PAGES = ['chat', 'friends', 'groups', 'members', 'me', 'appearance', 'space', 'scan', 'more', 'discover', 'notices'];
 
 export function parseRoute() {
   const raw = (location.hash || '').replace(/^#\/?/, '');

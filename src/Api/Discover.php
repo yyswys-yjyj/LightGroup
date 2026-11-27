@@ -25,6 +25,13 @@ final class Discover {
         $me = Compat::requireMemberPublic($pdo);
         if (!Features::social($pdo, "discover")) Json::fail("本站没有开放「发现」", 403);
 
+        // 搜索：按 ID（h_12 / 12）、用户名、昵称、邮箱找同群的人
+        $q = trim((string) Input::get("q"));
+        if ($q !== "") {
+            self::search($pdo, $scope, $me, $q);
+            return;
+        }
+
         $st = $pdo->prepare(
             "SELECT id, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
             . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
@@ -89,8 +96,21 @@ final class Discover {
         });
         $items = array_slice($items, 0, self::LIMIT);
 
+        // 猜你想了解：同群最近活跃的人，去掉已经在匹配结果里的
+        $seen = [];
+        foreach ($items as $it) $seen[(int) $it["id"]] = true;
+        $suggest = [];
+        foreach ($rows as $r) {
+            $mid = (int) $r["id"];
+            if (isset($seen[$mid])) continue;
+            $suggest[] = self::brief($r);
+            if (count($suggest) >= 8) break;
+        }
+
         Json::ok([
-            "items" => $items,
+            "mode"    => "match",
+            "items"   => $items,
+            "suggest" => $suggest,
             // 自己的资料越全，匹配越准：前端据此提示去补资料
             "mine"  => [
                 "age"       => $myAge,
@@ -100,6 +120,52 @@ final class Discover {
                 "complete"  => ($myAge > 0 ? 1 : 0) + (count($myTags) > 0 ? 1 : 0) + ($mySex !== "" ? 1 : 0) + (trim((string) ($me["signature"] ?? "")) !== "" ? 1 : 0),
             ],
         ]);
+    }
+
+    /** 按 ID / 用户名 / 昵称 / 邮箱精确或前缀找人（只找同群、未注销、未封禁的人） */
+    private static function search(PDO $pdo, array $scope, array $me, string $q): void {
+        if (mb_strlen($q) > 60) Json::fail("搜索词太长");
+        $sid = (int) $scope["id"];
+        $raw = strtolower(ltrim($q, "@"));
+        $num = 0;
+        if (preg_match('/^(?:h_)?(\d+)$/', $raw, $m)) $num = (int) $m[1];
+
+        $like = "%" . $q . "%";
+        $st = $pdo->prepare(
+            "SELECT id, name, username, kind, avatar, bio, bio_mode, tags, birthday, gender, signature, discover, last_seen_at"
+            . " FROM members WHERE scope_id = ? AND kind = 'human' AND id <> ?"
+            . " AND (deleted_at IS NULL OR deleted_at = 0) AND banned = 0"
+            . " AND (id = ? OR LOWER(username) = ? OR LOWER(username) LIKE ? OR name LIKE ? OR LOWER(email) = ?)"
+            . " ORDER BY last_seen_at DESC LIMIT 30"
+        );
+        $st->execute([$sid, (int) $me["id"], $num, $raw, $raw . "%", $like, $raw]);
+        $rows = $st->fetchAll();
+
+        $items = [];
+        foreach ($rows as $r) {
+            $it = self::brief($r);
+            $it["score"] = 0;
+            $it["why"] = ["搜索命中"];
+            $items[] = $it;
+        }
+        Json::ok(["mode" => "search", "q" => $q, "items" => $items, "total" => count($items)]);
+    }
+
+    /** 列表里用的精简资料（搜索与「猜你想了解」共用） */
+    private static function brief(array $r): array {
+        return [
+            "id"        => (int) $r["id"],
+            "uid"       => "h_" . (int) $r["id"],
+            "name"      => (string) $r["name"],
+            "username"  => (string) ($r["username"] ?? $r["name"]),
+            "avatar"    => (string) ($r["avatar"] ?? ""),
+            "signature" => (string) ($r["signature"] ?? ""),
+            "tags"      => self::tagsOf($r),
+            "age"       => self::ageOf((string) ($r["birthday"] ?? "")),
+            "gender"    => strtolower((string) ($r["gender"] ?? "")),
+            "bio"       => mb_substr((string) ($r["bio"] ?? ""), 0, 60),
+            "last_seen" => (int) ($r["last_seen_at"] ?? 0),
+        ];
     }
 
     private static function tagsOf(array $m): array {

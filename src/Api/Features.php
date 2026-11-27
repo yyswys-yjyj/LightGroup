@@ -101,6 +101,8 @@ final class Features {
                 "api" => self::on($pdo, "adapter.api"),
             ],
             "mcpTransport" => self::transport($pdo),
+            // 文件传输：客户端据此决定要不要显示附件按钮、限制多大
+            "files"     => \LightGroup\Store\Files::site($pdo),
             "space"     => [
                 "enabled" => self::on($pdo, "space"),
                 "post"    => self::on($pdo, "space.post"),

@@ -1743,6 +1743,13 @@ function convMetaItem(label, value) {
 /** 会话审计详情：独立子页 #/convs/<id>，信息面板放全，不再用弹窗 */
 async function renderConvAudit(box, id) {
   box.classList.add('conv-audit');
+  async function act(path, body, okMsg) {
+    try {
+      await api('convs/' + id + '/' + path, body || {});
+      toast(okMsg || '已完成');
+      await paint();
+    } catch (e) { toast(e.message, 'err'); }
+  }
   async function paint() {
     box.innerHTML = '';
     box.append(loading());
@@ -1786,6 +1793,43 @@ async function renderConvAudit(box, id) {
       ['消息数', String(cv.msgCount === undefined ? msgs.length : cv.msgCount)],
     ];
     box.append(card('基本信息', [div('conv-meta', metaPairs.map(function (kv) { return convMetaItem(kv[0], kv[1]); }))], { icon: 'fa-circle-info' }));
+
+    // 管理：广播、群封禁、全员禁言、群注销；每个动作都会在会话里留一条系统提示
+    const modKids = [];
+    const bcTa = el('textarea', { class: 'adm-input conv-bc', rows: '2', placeholder: '广播内容，会以系统提示发到这个会话' });
+    modKids.push(div('conv-mod-row', [
+      bcTa,
+      btn('发送广播', 'btn-primary btn-sm', async function () {
+        if (!bcTa.value.trim()) { toast('先写点什么', 'err'); return; }
+        await act('broadcast', { text: bcTa.value.trim() }, '广播已发出');
+      }, 'fa-bullhorn'),
+    ]));
+    const banned = !!cv.banned;
+    const wmUntil = Number(cv.wholeMuteUntil || 0);
+    const modBtns = [];
+    modBtns.push(btn(banned ? '解除群封禁' : '封禁这个群', banned ? 'btn-ghost btn-sm' : 'btn-danger btn-sm', async function () {
+      if (!banned && !(await confirmBox('封禁这个群', '封禁后所有人都不能发消息，群主和管理员也不行。', true))) return;
+      await act('ban', { on: banned ? '0' : '1' }, banned ? '已解除封禁' : '已封禁');
+    }, banned ? 'fa-lock-open' : 'fa-lock'));
+    modBtns.push(btn(wmUntil ? '解除全员禁言' : '全员禁言', 'btn-ghost btn-sm', async function () {
+      if (wmUntil) { await act('mute_all', { on: '0' }, '已解除全员禁言'); return; }
+      const min = textInput('mute_all_minutes', '60', '分钟');
+      const mm = modal('全员禁言', [field('禁言时长（分钟）', min, '到点自动解除；群主和超管不受影响')], [
+        btn('取消', 'btn-ghost', function () { mm.close(); }),
+        btn('开启', 'btn-danger', function () { mm.close(); act('mute_all', { on: '1', minutes: min.value }, '已开启全员禁言'); }),
+      ]);
+    }, 'fa-volume-xmark'));
+    modBtns.push(btn('注销这个群', 'btn-danger btn-sm', async function () {
+      const tip = cv.isPublic
+        ? '整个群会被注销，所有成员都会收到站内信，历史消息仍保留在审计里。'
+        : '这个群会解散，成员都会收到站内信，历史消息仍保留在审计里。';
+      if (!(await confirmBox('注销这个群', tip, true))) return;
+      await act('dissolve', {}, '已注销');
+    }, 'fa-trash-can'));
+    modKids.push(div('conv-mod-acts', modBtns));
+    if (banned) modKids.push(el('p', { class: 'conv-mod-tip', text: '这个群已被封禁，所有人都不能发消息。' }));
+    if (wmUntil) modKids.push(el('p', { class: 'conv-mod-tip', text: '全员禁言到 ' + fmtDT(wmUntil) + '。' }));
+    box.append(card('管理', modKids, { icon: 'fa-gavel' }));
 
     const permKids = [];
     if (cv.private) {
@@ -1833,18 +1877,46 @@ async function renderConvAudit(box, id) {
     }
 
     const memberRows = rows.map(function (m) {
+      const muted = Number(m.muteUntil || 0) > Date.now();
+      const acts = [];
+      acts.push(btn(muted ? '解禁' : '禁言', 'btn-ghost btn-sm', function () {
+        const min = textInput('mute_minutes', '60', '分钟');
+        const mm = modal((muted ? '解除禁言「' : '禁言「') + (m.name || ('#' + m.id)) + '」', [
+          field('时长（分钟）', min, muted ? '填 0 解除禁言' : '0 表示解除；最长 43200 分钟'),
+        ], [
+          btn('取消', 'btn-ghost', function () { mm.close(); }),
+          btn('确定', 'btn-primary', function () { mm.close(); act('mute', { member: m.id, minutes: min.value }, '已更新禁言'); }),
+        ]);
+      }));
+      if (cv.private && !cv.dissolved) {
+        if (m.role !== 'owner') {
+          acts.push(btn('移出', 'btn-ghost btn-sm', async function () {
+            if (!(await confirmBox('移出成员', '把「' + (m.name || '') + '」移出这个群？', true))) return;
+            await act('member', { op: 'remove', member: m.id }, '已移出');
+          }));
+          if (m.role === 'admin') {
+            acts.push(btn('取消管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'member' }, '已取消管理员'); }));
+          } else {
+            acts.push(btn('设管理员', 'btn-ghost btn-sm', function () { act('member', { op: 'role', member: m.id, role: 'admin' }, '已设为管理员'); }));
+          }
+          acts.push(btn('转让群主', 'btn-ghost btn-sm', async function () {
+            if (!(await confirmBox('转让群主', '把群主转给「' + (m.name || '') + '」？你自己会变成管理员。', true))) return;
+            await act('member', { op: 'owner', member: m.id }, '已转让群主');
+          }));
+        }
+      }
       return [
         el('td', {}, [div('cell-name', [el('b', { text: m.name || ('#' + m.id) }), m.gone ? el('span', { class: 'badge muted', text: '已退出' }) : null])]),
         el('td', { class: 'muted', text: m.username || '—' }),
         el('td', {}, [m.kind === 'ai' ? badge('ai') : el('span', { class: 'muted', text: '人' })]),
         el('td', {}, [m.role === 'owner' ? badge('admin', '群主') : (m.role === 'admin' ? badge('admin', '管理员') : el('span', { class: 'muted', text: '—' }))]),
-        el('td', { class: 'muted', text: m.joined ? fmtDT(m.joined) : '—' }),
-        el('td', { class: 'muted', text: m.invitedBy || '—' }),
+        el('td', {}, [muted ? el('span', { class: 'badge danger', text: '禁言到 ' + fmtDT(m.muteUntil) }) : el('span', { class: 'muted', text: '—' })]),
         el('td', { class: 'muted', text: m.lastRead ? ('#' + m.lastRead) : '—' }),
+        el('td', {}, [div('conv-row-acts', acts)]),
       ];
     });
     box.append(card('成员 · ' + rows.length + ' 人', [
-      table(['名称', '用户名', '类型', '角色', '加入时间', '邀请人', '最后已读'], memberRows, '没有成员', 'fa-users'),
+      table(['名称', '用户名', '类型', '角色', '禁言', '最后已读', '操作'], memberRows, '没有成员', 'fa-users'),
     ], { icon: 'fa-users', flush: true }));
 
     const info = div('conv-info', [
@@ -2005,6 +2077,63 @@ async function renderSettings(box) {
     div('form-foot', [pruneNowBtn]),
   ], { icon: 'fa-box-archive' }));
 
+  // ---- 文件传输：群文件与私聊附件共用这套站点策略 ----
+  const fFileOn = el('input', { type: 'checkbox', checked: String(st['file.enabled'] || '1') !== '0' });
+  const fFileMax = textInput('file.max_mb', st['file.max_mb'] || '50', '1-2048，默认 50', 'number');
+  const fFileAtt = textInput('file.attachments', st['file.attachments'] || '3', '1-9，默认 3', 'number');
+  const fFileKeep = textInput('file.keep_days', st['file.keep_days'] || '0', '0 表示永久保留', 'number');
+  const fFileStore = selectInput('file.storage', [
+    { value: 'local', label: '本地存储（数据目录 files/）' },
+    { value: 'db', label: '二进制入库' },
+    { value: 's3', label: 'S3 对象存储' },
+  ], String(st['file.storage'] || 'local'));
+  const fS3Endpoint = textInput('file.s3.endpoint', st['file.s3.endpoint'] || '', 'https://<account>.r2.cloudflarestorage.com');
+  const fS3Bucket = textInput('file.s3.bucket', st['file.s3.bucket'] || '', '桶名');
+  const fS3Region = textInput('file.s3.region', st['file.s3.region'] || 'auto', 'R2 填 auto，AWS 填所在区域');
+  const fS3Key = textInput('file.s3.key', st['file.s3.key'] || '', 'Access Key ID');
+  const fS3Secret = textInput('file.s3.secret', '', d.has_file_s3_secret ? '已经存过，留空不修改' : 'Secret Access Key', 'password');
+  const fS3Prefix = textInput('file.s3.prefix', st['file.s3.prefix'] || '', '可选，例如 lightgroup');
+  const fileWarn = el('p', {
+    class: 'field-hint',
+    style: 'color:#b91c1c;margin:0',
+    text: '二进制入库会把整段文件写进数据库，消息表会明显变慢：文件上限必须压到 8MB 以内。',
+  });
+  const s3Box = div('form-grid', [
+    div('span2', [field('Endpoint', fS3Endpoint)]),
+    field('Bucket', fS3Bucket),
+    field('Region', fS3Region),
+    field('Access Key', fS3Key),
+    field('Secret Key', fS3Secret),
+    div('span2', [field('对象前缀（可选）', fS3Prefix)]),
+  ]);
+  function paintFileStore() {
+    const v = fFileStore.value;
+    fileWarn.style.display = v === 'db' ? '' : 'none';
+    s3Box.style.display = v === 's3' ? '' : 'none';
+  }
+  fFileStore.addEventListener('change', paintFileStore);
+  paintFileStore();
+  const fileForm = el('form', { class: 'adm-form' }, [
+    div('oauth-switches', [
+      el('label', { class: 'switch' }, [fFileOn, el('span', { text: '开放文件传输' })]),
+    ]),
+    div('form-grid', [
+      field('单个文件上限（MB）', fFileMax, '1-2048，默认 50'),
+      field('一条消息最多几个附件', fFileAtt, '1-9，默认 3'),
+      field('文件保留天数', fFileKeep, '0 表示永久保留；到期由站点自己清理'),
+    ]),
+    div('form-grid', [field('存储方式', fFileStore)]),
+    fileWarn,
+    s3Box,
+  ]);
+  box.append(card('文件传输', [
+    fileForm,
+    div('hint', [
+      el('p', { text: '群文件与私聊附件共用这套设置；文本超过一万字时客户端会转成 txt 文件再发。' }),
+      el('p', { text: '下载走 /g/api/file/<id>，只有同群、且在这个会话里的人能取。' }),
+    ]),
+  ], { icon: 'fa-paperclip' }));
+
   // ---- 语音转文字：站内没有识别引擎，得把音频交给外部 OpenAI 兼容接口 ----
   const fSttOn = el('input', { type: 'checkbox', checked: String(st['stt.enabled'] || '0') === '1' });
   const fSttUrl = textInput('stt.url', st['stt.url'] || '', 'https://api.openai.com/v1/audio/transcriptions');
@@ -2137,6 +2266,17 @@ async function renderSettings(box) {
           'msg.keep_per_conv': fKeepPer.value.trim() || '0',
           'msg.page_size': fKeepPage.value.trim() || '20',
           'msg.local': fMsgLocal.checked ? '1' : '0',
+          'file.enabled': fFileOn.checked ? '1' : '0',
+          'file.max_mb': fFileMax.value.trim() || '50',
+          'file.attachments': fFileAtt.value.trim() || '3',
+          'file.keep_days': fFileKeep.value.trim() || '0',
+          'file.storage': fFileStore.value,
+          'file.s3.endpoint': fS3Endpoint.value.trim(),
+          'file.s3.bucket': fS3Bucket.value.trim(),
+          'file.s3.region': fS3Region.value.trim() || 'auto',
+          'file.s3.key': fS3Key.value.trim(),
+          'file.s3.secret': fS3Secret.value,
+          'file.s3.prefix': fS3Prefix.value.trim(),
         });
         toast('设置已保存');
         go('settings');

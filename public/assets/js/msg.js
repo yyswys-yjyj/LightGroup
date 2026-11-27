@@ -133,7 +133,9 @@ export function msgNode(m, prev) {
       const box = h('div', 'txt rich');
       segs.forEach(function (sg) {
         if (!sg) return;
-        if (sg.t === 'img') {
+        if (sg.t === 'file') {
+          box.appendChild(fileCard(sg));
+        } else if (sg.t === 'img') {
           const src = imgSrc(sg.v);
           const im = document.createElement('img');
           im.className = 'pic inline';
@@ -181,6 +183,28 @@ export function msgNode(m, prev) {
   row.appendChild(body);
   row.addEventListener('contextmenu', function (e) { e.preventDefault(); msgMenu(m, e.clientX, e.clientY); });
   return row;
+}
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+function fileCard(f) {
+  const a = document.createElement('a');
+  a.className = 'file-card';
+  a.href = relUrl(f.url || ('/g/api/file/' + f.id));
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.download = f.n || '';
+  a.appendChild(icon('fa-file-arrow-down'));
+  const t = h('span', 'file-card-t');
+  t.appendChild(h('b', '', f.n || '文件'));
+  t.appendChild(h('span', 'file-card-s', fmtBytes(f.s)));
+  a.appendChild(t);
+  return a;
 }
 
 // 语音：原生播放器在不同主题下太丑，自己画一个胶囊
@@ -562,6 +586,7 @@ export function previewText(m) {
   if (!m) return '';
   const t = displayText(m);
   if (t) return t;
+  if (Array.isArray(m.segs) && m.segs.some(function (s) { return s && s.t === 'file'; })) return '[文件]';
   if (m.img) return '[图片]';
   if (m.voice) return m.dur ? '[语音 ' + m.dur + '"]' : '[语音]';
   if (m.card) return '[卡片]';

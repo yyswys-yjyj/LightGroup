@@ -14,6 +14,7 @@ import * as space from './space.js';
 import * as pg from './pg.js';
 import * as more from './more.js';
 import * as discover from './discover.js';
+import * as notices from './notices.js';
 import { trimTotal, setServerAllowed } from './store.js';
 
 const APP = document.getElementById('app');
@@ -111,8 +112,8 @@ function fillRail() {
   const ct = railTab('contacts', '联系人', 'fa-user-group', S.page === 'friends' || S.page === 'members');
   if (people.pendingCount() > 0) ct.appendChild(h('span', 'req-badge', String(people.pendingCount())));
   rail.appendChild(ct);
-  const st = railTab('space', '更多', 'fa-ellipsis', S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover');
-  if (space.unreadCount() > 0) st.appendChild(h('span', 'req-badge', String(space.unreadCount())));
+  const st = railTab('space', '更多', 'fa-ellipsis', S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover' || S.page === 'notices');
+  if (notices.unreadCount() > 0) st.appendChild(h('span', 'req-badge', String(notices.unreadCount())));
   rail.appendChild(st);
   // 「个人」只在手机上出现，桌面有左上角头像按钮
   rail.appendChild(railTab('me', '个人', 'fa-user', S.page === 'me' || S.page === 'appearance'));
@@ -126,7 +127,7 @@ function refreshRailState() {
   const on = {
     chat: S.page === 'chat',
     contacts: S.page === 'friends' || S.page === 'members',
-    space: S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover',
+    space: S.page === 'more' || S.page === 'space' || S.page === 'scan' || S.page === 'discover' || S.page === 'notices',
     me: S.page === 'me' || S.page === 'appearance',
   };
   rail.querySelectorAll('.rail-tab').forEach(function (b) {
@@ -145,9 +146,9 @@ function refreshRailState() {
   const st = rail.querySelector('.rail-tab[data-key="space"]');
   if (st) {
     const sd = st.querySelector('.req-badge');
-    if (space.unreadCount() > 0) {
-      if (!sd) st.appendChild(h('span', 'req-badge', String(space.unreadCount())));
-      else sd.textContent = String(space.unreadCount());
+    if (notices.unreadCount() > 0) {
+      if (!sd) st.appendChild(h('span', 'req-badge', String(notices.unreadCount())));
+      else sd.textContent = String(notices.unreadCount());
     } else if (sd) {
       sd.remove();
     }
@@ -224,6 +225,7 @@ function renderRoute() {
     else if (r.page === 'members') people.renderMembers(host);
     else if (r.page === 'more') more.renderMore(host);
     else if (r.page === 'discover') discover.renderDiscover(host);
+    else if (r.page === 'notices') notices.renderNotices(host);
     else if (r.page === 'space') space.renderSpace(host);
     else if (r.page === 'scan') space.renderScan(host);
     else if (r.page === 'me') me.renderProfile(host);
@@ -315,8 +317,8 @@ async function bootChat() {
   await conv.load();
   await people.loadFriends();
   startFriendPoll();
-  space.refreshUnread().then(function () { refreshRailState(); });
-  setInterval(function () { if (!document.hidden) space.refreshUnread().then(function () { refreshRailState(); }); }, 20000);
+  notices.refreshUnread().then(function () { refreshRailState(); });
+  setInterval(function () { if (!document.hidden) notices.refreshUnread().then(function () { refreshRailState(); }); }, 20000);
 
   // 默认落到公开大群；显式带了会话 id 就听 url 的
   // 但 #/u/<uid> 是用户资料页，profile.js 自己接管，这里不能把 hash 改回群聊，

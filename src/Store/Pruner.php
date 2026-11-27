@@ -46,13 +46,18 @@ final class Pruner
         try {
             $last = (int) self::setting($pdo, self::LAST_RUN, "0");
             if ($last > 0 && time() - $last < self::INTERVAL) return;
-            if (!self::hasPolicy($pdo)) {
-                self::touch($pdo);
-                return;
+            // 消息剪枝：没配保留策略就一条都不动
+            if (self::hasPolicy($pdo)) {
+                self::run($pdo);
             }
-            self::run($pdo);
+            // 附件到期清理跟着这次检查一起做：纯 PHP，不依赖系统定时任务
+            try {
+                if (Files::config($pdo)["keepDays"] > 0) Files::cleanup($pdo);
+            } catch (\Throwable $e) {
+            }
+            self::touch($pdo);
         } catch (\Throwable $e) {
-            // 剪枝失败不能影响正常请求
+            // 清理失败不能影响正常请求
         }
     }
 

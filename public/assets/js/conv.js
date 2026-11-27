@@ -1,6 +1,7 @@
 // LightGroup · 左侧会话列表：搜索、未读、最后一条摘要
-import { S, h, icon, api, convTime, go, emit, siteName, siteMark, applyLayout } from './core.js';
+import { S, h, icon, api, btn, convTime, go, emit, siteName, siteMark, applyLayout, openSheet, closeSheet, toast } from './core.js';
 import { avatar } from './avatar.js';
+import { unreadCount } from './notices.js';
 
 let listHost = null;
 
@@ -59,12 +60,137 @@ export async function load() {
   return S.convs;
 }
 
+// ---------- 搜索框右侧：站内信铃铛 + 加号 ----------
+
+let bellEl = null;
+
+function paintBell() {
+  if (!bellEl) return;
+  const n = unreadCount();
+  const old = bellEl.querySelector('.req-badge');
+  if (old) old.remove();
+  if (n > 0) bellEl.appendChild(h('span', 'req-badge', n > 99 ? '99+' : String(n)));
+}
+
+// 站内信数字变了就改铃铛上的角标，不重画列表
+window.addEventListener('lg:notices', function () { paintBell(); });
+
+function searchActs() {
+  const box = h('div', 'conv-search-acts');
+  const bell = document.createElement('button');
+  bell.type = 'button';
+  bell.className = 'conv-ico conv-bell';
+  bell.title = '站内信';
+  bell.setAttribute('aria-label', '站内信');
+  bell.appendChild(icon('fa-bell'));
+  bell.addEventListener('click', function () { go('#/notices'); });
+  bellEl = bell;
+  paintBell();
+  box.appendChild(bell);
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'conv-ico conv-add';
+  add.title = '新建';
+  add.setAttribute('aria-label', '新建');
+  add.appendChild(icon('fa-circle-plus'));
+  add.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    openNewMenu(add);
+  });
+  box.appendChild(add);
+  return box;
+}
+
+function openNewMenu(anchor) {
+  const old = document.querySelector('.conv-menu');
+  if (old) old.remove();
+  const menu = h('div', 'rail-menu conv-menu');
+  const items = [
+    ['扫一扫', 'fa-qrcode', function () { go('#/scan'); }],
+    ['添加好友', 'fa-user-plus', openFindFriend],
+  ];
+  items.forEach(function (it) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.appendChild(icon(it[1]));
+    b.appendChild(h('span', '', it[0]));
+    b.addEventListener('click', function () { menu.remove(); it[2](); });
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = Math.round(r.bottom + 6) + 'px';
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  setTimeout(function () {
+    document.addEventListener('click', function onDoc(ev) {
+      if (!document.querySelector('.conv-menu')) { document.removeEventListener('click', onDoc); return; }
+      if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', onDoc); }
+    });
+  }, 0);
+}
+
+function openFindFriend() {
+  const wrap = h('div', 'conv-findbox');
+  const row = h('div', 'dc-search');
+  row.appendChild(icon('fa-magnifying-glass'));
+  const inp = document.createElement('input');
+  inp.className = 'tb';
+  inp.type = 'search';
+  inp.placeholder = 'ID、邮箱、用户名';
+  row.appendChild(inp);
+  const goBtn = btn('搜索', 'btn-primary btn-sm', run);
+  row.appendChild(goBtn);
+  wrap.appendChild(row);
+  const box = h('div', 'conv-findlist');
+  wrap.appendChild(box);
+  let reqId = 0;
+
+  async function run() {
+    const q = String(inp.value || '').trim();
+    if (!q) { toast('填 ID、邮箱或用户名'); return; }
+    const my = ++reqId;
+    box.textContent = '';
+    box.appendChild(h('div', 'sp-empty', '搜索中…'));
+    const j = await api('api/discover?q=' + encodeURIComponent(q));
+    if (my !== reqId) return;
+    box.textContent = '';
+    if (!j || !j.ok) { box.appendChild(h('div', 'sp-empty', (j && j.err) || '搜索失败')); return; }
+    const items = j.items || [];
+    if (!items.length) { box.appendChild(h('div', 'sp-empty', '没有找到这个人')); return; }
+    items.forEach(function (it) {
+      const u = document.createElement('button');
+      u.type = 'button';
+      u.className = 'm-row conv-find-row';
+      u.appendChild(avatar(it, 38));
+      const info = h('div', 'm-row-i');
+      const nm = h('div', 'm-row-n');
+      nm.appendChild(h('b', '', it.name || '匿名'));
+      if (it.username && it.username !== it.name) nm.appendChild(h('span', 'conv-find-at', '@' + it.username));
+      info.appendChild(nm);
+      info.appendChild(h('div', 'm-row-s', it.signature || ''));
+      u.appendChild(info);
+      u.appendChild(h('span', 'conv-find-go', '看看'));
+      u.addEventListener('click', function () {
+        closeSheet();
+        go('#/u/' + it.uid);
+      });
+      box.appendChild(u);
+    });
+  }
+
+  inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') run(); });
+  openSheet('添加好友', wrap, { size: 'sm' });
+  setTimeout(function () { inp.focus(); }, 60);
+}
+
 // ---------- 视图 ----------
 export function mount(host) {
   listHost = host;
   host.textContent = '';
   const search = h('div', 'conv-search');
-  search.appendChild(icon('fa-magnifying-glass'));
+  const sbox = h('div', 'conv-search-box');
+  sbox.appendChild(icon('fa-magnifying-glass'));
   const inp = document.createElement('input');
   inp.className = 'tb conv-find';
   inp.type = 'search';
@@ -74,7 +200,9 @@ export function mount(host) {
     S.search = inp.value;
     paint();
   });
-  search.appendChild(inp);
+  sbox.appendChild(inp);
+  search.appendChild(sbox);
+  search.appendChild(searchActs());
   host.appendChild(search);
   const list = h('div', 'conv-list');
   list.id = 'conv-list';

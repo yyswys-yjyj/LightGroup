@@ -61,6 +61,10 @@ final class Compat {
             case "api/send":  self::send($pdo, $scope); break;
             case "api/wait":  self::wait($pdo, $scope); break;
             case "api/upload": self::upload($pdo, $scope); break;
+            case "api/files/init":   self::fileInit($pdo, $scope); break;
+            // 分块上传是一块一个请求：会话锁要放掉，否则同一个浏览器别的请求全排队
+            case "api/files/chunk":  lg_session_release(); self::fileChunk($pdo, $scope); break;
+            case "api/files/finish": self::fileFinish($pdo, $scope); break;
             case "api/doc":   self::doc(); break;
             case "api/qr":    self::qr(); break;
             case "api/recall":  self::recall($pdo, $scope); break;
@@ -119,6 +123,11 @@ final class Compat {
                 // 私群详情：api/groups/<id>
                 if (str_starts_with($path, "api/groups/")) {
                     PrivateGroup::handle($pdo, $scope, substr($path, 11));
+                    return;
+                }
+                // 附件下载：api/file/<id>
+                if (str_starts_with($path, "api/file/")) {
+                    self::serveFile($pdo, $scope, substr($path, 9));
                     return;
                 }
                 Json::fail("未知接口");
@@ -1434,6 +1443,19 @@ final class Compat {
                             $t = (string) ($sg["t"] ?? "");
                             $v = (string) ($sg["v"] ?? "");
                             if ($t === "img") $segsOut[] = ["t" => "img", "v" => self::absUrl(self::stripImg($v))];
+                            elseif ($t === "file") {
+                                $fid = (int) ($sg["id"] ?? 0);
+                                if ($fid > 0) {
+                                    $segsOut[] = [
+                                        "t"   => "file",
+                                        "id"  => $fid,
+                                        "n"   => (string) ($sg["n"] ?? ""),
+                                        "s"   => (int) ($sg["s"] ?? 0),
+                                        "m"   => (string) ($sg["m"] ?? ""),
+                                        "url" => \LightGroup\Store\Files::url($fid),
+                                    ];
+                                }
+                            }
                             elseif ($t === "text" && $v !== "") $segsOut[] = ["t" => "text", "v" => $v];
                         }
                         if ($segsOut !== []) $msg["segs"] = $segsOut;
@@ -2259,11 +2281,14 @@ final class Compat {
      * 图文混排的段：[{t:"text",v:"..."},{t:"img",v:"/uploads/..."}]。
      * 没有图片时返回 null，按老的单段消息存，老客户端行为完全不变。
      */
-    private static function normSegs(array $raw): ?array {
+    private static function normSegs(PDO $pdo, array $scope, array $m, array $raw): ?array {
         if ($raw === [] || count($raw) > 30) return null;
         $out = [];
         $textLen = 0;
         $imgs = 0;
+        $files = 0;
+        $fc = \LightGroup\Store\Files::config($pdo);
+        $maxFiles = $fc["enabled"] ? (int) $fc["attachments"] : 0;
         foreach ($raw as $sg) {
             if (!is_array($sg)) continue;
             $t = (string) ($sg["t"] ?? "");
@@ -2284,17 +2309,37 @@ final class Compat {
                 $imgs++;
                 if ($imgs > 9) Json::fail("一条消息最多 9 张图片");
                 $out[] = ["t" => "img", "v" => $v];
+            } elseif ($t === "file") {
+                $fid = (int) ($sg["id"] ?? 0);
+                if ($fid <= 0) continue;
+                if ($maxFiles <= 0) Json::fail("本站没有开放文件传输", 403);
+                $row = \LightGroup\Store\Files::find($pdo, $fid);
+                if ($row === null) Json::fail("附件已经没了，重新传一次");
+                if ((int) $row["scope_id"] !== (int) $scope["id"]) Json::fail("附件不属于这个群");
+                if ((int) $row["member_id"] !== (int) $m["id"]) Json::fail("只能发自己上传的附件");
+                if ((int) ($row["message_id"] ?? 0) > 0) Json::fail("这个附件已经发过了");
+                $files++;
+                if ($files > $maxFiles) Json::fail("一条消息最多 " . $maxFiles . " 个附件");
+                $out[] = [
+                    "t"  => "file",
+                    "id" => $fid,
+                    "n"  => (string) $row["name"],
+                    "s"  => (int) $row["size"],
+                    "m"  => (string) $row["mime"],
+                ];
             }
         }
-        if ($imgs === 0 || $out === []) return null;
+        if (($imgs === 0 && $files === 0) || $out === []) return null;
         return $out;
     }
 
     private static function insertMessage(PDO $pdo, array $scope, array $m, ?array $conv): void {
+        // 群封禁、全员禁言、单人禁言都在这拦；网页、MCP、V1、小群适配器发消息都走这里
+        \LightGroup\Api\Moderation::assertCanSend($pdo, $scope, $m, $conv);
         $text = Input::get("text");
         $img  = Input::get("img");
         // 图文混排：网页端按输入顺序把文字和图片塞进 segs，一条消息里一起发
-        $segs = self::normSegs(Input::raw("segs"));
+        $segs = self::normSegs($pdo, $scope, $m, Input::raw("segs"));
         $card = Input::raw("card");
         $voice = Input::get("voice");
         $dur   = Input::int("dur", 0);
@@ -2309,15 +2354,19 @@ final class Compat {
             $textParts = [];
             $firstImg = "";
             foreach ($segs as $sg) {
-                if ($sg["t"] === "text") $textParts[] = $sg["v"];
-                elseif ($firstImg === "") $firstImg = $sg["v"];
+                if ($sg["t"] === "text") $textParts[] = $sg["v"] ?? "";
+                elseif ($sg["t"] === "img" && $firstImg === "") $firstImg = $sg["v"] ?? "";
             }
             // 顶层 text / img 仍是老客户端的兜底字段：文字拼接，图片取第一张
             $text = implode("\n", $textParts);
             if ($firstImg !== "") $img = $firstImg;
         }
 
-        if ($text === "" && $img === "" && $voice === "" && !$card) Json::fail("不能发空消息");
+        $hasFile = false;
+        if ($segs !== null) {
+            foreach ($segs as $sg) { if ($sg["t"] === "file") { $hasFile = true; break; } }
+        }
+        if ($text === "" && $img === "" && $voice === "" && !$card && !$hasFile) Json::fail("不能发空消息");
         if (mb_strlen($text) > 10000) Json::fail("单条消息最多 10000 字，再长请分开几条发");
         if ($dur < 0) $dur = 0;
         if ($dur > 600) $dur = 600;
@@ -2360,6 +2409,16 @@ final class Compat {
             }
         }
         $id = (int) $pdo->lastInsertId();
+
+        // 附件认领：只有这一条消息能带走这个文件，之后别处再引用就被拒绝
+        if ($segs !== null) {
+            $fup = $pdo->prepare("UPDATE files SET message_id = ?, conv_id = ? WHERE id = ? AND scope_id = ? AND member_id = ?");
+            foreach ($segs as $sg) {
+                if (($sg["t"] ?? "") === "file") {
+                    $fup->execute([$id, $convId, (int) $sg["id"], (int) $scope["id"], (int) $m["id"]]);
+                }
+            }
+        }
 
         $up = $pdo->prepare("UPDATE members SET last_seen_at = ? WHERE id = ?");
         $up->execute([$ts, (int) $m["id"]]);
@@ -2461,6 +2520,65 @@ final class Compat {
             } catch (\Throwable $e) {
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 附件
+
+    private static function fileInit(PDO $pdo, array $scope): void {
+        $m = self::requireMember($pdo);
+        \LightGroup\Api\Moderation::assertCanSend($pdo, $scope, $m, null);
+        $name   = (string) Input::get("name");
+        $size   = Input::int("size", 0);
+        $mime   = (string) Input::get("mime");
+        $chunks = Input::int("chunks", 0);
+        Json::ok(\LightGroup\Store\Files::init($pdo, $scope, $m, $name, $size, $mime, $chunks));
+    }
+
+    /** 分块正文就是请求体本身（application/octet-stream），uid / idx 走查询串 */
+    private static function fileChunk(PDO $pdo, array $scope): void {
+        $m = self::requireMember($pdo);
+        $uid = (string) Input::get("uid");
+        $idx = Input::int("idx", -1);
+        $raw = (string) file_get_contents("php://input");
+        Json::ok(\LightGroup\Store\Files::chunk($pdo, $scope, $m, $uid, $idx, $raw));
+    }
+
+    private static function fileFinish(PDO $pdo, array $scope): void {
+        $m = self::requireMember($pdo);
+        $uid = (string) Input::get("uid");
+        Json::ok(\LightGroup\Store\Files::finish($pdo, $scope, $m, $uid));
+    }
+
+    private static function serveFile(PDO $pdo, array $scope, string $rest): void {
+        $id = (int) preg_replace('/\D/', '', $rest);
+        if ($id <= 0) Json::fail("附件编号不对");
+        $m = self::requireMember($pdo);
+        lg_session_release();
+        $row = \LightGroup\Store\Files::find($pdo, $id);
+        if ($row === null) Json::fail("文件不在了", 404);
+        if ((int) $row["scope_id"] !== (int) $scope["id"]) Json::fail("没有权限看这个文件", 403);
+        // 私聊 / 私群的附件只给会话成员
+        $msgId = (int) ($row["message_id"] ?? 0);
+        if ($msgId > 0) {
+            $st = $pdo->prepare("SELECT conv_id FROM messages WHERE id = ? LIMIT 1");
+            $st->execute([$msgId]);
+            $convId = (int) $st->fetchColumn();
+            if ($convId > 0) {
+                $conv = Conv::convById($pdo, $convId);
+                if ($conv !== null && (int) $conv["is_public"] !== 1 && !Conv::isMember($pdo, $conv, (int) $m["id"])) {
+                    Json::fail("不在这个会话里", 403);
+                }
+            }
+        }
+        if ((string) $row["storage"] === "s3") {
+            $u = \LightGroup\Store\Files::s3Redirect($pdo, $row);
+            if ($u !== null) {
+                header("Cache-Control: private, max-age=0, no-store");
+                header("Location: " . $u, true, 302);
+                return;
+            }
+        }
+        \LightGroup\Store\Files::send($pdo, $row);
     }
 
     /**

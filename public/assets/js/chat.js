@@ -1,6 +1,6 @@
 // LightGroup · 会话页：头部 + 三条横幅 + 消息流 + 输入区 + @ + 轮询
 import {
-  S, BOOT, h, icon, iconBtn, toast, api, apiMissing, hhmm, dayLabel,
+  S, BOOT, BASE, h, icon, iconBtn, toast, api, apiMissing, hhmm, dayLabel,
   emit, go, readDataUrl, siteName, siteMark, setListOpen, openSheet, copyText, pageStop
 } from './core.js';
 import { avatar } from './avatar.js';
@@ -289,6 +289,18 @@ function buildComposer() {
   plus.addEventListener('click', pickImage);
   row.appendChild(plus);
 
+  const clip = document.createElement('button');
+  clip.type = 'button';
+  clip.className = 'round-btn';
+  clip.title = '发送文件';
+  clip.appendChild(icon('fa-paperclip'));
+  clip.addEventListener('mousedown', saveCaret);
+  clip.addEventListener('click', function () {
+    if (!filesConf().enabled) { toast('本站没有开放文件传输'); return; }
+    pickFile();
+  });
+  row.appendChild(clip);
+
   // 输入框是 contenteditable：图片插在文字中间，和字一样能删、能跟着一起选中
   const box = document.createElement('div');
   box.className = 'compose';
@@ -446,6 +458,7 @@ function composeSegs() {
   const segs = [];
   let buf = '';
   let pics = 0;
+  let filesN = 0;
   const flush = function () {
     const t = buf.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
     if (t.trim()) segs.push({ t: 'text', v: t });
@@ -459,6 +472,19 @@ function composeSegs() {
       if (n.nodeType !== 1) continue;
       const tag = n.tagName;
       if (tag === 'BR') { buf += '\n'; continue; }
+      if (n.classList && n.classList.contains('ph-file')) {
+        flush();
+        const fid = Number(n.getAttribute('data-id') || 0);
+        if (fid > 0) {
+          segs.push({
+            t: 'file', id: fid,
+            n: n.getAttribute('data-name') || '文件',
+            s: Number(n.getAttribute('data-size') || 0),
+          });
+          filesN++;
+        }
+        continue;
+      }
       if (n.classList && n.classList.contains('ph-img')) {
         flush();
         const url = n.getAttribute('data-url') || '';
@@ -478,7 +504,7 @@ function composeSegs() {
   flush();
   const text = segs.filter(function (x) { return x.t === 'text'; })
     .map(function (x) { return x.v; }).join('\n');
-  return { text: text, segs: segs, pics: pics };
+  return { text: text, segs: segs, pics: pics, files: filesN };
 }
 
 // 发送失败时把内容放回输入框
@@ -488,6 +514,7 @@ function restoreCompose(segs) {
   el.textContent = '';
   (segs || []).forEach(function (x) {
     if (x.t === 'img') el.appendChild(picNode(x.v, x.n || '图片'));
+    else if (x.t === 'file') el.appendChild(fileNode({ id: x.id, name: x.n || '文件', size: x.s || 0 }));
     else if (x.t === 'text' && x.v) el.appendChild(document.createTextNode(x.v));
   });
   composeSize();
@@ -880,6 +907,103 @@ async function addPic(file) {
   insertNodeAt(picNode(up.url, name), saved);
 }
 
+// ---------- 附件（分块上传） ----------
+function filesConf() {
+  const f = (S.me && S.me.features && S.me.features.files) || {};
+  return {
+    enabled: f.enabled !== false,
+    maxMB: Number(f.maxMB || 50),
+    attachments: Number(f.attachments || 3),
+  };
+}
+
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+function fileNode(f) {
+  const n = document.createElement('span');
+  n.className = 'ph-file';
+  n.setAttribute('contenteditable', 'false');
+  n.setAttribute('data-id', String(f.id));
+  n.setAttribute('data-name', f.name || '文件');
+  n.setAttribute('data-size', String(f.size || 0));
+  n.title = f.name || '文件';
+  n.appendChild(icon('fa-paperclip'));
+  const t = h('span', 'ph-file-t');
+  t.appendChild(h('b', '', f.name || '文件'));
+  t.appendChild(h('span', 'ph-size', fmtSize(f.size)));
+  n.appendChild(t);
+  return n;
+}
+
+function pickFile() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.multiple = true;
+  inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.addEventListener('change', async function () {
+    const list = Array.prototype.slice.call(inp.files || []);
+    inp.remove();
+    if (!list.length) return;
+    const spot = ensureCaret();
+    const saved = spot ? spot.cloneRange() : null;
+    for (let i = 0; i < list.length; i++) {
+      try {
+        const up = await uploadFile(list[i]);
+        insertNodeAt(fileNode(up), saved);
+      } catch (e) {
+        toast((e && e.message) || '上传失败');
+      }
+    }
+  });
+  inp.click();
+}
+
+async function uploadFile(file) {
+  const conf = filesConf();
+  if (!conf.enabled) throw new Error('本站没有开放文件传输');
+  if (!file.size) throw new Error('空文件不用发');
+  if (file.size > conf.maxMB * 1048576) throw new Error('文件最多 ' + conf.maxMB + 'MB');
+  const chunk = 1048576;
+  const total = Math.max(1, Math.ceil(file.size / chunk));
+  const ini = await api('api/files/init', {
+    name: file.name || '文件',
+    size: file.size,
+    mime: file.type || 'application/octet-stream',
+    chunks: total,
+  });
+  if (!ini || !ini.ok) throw new Error((ini && ini.err) || '上传失败');
+  const step = ini.chunk && ini.chunk > 0 ? ini.chunk : chunk;
+  for (let i = 0; i < total; i++) {
+    toast('上传中 ' + (i + 1) + '/' + total + '：' + (file.name || '文件'));
+    const blob = file.slice(i * step, Math.min(file.size, (i + 1) * step));
+    const r = await fetch(BASE + 'api/files/chunk?uid=' + encodeURIComponent(ini.uid) + '&idx=' + i, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob,
+    });
+    let j = null;
+    try { j = await r.json(); } catch (e) { j = null; }
+    if (!j || !j.ok) throw new Error((j && j.err) || ('上传失败（HTTP ' + r.status + '）'));
+  }
+  const fin = await api('api/files/finish', { uid: ini.uid });
+  if (!fin || !fin.ok) throw new Error((fin && fin.err) || '上传失败');
+  return fin;
+}
+
+function stampName() {
+  const d = new Date();
+  const p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' +
+    p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+}
+
 // ---------- 发送 ----------
 async function send(payload) {
   if (S.mode === 'legacy') {
@@ -901,22 +1025,38 @@ async function sendText() {
   const el = composeEl();
   if (!el) return;
   const got = composeSegs();
-  const text = got.text.trim();
-  if (!text && !got.pics) return;
-  if (text.length > 10000) {
-    toast('单条消息最多 10000 字，再长请分开几条发');
-    return;
-  }
+  let text = got.text.trim();
+  if (!text && !got.pics && !got.files) return;
   if (got.pics > PIC_MAX) { toast('一条消息最多 9 张图片'); return; }
+
+  // 文本太长（一万字以上）不拦，直接转成 txt 附件发，正文留空
+  if (text.length > 10000) {
+    if (!filesConf().enabled) { toast('单条消息最多 10000 字，再长请分开几条发'); return; }
+    toast('文本太长，转成 txt 文件发送…');
+    let up;
+    try {
+      up = await uploadFile(new File([text], '长文本-' + stampName() + '.txt', { type: 'text/plain' }));
+    } catch (e) {
+      toast((e && e.message) || '转文件失败');
+      return;
+    }
+    got.segs = got.segs.filter(function (x) { return x.t !== 'text'; });
+    got.segs.push({ t: 'file', id: up.id, n: up.name, s: up.size });
+    got.files = (got.files || 0) + 1;
+    text = '';
+  }
+
   const segs = got.segs.map(function (x) {
-    return x.t === 'img' ? { t: 'img', v: x.v } : { t: 'text', v: x.v };
+    if (x.t === 'img') return { t: 'img', v: x.v };
+    if (x.t === 'file') return { t: 'file', id: x.id, n: x.n, s: x.s };
+    return { t: 'text', v: x.v };
   });
 
   el.textContent = '';
   composeSize();
 
   const payload = { text: text };
-  if (got.pics) payload.segs = segs;
+  if (got.pics || got.files) payload.segs = segs;
   const replySnap = S.reply ? { id: S.reply.id, name: S.reply.name, text: S.reply.text } : null;
   if (S.reply) payload.reply = S.reply.id;
   const j = await send(payload);
@@ -926,7 +1066,7 @@ async function sendText() {
     return;
   }
   clearReply();
-  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap, '', 0, got.pics ? segs : null);
+  if (j.msg) echoMsg(j.msg.id, j.msg.ts, text, '', replySnap, '', 0, (got.pics || got.files) ? segs : null);
 }
 
 // 发送后先把这条画上去，不等下一轮轮询；轮询拉回同一条会按 id 去重跳过

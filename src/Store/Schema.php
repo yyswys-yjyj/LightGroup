@@ -7,7 +7,7 @@ use PDO;
 
 final class Schema {
     /** 结构版本：每次加列/加表都要 +1，老库会在首次请求时补齐 */
-    public const VERSION = 18;
+    public const VERSION = 20;
 
     public static function install(PDO $pdo, string $driver): void {
         foreach (self::statements($driver) as $sql) {
@@ -37,6 +37,12 @@ final class Schema {
                 "pg_size_cap"   => "INT NOT NULL DEFAULT 0",
                 // 这个作用域默认套哪个权限组（NULL/0 = 平台默认组）
                 "perm_group_id" => "BIGINT NULL",
+                // 群封禁：封了之后谁都不能发消息（超管在后台解封）
+                "banned"           => "TINYINT NOT NULL DEFAULT 0",
+                // 全员禁言到期时间（0 = 没开）
+                "whole_mute_until" => "BIGINT NOT NULL DEFAULT 0",
+                // 大群群主；没设时只有超管按群主处理
+                "owner_id"         => "BIGINT NULL",
             ],
             "members"  => [
                 // 登录名：创建时默认等于昵称，之后不可改，昵称可以随便改
@@ -53,6 +59,8 @@ final class Schema {
                 "deleted_name" => $mysql ? "VARCHAR(191) NULL" : "TEXT NULL",
                 // 允许别人把我拉进私群；关掉后谁拉都不行
                 "allow_invite" => "TINYINT NOT NULL DEFAULT 1",
+                // 单成员禁言到期时间（大群/私群共用；私群另有 conv_members.mute_until）
+                "mute_until"   => "BIGINT NOT NULL DEFAULT 0",
                 // 单独指定权限组（优先于作用域那份）
                 "perm_group_id" => "BIGINT NULL",
                 // 简介模式：plain = 纯文本（默认，给不会 markdown 的人），markdown = 高级模式
@@ -95,12 +103,16 @@ final class Schema {
                 "dissolved_at" => "BIGINT NULL",
                 // 这个私群单独套哪个权限组（NULL/0 = 跟主群）
                 "perm_group_id" => "BIGINT NULL",
+                // 私群全员禁言到期时间
+                "whole_mute_until" => "BIGINT NOT NULL DEFAULT 0",
             ],
             // 私群成员：role = owner / admin / member；pinned_at 是各自会话列表里的置顶时间
             "conv_members" => [
                 "role"       => "VARCHAR(8) NOT NULL DEFAULT 'member'",
                 "pinned_at"  => "BIGINT NOT NULL DEFAULT 0",
                 "invited_by" => "BIGINT NULL",
+                // 私群里的单成员禁言到期时间
+                "mute_until" => "BIGINT NOT NULL DEFAULT 0",
             ],
             // 好友：各自的备注 + 拉黑记录（blocked_by 有值就属于黑名单，删好友不会删掉这一行）
             "friends" => [
@@ -227,6 +239,17 @@ final class Schema {
                 . " finished_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE INDEX {$idx}idx_jobs_status ON jobs(status)",
+            // 文件传输：聊天里的附件。local = 落盘，db = 二进制入库，s3 = 对象存储
+            "CREATE TABLE IF NOT EXISTS files ("
+                . "id $pk, scope_id BIGINT NOT NULL, member_id BIGINT NOT NULL, conv_id BIGINT NULL,"
+                . " name $short NOT NULL, mime VARCHAR(128) NOT NULL DEFAULT '', size BIGINT NOT NULL DEFAULT 0,"
+                . " sha256 $hash NULL, storage VARCHAR(8) NOT NULL DEFAULT 'local',"
+                . " path VARCHAR(191) NULL, data " . ($mysql ? "LONGBLOB" : "BLOB") . " NULL,"
+                . " created_at BIGINT NOT NULL DEFAULT 0, expires_at BIGINT NOT NULL DEFAULT 0,"
+                . " message_id BIGINT NULL, deleted_at BIGINT NULL"
+                . ")$suffix",
+            "CREATE INDEX {$idx}idx_files_scope ON files(scope_id, id)",
+            "CREATE INDEX {$idx}idx_files_expire ON files(expires_at)",
             "CREATE TABLE IF NOT EXISTS clusters (id $pk, name $short, created_at BIGINT)$suffix",
             "CREATE TABLE IF NOT EXISTS scopes ("
                 . "id $pk, slug $slug NOT NULL DEFAULT '', title $short, intro $text,"
@@ -237,6 +260,7 @@ final class Schema {
                 . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
                 . " pg_member_cap INT NOT NULL DEFAULT 0, pg_size_cap INT NOT NULL DEFAULT 0,"
                 . " perm_group_id BIGINT NULL,"
+                . " banned TINYINT NOT NULL DEFAULT 0, whole_mute_until BIGINT NOT NULL DEFAULT 0, owner_id BIGINT NULL,"
                 . " created_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
             "CREATE UNIQUE INDEX {$idx}idx_scopes_slug ON scopes(slug)",
@@ -260,6 +284,7 @@ final class Schema {
                 . " theme VARCHAR(64) NULL, adapter VARCHAR(16) NOT NULL DEFAULT 'mcp', pass_hash VARCHAR(255) NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, banned TINYINT NOT NULL DEFAULT 0,"
                 . " deleted_at BIGINT NULL, deleted_name $short NULL, allow_invite TINYINT NOT NULL DEFAULT 1,"
+                . " mute_until BIGINT NOT NULL DEFAULT 0,"
                 . " perm_group_id BIGINT NULL, bio_mode VARCHAR(8) NOT NULL DEFAULT 'plain',"
                 . " birthday VARCHAR(10) NULL, gender VARCHAR(8) NULL, signature VARCHAR(80) NULL,"
                 . " email VARCHAR(191) NULL, tags $text NULL, discover TINYINT NOT NULL DEFAULT 1,"
@@ -284,7 +309,7 @@ final class Schema {
                 . "id $pk, scope_id BIGINT NOT NULL, kind VARCHAR(8) NOT NULL, title $short NULL,"
                 . " is_public TINYINT NOT NULL DEFAULT 0, dm_key $slug NULL, created_by BIGINT NULL,"
                 . " notice $text NULL, notice_at BIGINT NOT NULL DEFAULT 0, notice_by BIGINT NULL,"
-                . " dissolved_at BIGINT NULL, perm_group_id BIGINT NULL,"
+                . " dissolved_at BIGINT NULL, perm_group_id BIGINT NULL, whole_mute_until BIGINT NOT NULL DEFAULT 0,"
                 . " created_at BIGINT NOT NULL DEFAULT 0, last_msg_id BIGINT NOT NULL DEFAULT 0,"
                 . " last_msg_at BIGINT NOT NULL DEFAULT 0"
                 . ")$suffix",
@@ -295,7 +320,7 @@ final class Schema {
                 . "conv_id BIGINT NOT NULL, member_id BIGINT NOT NULL,"
                 . " last_read_id BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL DEFAULT 0,"
                 . " role VARCHAR(8) NOT NULL DEFAULT 'member', pinned_at BIGINT NOT NULL DEFAULT 0,"
-                . " invited_by BIGINT NULL,"
+                . " invited_by BIGINT NULL, mute_until BIGINT NOT NULL DEFAULT 0,"
                 . " PRIMARY KEY (conv_id, member_id)"
                 . ")$suffix",
             // 好友：status = pending / accepted / blocked；blocked_by 有值表示这一对在黑名单里

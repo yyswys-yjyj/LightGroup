@@ -10,9 +10,10 @@
 /.dsh/
 # 本机开发工具，不进仓库；发布包由 bin/release.php 生成
 /bin/*
-# 这两个是运行时真的要用到的命令（任务执行器、消息剪枝）
+# 这几个是运行时真的要用到的命令（任务执行器、消息剪枝、定时清理）
 !/bin/job.php
 !/bin/prune.php
+!/bin/task.php
 /tests/
 /doc/
 /node_modules/

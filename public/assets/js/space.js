@@ -1,4 +1,4 @@
-// LightGroup · 空间：群里的小广场（动态 + 站内信）
+// LightGroup · 空间：群里的小广场（动态）
 import { S, h, icon, iconBtn, btn, toast, api, go, openSheet, closeSheet, siteName, hhmm } from './core.js';
 import { avatar } from './avatar.js';
 
@@ -13,37 +13,14 @@ import { openImage } from './msg.js';
 import { shrinkImage } from './chat.js';
 import { canScan, followScan, decodeSource, decodeFile } from './qr.js';
 
-let tab = 'feed';          // feed | mine | notice（扫描器是独立页 #/scan）
+let tab = 'feed';          // feed | mine（扫描器是独立页 #/scan）
 let tag = '';              // 只看这个标签
 let mine = false;          // 只看我发的
-let unread = 0;
 let tags = [];             // 最近出现过的标签，侧栏列出来
 let draft = [];            // 发布框里已上传的图片
 let feedRec = false;       // 广场是否开了推荐算法（决定翻页用 off 还是 before）
 let feedOff = 0;           // 下一页的游标：推荐算法用 offset，时间序用最后一条 id
 let openComment = 0;       // 当前展开评论框的动态 id
-
-export function unreadCount() { return unread; }
-
-export async function refreshUnread() {
-  const j = await api('api/notices?count=1');
-  if (j && j.ok) { unread = j.unread || 0; emitUnread(); }
-  return unread;
-}
-
-function emitUnread() {
-  window.dispatchEvent(new CustomEvent('lg:notices', { detail: { unread: unread } }));
-}
-
-// 通知页就地读掉一条时，左侧「通知」上的数字红点跟着改，别去重拉整页
-function syncNoticeBadge() {
-  if (!sideEl || !sideEl.isConnected) return;
-  const b = sideEl.querySelector('.sp-nav[data-nav="notice"]');
-  if (!b) return;
-  const old = b.querySelector('.req-badge');
-  if (old) old.remove();
-  if (unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
-}
 
 let hostEl = null;
 let sideEl = null;
@@ -74,8 +51,7 @@ export function renderSpace(host) {
 
   const box = h('div', 'sp-body');
   inner.appendChild(box);
-  if (tab === 'notice') paintNotices(box);
-  else paintFeed(box);
+  paintFeed(box);
 }
 
 /** 中间那一栏：空间自己的导航（广场 / 我的动态 / 通知 + 标签） */
@@ -94,7 +70,6 @@ export function renderSideList(host) {
   const items = [
     ['feed', 'fa-compass', '广场', 0],
     ['mine', 'fa-user-pen', '我的动态', 0],
-    ['notice', 'fa-bell', '通知', unread],
   ];
   items.forEach(function (it) {
     const on = (it[0] === 'feed' && tab === 'feed' && !mine) || it[0] === tab;
@@ -106,8 +81,8 @@ export function renderSideList(host) {
     b.appendChild(h('span', '', it[2]));
     if (it[3] > 0) b.appendChild(h('span', 'req-badge', it[3] > 99 ? '99+' : String(it[3])));
     b.addEventListener('click', function () {
-      if (it[0] === 'notice') { tab = 'notice'; }
-      else { tab = 'feed'; mine = it[0] === 'mine'; }
+      tab = 'feed';
+      mine = it[0] === 'mine';
       tag = '';
       repaint();
     });
@@ -180,18 +155,16 @@ function openComposer() {
 function tabs() {
   const tabs = h('div', 'sp-tabs');
   // 桌面用左栏导航（扫描器也在那边），手机的页签是唯一导航，所以这里也得有一项
-  const list = [['feed', '广场'], ['mine', '我的动态'], ['notice', '通知']];
+  const list = [['feed', '广场'], ['mine', '我的动态']];
   list.forEach(function (it) {
-    const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine)
-      || (it[0] === 'notice' && tab === 'notice');
+    const on = (it[0] === 'feed' && tab === 'feed' && !mine) || (it[0] === 'mine' && mine);
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'sp-tab' + (on ? ' on' : '');
     b.appendChild(h('span', '', it[1]));
-    if (it[0] === 'notice' && unread > 0) b.appendChild(h('span', 'req-badge', unread > 99 ? '99+' : String(unread)));
     b.addEventListener('click', function () {
-      if (it[0] === 'notice') tab = 'notice';
-      else { tab = 'feed'; mine = it[0] === 'mine'; }
+      tab = 'feed';
+      mine = it[0] === 'mine';
       tag = '';
       repaint();
     });
@@ -857,176 +830,6 @@ function paintRich(el, text) {
       el.appendChild(document.createTextNode(p));
     }
   });
-}
-
-// ---------- 通知 ----------
-
-async function paintNotices(box) {
-  const sub = h('div', 'sp-card');
-  box.appendChild(sub);
-  sub.appendChild(h('div', 'sp-empty', '加载中…'));
-
-  const list = h('div', 'sp-list');
-  box.appendChild(list);
-
-  const [j, s] = await Promise.all([api('api/notices'), api('api/subscribe')]);
-  sub.textContent = '';
-  sub.appendChild(subscribeCard(s && s.ok ? s : null, sub));
-
-  if (!j || !j.ok) { list.appendChild(h('div', 'sp-empty', (j && j.err) || '加载失败')); return; }
-  unread = j.unread || 0;
-  emitUnread();
-  syncNoticeBadge();
-  // 服务端 unread 可能是 0，但某几行还带着未读样式；这种时候也得能一键清掉
-  const anyUnread = j.items.some(function (n) { return !n.read; });
-  let bar = null;
-  if (j.items.length && (unread > 0 || anyUnread)) {
-    bar = h('div', 'sp-notice-bar');
-    const read = btn('全部已读', 'btn-ghost btn-sm', async function () {
-      const r = await api('api/notices', { op: 'readAll' });
-      if (!r || !r.ok) { toast('失败了'); return; }
-      unread = 0;
-      emitUnread();
-      syncNoticeBadge();
-      list.querySelectorAll('.sp-note.unread').forEach(function (el) { el.classList.remove('unread'); });
-      list.querySelectorAll('[data-mark]').forEach(function (el) { el.remove(); });
-      if (bar && bar.parentNode) bar.remove();
-    });
-    bar.appendChild(read);
-    list.appendChild(bar);
-  }
-  if (!j.items.length) { list.appendChild(h('div', 'sp-empty', '还没有通知')); return; }
-
-  // 单条已读：只动本地状态和这一行，别重拉整页
-  function applyRead(n, row, mark) {
-    if (n.read) return;
-    n.read = true;
-    if (unread > 0) unread--;
-    emitUnread();
-    syncNoticeBadge();
-    row.classList.remove('unread');
-    if (mark) { mark.disabled = true; mark.textContent = '已读'; }
-    // 都读完了就把「全部已读」收掉
-    if (!unread && bar && bar.parentNode) bar.remove();
-  }
-
-  // 请求失败时把刚才那一下倒回去
-  function undoRead(n, row, mark) {
-    if (!n.read) return;
-    n.read = false;
-    unread++;
-    emitUnread();
-    syncNoticeBadge();
-    row.classList.add('unread');
-    if (mark) { mark.disabled = false; mark.textContent = '标为已读'; }
-    if (bar && !bar.parentNode) list.insertBefore(bar, list.firstChild);
-  }
-
-  j.items.forEach(function (n) {
-    const row = h('div', 'sp-note' + (n.read ? '' : ' unread'));
-    const head = h('div', 'sp-note-head');
-    head.appendChild(h('b', '', n.title));
-    head.appendChild(h('span', 'sp-time', when(n.ts)));
-    row.appendChild(head);
-    if (n.body) row.appendChild(h('div', 'sp-note-body', n.body));
-    const foot = h('div', 'sp-note-foot');
-    if (n.from) foot.appendChild(h('span', 'sp-note-from', '来自 ' + n.from));
-    let mark = null;
-    if (n.link) {
-      const goBtn = btn('去看看', 'btn-ghost btn-sm', async function () {
-        // 先本地生效，界面立刻有反应；再发请求，失败回滚
-        const wasUnread = !n.read;
-        goBtn.disabled = true;
-        if (wasUnread) applyRead(n, row, mark);
-        const r = await api('api/notices', { op: 'read', id: n.id });
-        goBtn.disabled = false;
-        if (wasUnread && (!r || !r.ok)) undoRead(n, row, mark);
-        if (n.link.charAt(0) !== '#') { location.href = n.link; return; }
-        // go() 遇到同一个 hash 只会发事件、不重绘，这里自己补一次
-        const same = location.hash === n.link;
-        go(n.link);
-        if (same) { repaint(); toast('已标为已读'); }
-      });
-      foot.appendChild(goBtn);
-    }
-    if (!n.read) {
-      mark = btn('标为已读', 'btn-ghost btn-sm', async function () {
-        const r = await api('api/notices', { op: 'read', id: n.id });
-        if (!r || !r.ok) { toast('失败了'); return; }
-        applyRead(n, row, mark);
-      });
-      mark.dataset.mark = '1';
-      foot.appendChild(mark);
-    }
-    if (foot.children.length) row.appendChild(foot);
-    list.appendChild(row);
-  });
-}
-
-function subscribeCard(s, box) {
-  const card = h('div', 'sp-sub');
-  if (!s) { card.appendChild(h('div', 'sp-empty', '邮件提醒暂时用不了')); return card; }
-  if (!s.available) {
-    card.appendChild(h('b', '', '邮件提醒'));
-    card.appendChild(h('div', 'sp-empty', '邮件提醒暂时不可用'));
-    return card;
-  }
-  card.appendChild(h('b', '', '邮件提醒'));
-  card.appendChild(h('div', 'sp-sub-tip', '收到站内信时会发一封邮件到你填的邮箱。聊天消息不会发邮件。'));
-
-  if (s.subscribed) {
-    card.appendChild(h('div', 'sp-sub-line', '已订阅：' + s.email));
-    const off = btn('取消订阅', 'btn-ghost btn-sm', async function () {
-      const r = await api('api/subscribe', { op: 'off' });
-      if (!r || !r.ok) { toast('取消失败'); return; }
-      toast('已取消');
-      repaint();
-    });
-    card.appendChild(off);
-    return card;
-  }
-
-  if (s.pending) {
-    card.appendChild(h('div', 'sp-sub-line', '激活邮件已发给 ' + s.email));
-    const row = h('div', 'sp-cbox');
-    const code = document.createElement('input');
-    code.type = 'text';
-    code.className = 'tb';
-    code.placeholder = '邮件里的 6 位验证码';
-    code.maxLength = 6;
-    row.appendChild(code);
-    const ok = btn('确认', 'btn-primary btn-sm', async function () {
-      const v = String(code.value || '').trim();
-      if (!v) { toast('填验证码'); return; }
-      const r = await api('api/subscribe/verify', { code: v });
-      if (!r || !r.ok) { toast((r && r.err) || '验证失败'); return; }
-      toast('订阅成功');
-      repaint();
-    });
-    row.appendChild(ok);
-    card.appendChild(row);
-    return card;
-  }
-
-  const row = h('div', 'sp-cbox');
-  const email = document.createElement('input');
-  email.type = 'email';
-  email.className = 'tb';
-  email.placeholder = '你的邮箱';
-  row.appendChild(email);
-  const send = btn('发激活邮件', 'btn-primary btn-sm', async function () {
-    const v = String(email.value || '').trim();
-    if (!v) { toast('填邮箱'); return; }
-    send.disabled = true;
-    const r = await api('api/subscribe', { email: v });
-    send.disabled = false;
-    if (!r || !r.ok) { toast((r && r.err) || '发不出去'); return; }
-    toast('激活邮件发出去了，去收一下');
-    repaint();
-  });
-  row.appendChild(send);
-  card.appendChild(row);
-  return card;
 }
 
 function isAdmin() {

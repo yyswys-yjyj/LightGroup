@@ -548,3 +548,11 @@ textarea.adm-input { height: auto; padding: 9px 11px; resize: vertical; min-heig
 .conv-filter select.adm-input { min-width: 150px; }
 .conv-filter input.adm-input { flex: 1 1 260px; min-width: 200px; }
 .conv-filter .btn { flex: 0 0 auto; height: 37px; }
+
+
+/* 会话审计 · 管理卡 */
+.conv-mod-row { display: flex; gap: 10px; align-items: flex-start; }
+.conv-mod-row .conv-bc { flex: 1 1 auto; min-height: 60px; resize: vertical; }
+.conv-mod-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.conv-mod-tip { margin: 10px 0 0; font-size: 12px; color: var(--danger); }
+.conv-row-acts { display: flex; flex-wrap: wrap; gap: 6px; }
