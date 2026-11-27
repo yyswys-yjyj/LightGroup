@@ -98,7 +98,7 @@ async function loadOlder() {
   if (my !== gen || S.curId !== id) return;
   if (!j || !j.ok) return;
   const older = (j.msgs || []).filter(function (m) { return !S.msgs.some(function (x) { return x.id === m.id; }); });
-  if (!older.length) { hasOlder = false; renderFeed(); return; }
+  if (!older.length) { hasOlder = false; renderFeed(); toast('没有更早的消息了'); return; }
   S.msgs = older.concat(S.msgs);
   hasOlder = !!j.more;
   if (localEnabled()) {
